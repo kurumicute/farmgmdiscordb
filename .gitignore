@@ -8,3 +8,6 @@ backups/
 *.dump
 .playwright-mcp/
 data/
+
+# 原始的 YTDiscordBot 參考程式（只留在本機，不上傳）
+YTDiscordBot-main/
