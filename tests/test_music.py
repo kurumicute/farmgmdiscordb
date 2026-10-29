@@ -389,3 +389,14 @@ def test_spotify_link_kinds():
     with pytest.raises(spotify.SpotifyError, match="不支援"):
         asyncio.run(spotify.resolve(episode, 20))  # 判斷連結類型時就拒絕，不連網路
     assert not spotify.is_spotify("周杰倫 晴天")
+
+
+def test_stats_update_logs_only_dropped_frames(caplog):
+    caplog.set_level("WARNING", logger=music.logger.name)
+    frames = SimpleNamespace(sent=3000, nulled=0, deficit=0)
+    asyncio.run(music.on_wavelink_stats_update(SimpleNamespace(frames=frames)))
+    asyncio.run(music.on_wavelink_stats_update(SimpleNamespace(frames=None)))
+    assert not caplog.records
+    dropped = SimpleNamespace(sent=2950, nulled=40, deficit=10)
+    asyncio.run(music.on_wavelink_stats_update(SimpleNamespace(frames=dropped)))
+    assert "來源不足 40" in caplog.text and "未送出 10" in caplog.text

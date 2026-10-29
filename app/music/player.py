@@ -917,6 +917,16 @@ async def on_wavelink_websocket_closed(payload):
                    payload.code, payload.reason, payload.by_remote)
 
 
+async def on_wavelink_stats_update(payload):
+    """Lavalink 每分鐘回報一次（每個播放器平均）送出的音訊封包：正常每分鐘約 3000 個（20 ms 一個）。
+    nulled＝來源（YouTube 下載／解碼）沒跟上；deficit＝Lavalink 沒送出（CPU、GC 暫停）。
+    兩者都是 0 卻仍卡頓時，問題在 Lavalink 之後（Docker 的 UDP 轉送、網路或聽眾端）。只在有掉封包時記錄。"""
+    frames = payload.frames
+    if frames is not None and (frames.nulled or frames.deficit):
+        logger.warning("音訊封包（最近 1 分鐘，每個播放器平均）：送出 %s、來源不足 %s、未送出 %s",
+                       frames.sent, frames.nulled, frames.deficit)
+
+
 async def on_wavelink_node_ready(payload):
     logger.info("已連線 Lavalink：%s（session %s，resumed=%s）",
                 payload.node.uri, payload.session_id, payload.resumed)
@@ -1213,6 +1223,7 @@ LISTENERS = {
     "on_wavelink_track_stuck": on_wavelink_track_stuck,
     "on_wavelink_websocket_closed": on_wavelink_websocket_closed,
     "on_wavelink_node_ready": on_wavelink_node_ready,
+    "on_wavelink_stats_update": on_wavelink_stats_update,
 }
 
 

@@ -35,8 +35,11 @@ lavalink:
       rotation: false
       channelMix: false
       lowPass: false
-    bufferDurationMs: 400
-    frameBufferDurationMs: 5000
+    # JDA-NAS 原生送出佇列的緩衝：Lavalink（JVM）因 GC 或記憶體換頁暫停時，佇列內的音訊仍持續送出，
+    # 暫停超過這個長度才會卡頓。曾觀察到 0.5～2 秒的 GC 暫停，所以由 400 調高；代價是暫停／音量等操作的反應慢約 1 秒
+    bufferDurationMs: 1000
+    # 預先解碼的音訊緩衝：YouTube 下載中斷時先播這段。曾觀察到下載中斷超過 5 秒造成掉音（來源不足），調高到 15 秒
+    frameBufferDurationMs: 15000
     opusEncodingQuality: 10
     resamplingQuality: LOW
     trackStuckThresholdMs: 10000
