@@ -1,0 +1,11 @@
+﻿fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+SQLAlchemy>=2.0.30,<3.0
+psycopg[binary]>=3.2,<4.0
+alembic>=1.13,<2.0
+pydantic-settings>=2.4,<3.0
+discord.py==2.7.1
+# 音樂：連線 Lavalink（docker compose 的 lavalink 服務）播放；3.5.1 起支援 Discord 語音加密 DAVE
+wavelink==3.5.2
+# Discord 面板的農田／建築／商店圖片（app/discord_bot/farm_image.py）
+Pillow>=11,<13

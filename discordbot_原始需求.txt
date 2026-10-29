@@ -1,0 +1,250 @@
+# 任務：將現有農場遊戲改造為 Discord Bot 運行架構
+
+請把目前的 Python + PostgreSQL + FastAPI 農場經營專案改造成以 Discord Bot 為主要遊戲介面。
+
+本次只處理架構移植、系統整合、效能、併發、安全、資料一致性、部署與管理後台相容性。
+**不要重新撰寫或重新設計既有遊戲規則**；以實際程式碼為準，保留種植、澆水、偷菜、防守、道具、動物、加工、
+品質與突變、限時活動、排行榜、排名獎勵、群組任務與競賽等功能。
+
+不要只提供分析報告，請實際修改程式並執行測試。開始前先讀 `CLAUDE.md` 與 `README.md`。
+
+---
+
+## 〇、開始前必讀：目前專案的實際狀態（2026-10-27）
+
+以下是已完成且已有測試的部分，請先確認仍然成立，**不要重做**，只在需要時擴充：
+
+- 分層：`app/game`（純規則）→ `app/repositories` → `app/services`（每個公開方法一筆交易，先鎖農場列）→ `app/cli`、`app/api` + `app/web`。
+- 服務繼承鏈：`GameService` → `RanchService` → `SocialService` → `CommunityService` → `RankingService` → `AdminService`。
+  服務方法只收基本型別、不依賴 CMD／FastAPI，Discord Bot 應直接呼叫這些服務。遊戲錯誤皆為 `app.game.errors.GameError` 子類別，訊息可直接回覆玩家。
+- **一人一座農場已由資料庫保證**：`farms.player_id` 唯一；`players (external_platform, external_user_id)` 部分唯一索引；
+  已有 `create_player(name, external_platform="discord", external_user_id=...)` 與 `get_player_by_external(...)`。
+  Discord ID 已以字串儲存（`players.external_user_id`、`groups.discord_guild_id`）。請確認 API／前端輸出也維持字串。
+- `farms.home_group_id`：建立後由資料庫觸發器 `trg_farms_home_group_immutable`（Migration 0003）**禁止修改**。
+  第五節的「轉移群組」必須用新的 Migration 調整這個保護（例如只允許透過帶冷卻檢查的服務或函式更新），不可直接移除保護了事。
+- 群組任務／競賽：只有「操作當下所在群組 `context_group_id` = 農場 `home_group_id`」的成功操作才計分（`app/services/activity.py`）。
+- 排名獎勵：`ranking_reward_rules`／`ranking_settlements`／`ranking_awards`，`(rule_id, period_start)` 唯一保證只發一次；
+  目前由 FastAPI 背景工作（`app/main._auto_settle`）與 CLI 查詢時結算。
+- 管理網站已有：作物／動物種類 CRUD 與停用、限時活動、品質與突變設定、群組任務與競賽、排名獎勵規則、
+  調整玩家金幣／等級／背包／土地／建築／動物／作物、管理操作紀錄（`admin_actions`）、玩家交易紀錄（`admin_adjust`）。
+  群組建立與成員管理已從網站移除，改由 Discord 端負責。
+- 所有資產變動都寫入 `game_transactions`，全部 `gold_delta` 加總 = 全服金幣（測試有驗證），新功能必須維持。
+
+### 已實測的效能基準（本機、PostgreSQL 16 in Docker）
+
+500 位玩家、20 個群組、100 萬筆歷史交易（`scripts/loadtest.py`，只能對 `_test` 資料庫執行）：
+
+| 項目 | 結果 |
+|---|---|
+| 一般指令（買、種、澆水、看農場、看背包） | 5～14 ms |
+| 100 人並行、15 執行緒 | 約 260 指令／秒，P95 92 ms |
+| 100 人並行、50 執行緒 | P95 1.2 秒（**連線池預設 5+10 不足，排隊等待**） |
+| 排行榜「全部期間」（個人或群組） | 約 280 ms，**每次加總全部販售紀錄，會隨資料量線性變慢** |
+| 排行榜「本週／本月」 | 25～65 ms |
+| 監控快照（每 3 秒／每個開著的網頁） | 約 84 ms，其中金幣趨勢 `monitor_repo.gold_delta_before` **加總全部歷史交易** |
+
+估計 500 人每天約 5 萬筆交易，一年上千萬筆：不處理的話「全部期間」排行榜會超過 Discord 3 秒回應時限。
+已知瓶頸請在第六、七節處理並重新量測；上表是改善前的基準，不是保證。
+
+---
+
+## 一、檢查目前架構
+
+先檢查並整理問題、影響範圍與處理方式，再直接改造：
+
+- 遊戲服務與 CMD 指令（`app/cli/commands.py`）的耦合程度；Discord 指令應對應同一批服務方法。
+- PostgreSQL 資料表、索引、Migration（目前 head 為 0009）與交易處理。
+- FastAPI 監控與管理後台、背景工作。
+- 時間相關機制：作物、動物、加工都以資料庫時間戳記即時計算（沒有排程）；只有排名獎勵與競賽需要結算。
+- 現有測試（`tests/`，約 220 個）、日誌、環境變數與部署方式。
+
+優先沿用現有架構，不要為了接入 Discord 而複製一套遊戲邏輯。
+
+## 二、清除舊玩家資料（破壞性操作，務必小心）
+
+正式改造前，清除舊的 CMD 測試玩家資料，讓 Discord 版本以全新玩家開始；保留資料庫結構與全域設定。
+
+步驟：
+
+1. 確認 `DATABASE_URL` 指向的資料庫（主機、Port、資料庫名稱）並向使用者回報；無法確認是開發、測試或正式資料庫時，停止並回報。
+2. 先用 `pg_dump -Fc` 完成可還原的備份，並確認備份檔大小與可讀取（`pg_restore --list`）。
+3. 依**實際資料表**（以 `app/db/models.py` 與資料庫為準）列出預計清除與保留的資料表及筆數，取得使用者確認後才執行。
+4. 在單一交易中清除；不可刪除整個資料庫、Volume 或重建資料表。
+
+預計清除（玩家與其關聯資料，請以實際結構核對）：
+`players`、`farms`、`farm_plots`、`inventory_items`、`farm_tools`、`farm_effects`、`farm_defenses`、`farm_buildings`、
+`farm_animals`、`craft_orders`、`game_transactions`、`steal_records`、`group_members`、`quest_contributions`、`quest_claims`、
+`competition_contributions`、`competition_results`、`competition_awards`、`ranking_settlements`、`ranking_awards`，
+以及舊 CMD 模擬群組（`groups.discord_guild_id IS NULL`）與只屬於這些群組的 `quests`、`competitions`。
+
+必須保留（全域設定與稽核）：
+`crop_types`、`animal_types`、`crop_genetics_settings`、`game_events`、`ranking_reward_rules`、`admin_actions`、`alembic_version`，
+以及程式內建的道具、防守設施、建築、加工配方（`app/game/balance.py`）。
+
+清除後確認：外鍵與索引完整、`alembic check` 無差異、管理網站可開啟、全部測試通過。
+這個清除只做一次，**不可**寫進啟動流程或 Migration。
+
+## 三、Discord Bot 架構
+
+- 使用目前維護中、支援 Slash Commands／按鈕／下拉選單／Modal 的 Python 函式庫（例如 discord.py 2.x），版本寫入 `requirements.txt`。
+- 新增 `app/discord_bot/`（或相近名稱）作為介面層：只負責接收互動、驗證情境、呼叫遊戲服務、格式化回覆。
+- **遊戲服務是同步（SQLAlchemy Session）程式，Bot 是 asyncio**：每次呼叫服務都必須用 `await asyncio.to_thread(...)`
+  （或專用的有限大小 ThreadPoolExecutor），**不可在事件迴圈中直接呼叫**，否則等待資料庫時整個 Bot 會停住、Gateway 心跳逾時。
+- Discord 互動必須在 3 秒內首次回應；可能較慢的指令（排行榜、結算、批次操作）先 `defer`，完成後再 followup。
+- 錯誤處理：`GameError` 直接回覆玩家（建議 ephemeral）；其他例外記錄日誌，只回覆通用錯誤訊息，不顯示堆疊或 SQL。
+- 指令註冊區分開發伺服器（`DISCORD_DEV_GUILD_ID`，立即同步）與正式環境（全域同步）。
+- 只啟用必要的權限與 Gateway Intents（Slash Commands 通常不需要 Message Content Intent）。
+- CMD 保留作為開發與維護介面；CMD、Bot、網站共用同一套服務與 PostgreSQL。
+- 指令涵蓋現有 CMD 功能（`help` 可列出），不可只建立空指令或假資料。
+
+## 四、玩家、農場與 Discord 伺服器的對應
+
+- 一個 Discord User ID = 一個全域玩家 = 最多一座農場（資料庫已保證，請以測試驗證並發情況）。
+- 一個 Discord Guild 對應 `groups` 一筆資料（`discord_guild_id` 唯一）。Bot 加入或第一次在伺服器使用時建立／取得群組；
+  玩家在某伺服器使用指令時，確保 `group_members` 有對應關聯（取代原本網站的成員管理）。
+- 玩家第一次建立農場時，`home_group_id` 設為執行指令的伺服器對應的群組。
+- 任何操作都以 Discord 互動來源取得 User ID 與 Guild ID，不接受玩家輸入的 ID。
+- 偷菜等群組功能以「目前伺服器」作為 `in_group_context(group_id)`，只能對同一群組成員操作（服務層已驗證）。
+- 私訊（DM）中執行需要群組的指令時，回覆說明而不是猜測群組。
+
+## 五、農場所屬群組轉移（7 天冷卻）
+
+新增指令（例如 `/farm transfer-group`）：
+
+1. 必須在要轉入的伺服器中執行；目標群組由互動的 Guild ID 決定。
+2. 驗證玩家有農場、目標伺服器已完成 Bot 設定、玩家是該伺服器的有效成員。
+3. 顯示目前群組、目標群組、轉移影響與下次可轉移時間，要求按鈕確認（確認逾時則取消）。
+4. 確認後只更新同一座農場的 `home_group_id`，不可複製或刪除農場、金幣、物品、土地。
+
+冷卻規則：
+
+- 首次建立農場不需等待；之後每次成功轉移需等待完整 7 天。
+- 新增持久化欄位（例如 `farms.last_group_transfer_at`）與 Migration；調整 0003 的觸發器，使 `home_group_id` 只能在冷卻條件成立時更新
+  （冷卻檢查同時放在服務層與資料庫層，並在鎖定農場列的交易內完成）。
+- 冷卻以資料庫時間戳記計算；Bot 重啟、離開或重新加入伺服器都不重設。
+- 兩個伺服器同時提交轉移，只能有一筆成功。
+- 冷卻中顯示剩餘時間與下次可轉移時間。
+- 轉移後立即依新群組計入群組排行與群組總排行；歷史交易、任務、競賽、排名獎勵紀錄不改寫。
+- 防止透過轉移重複領獎：已結算的競賽／排名不重算；進行中的任務與競賽依操作當下的 `context_group_id` 計分（現有規則），請以測試驗證。
+- 網站管理員轉移農場需要獨立的管理操作，必填原因並寫入 `admin_actions`；可選擇是否略過冷卻，但必須留下紀錄。
+- 寫入玩家交易紀錄（新增事件類型需同步更新 `models.EVENT_TYPES`、`rules.EventType`／`EVENT_TYPE_LABELS`、Migration 的 CHECK、`web/app.js` 的 `EVENT_LABELS`）。
+
+## 六、500 名玩家的效能與併發
+
+以 `scripts/loadtest.py` 為基礎擴充負載測試（只能對 `_test` 資料庫執行），分別評估：
+
+- 500 名已註冊玩家、100 名同時提交一般指令、500 個操作集中在短時間內。
+- 多人同時查看排行榜、背包與農場。
+- 多人同時偷菜、收成、購買、販售同一批資料（讀寫混合）。
+- 網站管理員同時修改設定與玩家資料。
+- Bot、網站與背景工作同時存取 PostgreSQL。
+
+記錄：成功／失敗數、平均、P95、P99、每秒處理數、連線池等待時間、資料庫連線數，以及逾時、死鎖、重複扣款、
+重複發放與資料不一致的次數。
+
+驗收目標（目標而非保證，未達成請指出瓶頸、改善後重測）：
+
+- 一般指令服務處理時間 P95 < 1 秒；排行榜 P95 < 2 秒（資料量 1,000 萬筆交易時仍需達成）。
+- Discord 首次回應符合 3 秒時限。
+- 不得出現重複扣款、重複發放或無法恢復的資料不一致。
+
+## 七、排行榜與資料量擴大
+
+已確認的問題：`app/repositories/leaderboard.py` 的「全部期間」排行（金幣以外）與群組總排行每次加總全部 `sell` 交易；
+監控快照的金幣趨勢加總全部歷史交易。
+
+請實作並以負載測試證明：
+
+- 維護每座農場的累積統計（例如 `farm_stats`：累積作物販售數量／收入、商品總販售數量／收入），在販售的同一筆交易中更新；
+  提供由 `game_transactions` 重算與一致性檢查的方式（Migration 回填既有資料）。
+- 全域與群組排行使用適合排序的索引，只取需要的前幾名，分頁有上限，同分時次要排序穩定。
+- 期間排行（本日／本週／本月、排名獎勵結算）仍可依 `created_at` 查交易，但需確認索引與 `EXPLAIN ANALYZE` 結果。
+- 監控金幣趨勢改為以目前 `SUM(farms.gold)` 往回扣除近 12 小時的變化，不再加總全部歷史。
+- 不要過早引入 Redis 等額外元件；若加快取，必須有明確的失效方式，網站修改資料後 Bot 要立即看到最新結果。
+
+## 八、連線池與併發
+
+- 目前 `app/db/session.make_engine` 使用 SQLAlchemy 預設連線池（5 + overflow 10）。依 Bot 執行緒數、FastAPI、背景工作計算總連線數，
+  設定 `pool_size`、`max_overflow`、`pool_timeout`，並讓 Bot 的執行緒池大小與連線池相符（可用環境變數設定）。
+- 不可在多個 asyncio 工作間共用同一個 Session；每次服務呼叫自己開關 Session（現有服務已如此）。
+- 交易盡可能短；**不可在持有資料庫鎖時等待 Discord 網路回應**（先完成交易，再回覆 Discord）。
+- 處理連線中斷、連線池耗盡、死鎖與序列化失敗：失敗不得只更新部分資料；可安全重試的情況才重試，且有次數上限。
+
+## 九、避免重複操作與資料競爭
+
+將 Discord、CMD、網站視為可能同時操作同一筆資料的入口。以測試驗證：
+
+- 同一玩家連點按鈕或重複送出指令（Discord 互動可能重送）。
+- 同一土地同時被收成與偷菜、多人同時偷同一株作物。
+- 管理員修改金幣時玩家同時購買。
+- 道具、加工訂單、任務獎勵、排名獎勵不會重複使用或領取。
+- Bot 在交易中途重啟後狀態正確。
+
+現有保護：鎖農場列（`_locked_farm`）、偷菜 `(plot_id, planting_no, thief)` 唯一、任務領取與競賽／排名發獎唯一限制。新功能沿用相同做法。
+
+## 十、背景工作與多程序
+
+- 明確指定每種背景工作由哪個程序執行（建議：排名獎勵與競賽結算由 Bot 或網站其中之一負責，另一方只做查詢時補結算）。
+- 多程序同時執行時用 PostgreSQL advisory lock 或唯一限制協調；不可只靠記憶體旗標。
+- Gateway 重連、Bot 重啟不可重新觸發已執行的結算；遊戲時間一律以資料庫時間戳記恢復。
+- 資料庫暫時中斷時不可回報未提交的操作成功；恢復後先查詢真實狀態再決定是否重試。
+- 主動通知（例如作物成熟、獎勵發放）若要實作，使用有速率控制的佇列，合併訊息，不可逐一大量發送。
+
+## 十一、網頁管理後台必須保留
+
+改造後網站仍須能：搜尋與修改玩家（金幣、等級、背包、土地、建築、動物、作物）、管理作物與動物種類、限時活動、
+品質與突變設定、群組任務與競賽、排名獎勵規則，並查看排行榜、交易與管理操作紀錄。
+
+- 所有修改經後端服務驗證並寫入 `admin_actions`（管理員、時間、目標、修改前後、結果）。
+- 網站與 Bot 共享同一份資料；若加快取，網站修改後必須失效。
+- 網站顯示的 Discord ID 必須是字串。
+
+## 十二、Discord API 速率限制與錯誤處理
+
+- 使用會處理 HTTP 429 的函式庫；不要自己實作無限重試。
+- 一次查詢用一次互動回覆完成；大量通知走有速率控制的佇列。
+- 區分暫時性與永久性錯誤；不可無限重試交易或不斷建立新工作。
+- 500 名玩家不需要分片（Sharding）；依實際伺服器數量與 Gateway 事件量再判斷。
+
+## 十三、安全性
+
+- `DISCORD_BOT_TOKEN`、資料庫密碼等只放在 `.env` 或系統環境變數，`.env` 已在 `.gitignore`；不可提交真實憑證，也不可寫入日誌。
+- 每個指令驗證玩家身分、農場所有權與群組範圍；防止以 ID 參數越權（IDOR）。
+- 網站管理 API 維持現有防護：登入 session（HttpOnly cookie）、`X-Farmgm-Admin` 標頭、同源檢查、`TrustedHostMiddleware`。
+- 錯誤訊息不得洩漏內部堆疊、SQL 或憑證。
+- 目前管理員密碼過於簡單，正式上線前請提醒使用者用 `python -m app.hash_password` 更換。
+
+## 十四、部署與設定
+
+保留現有 PostgreSQL（Docker Compose）與 FastAPI 部署方式，新增 Bot：
+
+- 環境變數（同步更新 `.env.example` 與 `app/config.py`）：`DISCORD_BOT_TOKEN`、`DISCORD_APPLICATION_ID`、`DISCORD_DEV_GUILD_ID`、
+  `APP_ENV`（development／production）、連線池與執行緒池大小。
+- 啟動方式：例如 `python -m app.discord_bot`；與網站可分開啟動、重啟。
+- Slash Commands 同步方式（開發伺服器／全域）。
+- Migration：`alembic upgrade head`；部署更新不得自動刪除玩家或設定。
+- 日誌：Token 錯誤、指令同步失敗、資料庫無法連線都要有清楚訊息（不印出憑證）。
+- 更新 `README.md` 與 `CLAUDE.md`。
+
+## 十五、測試與交付
+
+開發流程：每次修改後執行 `python -m pytest`、`python -m ruff check app tests migrations`、`node --test tests/web/connection.test.js`；
+Migration 在測試資料庫做 upgrade → downgrade -1 → upgrade → `alembic check`，再套用到開發資料庫（先備份）。
+
+至少實際測試：
+
+1. Bot 可登入並同步指令（若無法連上 Discord，Bot 介面層以模擬互動物件做單元測試，並明確說明哪些未在真實 Discord 驗證）。
+2. 同一 Discord 使用者只能有一座全域農場（含並行建立）。
+3. 群組轉移與 7 天冷卻，不能被重啟或並行請求繞過。
+4. 全域、群組內、群組總排行的範圍正確。
+5. 500 名玩家、混合讀寫的負載測試，以及 1,000 萬筆交易量的排行榜效能。
+6. 多人同時操作不會重複扣款或重複取得物品。
+7. Bot 與網站資料一致；網站仍可修改玩家、作物、動物與其他設定。
+8. Bot 斷線、重啟及資料庫暫時中斷後狀態正確。
+9. 背景結算在多程序同時執行時不重複發獎。
+
+完成後回報：修改的檔案與 Migration、舊玩家資料清除的實際範圍與筆數、Discord 指令清單、群組轉移功能、
+網站管理功能確認清單、負載測試環境與前後對照結果、排行榜 SQL 與索引改善、實際通過的測試、未完成項目與已知限制、
+啟動與故障排查文件。
+
+不得宣稱未實際執行的測試已通過；效能未達標時直接指出原因與建議。

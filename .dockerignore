@@ -1,0 +1,26 @@
+# 不要把密碼、Token 打包進映像：設定由 docker compose 的 env_file 在執行時傳入
+.env
+.env.*
+!.env.example
+
+.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.git/
+
+# 執行期資料與備份（音樂設定放在 Volume farmgm_data）
+data/
+backups/
+*.dump
+
+# 映像不需要的檔案
+tests/
+scripts/
+docker/
+YTDiscordBot-main/
+*.md
+*.txt
+!requirements.txt
+*.bat

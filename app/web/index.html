@@ -1,0 +1,827 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>農場即時監控</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <!-- 圖示（內嵌 SVG，符合 CSP，不載入外部資源） -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></symbol>
+    <symbol id="i-barn" viewBox="0 0 24 24"><path d="M3 21V10l9-6 9 6v11"/><path d="M9 21v-6h6v6"/><path d="M2 21h20"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-user-cog" viewBox="0 0 24 24"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><circle cx="18" cy="17" r="2.5"/><path d="M18 12.5v2M18 19.5v2M14.1 14.8l1.7 1M20.2 18.2l1.7 1M14.1 19.2l1.7-1M20.2 15.8l1.7-1"/></symbol>
+    <symbol id="i-backpack" viewBox="0 0 24 24"><path d="M4 10a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M8 14h8M8 18h8"/></symbol>
+    <symbol id="i-sprout" viewBox="0 0 24 24"><path d="M7 21h10"/><path d="M12 21v-9"/><path d="M12 12C12 8 9 5 4 5c0 4 3 7 8 7z"/><path d="M12 10c0-3 2.5-6 8-6 0 4-3 6-8 6z"/></symbol>
+    <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M11 3l1.8 4.7 4.7 1.8-4.7 1.8L11 16l-1.8-4.7L4.5 9.5l4.7-1.8z"/><path d="M19 14l.8 2.2 2.2.8-2.2.8L19 20l-.8-2.2L16 17l2.2-.8z"/></symbol>
+    <symbol id="i-paw" viewBox="0 0 24 24"><circle cx="11" cy="4" r="2"/><circle cx="18" cy="8" r="2"/><circle cx="20" cy="16" r="2"/><path d="M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.05Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10z"/></symbol>
+    <symbol id="i-factory" viewBox="0 0 24 24"><path d="M2 21h20"/><path d="M4 21V9l5 3V9l5 3V5h4l2 16"/><path d="M8 17h1M13 17h1"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 22V4"/><path d="M4 4h12l-2 4 2 4H4"/></symbol>
+    <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4"/><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></symbol>
+    <symbol id="i-gift" viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/><path d="M7.5 8a2.5 2.5 0 0 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 0 1 0 5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-coins" viewBox="0 0 24 24"><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m8.5 12 2.5 2.5 4.5-5"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-droplet" viewBox="0 0 24 24"><path d="M12 2.7 6.3 8.4a8 8 0 1 0 11.4 0z"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></symbol>
+  </svg>
+
+  <div class="app-shell" id="app-shell">
+    <!-- ===== 側邊導覽列 ===== -->
+    <aside class="sidebar" id="sidebar" aria-label="主選單">
+      <div class="sidebar-brand">
+        <span class="brand-mark" aria-hidden="true"><svg class="icon"><use href="#i-sprout"/></svg></span>
+        <span class="brand-text"><strong>農場營運中心</strong><small>Farm GM Console</small></span>
+        <button id="drawer-close" type="button" class="icon-btn drawer-only" aria-label="關閉選單"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <nav class="tabs" id="tabs" aria-label="管理頁面導覽">
+        <p class="nav-group">總覽</p>
+        <button type="button" data-tab="overview" title="儀表板"><svg class="icon"><use href="#i-dashboard"/></svg><span>儀表板</span></button>
+        <button type="button" data-tab="farms" title="農場監控"><svg class="icon"><use href="#i-barn"/></svg><span>農場監控</span></button>
+        <button type="button" data-tab="groups" title="群組"><svg class="icon"><use href="#i-users"/></svg><span>群組</span></button>
+
+        <p class="nav-group">遊戲管理</p>
+        <button type="button" data-tab="players" title="玩家調整"><svg class="icon"><use href="#i-user-cog"/></svg><span>玩家調整</span></button>
+        <button type="button" data-tab="backpack" title="玩家背包"><svg class="icon"><use href="#i-backpack"/></svg><span>玩家背包</span></button>
+        <button type="button" data-tab="crops" title="作物種類"><svg class="icon"><use href="#i-sprout"/></svg><span>作物種類</span></button>
+        <button type="button" data-tab="genetics" title="品質與突變"><svg class="icon"><use href="#i-sparkles"/></svg><span>品質與突變</span></button>
+        <button type="button" data-tab="animals" title="動物種類"><svg class="icon"><use href="#i-paw"/></svg><span>動物種類</span></button>
+        <button type="button" data-tab="ranch" title="養殖與加工"><svg class="icon"><use href="#i-factory"/></svg><span>養殖與加工</span></button>
+
+        <p class="nav-group">活動管理</p>
+        <button type="button" data-tab="events" title="限時活動"><svg class="icon"><use href="#i-calendar"/></svg><span>限時活動</span></button>
+        <button type="button" data-tab="community" title="任務與競賽"><svg class="icon"><use href="#i-flag"/></svg><span>任務與競賽</span></button>
+        <button type="button" data-tab="leaderboard" title="排行榜"><svg class="icon"><use href="#i-trophy"/></svg><span>排行榜</span></button>
+        <button type="button" data-tab="rewards" title="排名獎勵"><svg class="icon"><use href="#i-gift"/></svg><span>排名獎勵</span></button>
+
+        <p class="nav-group">系統紀錄</p>
+        <button type="button" data-tab="steals" title="偷菜與防守"><svg class="icon"><use href="#i-shield"/></svg><span>偷菜與防守</span></button>
+        <button type="button" data-tab="logs" title="操作紀錄"><svg class="icon"><use href="#i-list"/></svg><span>操作紀錄</span></button>
+      </nav>
+      <div class="sidebar-foot">
+        <button id="sidebar-collapse" type="button" class="nav-collapse" aria-label="收合側邊欄" aria-expanded="true" title="收合側邊欄">
+          <svg class="icon"><use href="#i-panel"/></svg><span>收合選單</span>
+        </button>
+      </div>
+    </aside>
+    <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+
+    <div class="workspace">
+      <!-- ===== 頂部工具列 ===== -->
+      <header class="topbar">
+        <button id="drawer-open" type="button" class="icon-btn drawer-only" aria-label="開啟選單" aria-controls="sidebar" aria-expanded="false">
+          <svg class="icon"><use href="#i-menu"/></svg>
+        </button>
+        <div class="page-heading">
+          <h1 id="page-title">儀表板</h1>
+          <p id="page-desc" class="muted small">資料來源：PostgreSQL・台灣時間（UTC+8）</p>
+        </div>
+        <label class="top-search">
+          <svg class="icon" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="top-search" type="search" maxlength="40" placeholder="搜尋玩家或農場…" aria-label="搜尋玩家或農場（按 Enter 前往農場監控）">
+        </label>
+        <div class="conn">
+          <span id="conn-status" class="pill pill-wait" role="status" aria-live="polite">連線中…</span>
+          <span class="muted small sync-line">最後同步 <span id="last-sync">—</span></span>
+          <span id="edit-pause" class="muted small" hidden>操作中，自動更新暫停（約 20 秒無操作後恢復）</span>
+        </div>
+        <details class="admin-menu" id="admin-menu">
+          <summary class="admin-trigger">
+            <svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>
+            <span id="admin-trigger-text">管理員</span>
+          </summary>
+          <div class="admin-pop">
+            <div id="admin-login" class="admin-login" hidden>
+              <p class="pop-title"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>管理員登入</p>
+              <label>帳號<input id="admin-user" type="text" maxlength="64" autocomplete="username" aria-label="管理員帳號"></label>
+              <label>密碼<input id="admin-pass" type="password" maxlength="128" autocomplete="current-password" aria-label="密碼"></label>
+              <button id="admin-login-btn" type="button" class="primary">登入</button>
+            </div>
+            <div id="admin-bar" class="admin-bar" hidden>
+              <p class="pop-title"><span class="badge good">管理員</span><span id="admin-name" class="small"></span></p>
+              <button id="admin-logout" type="button"><svg class="icon" aria-hidden="true"><use href="#i-logout"/></svg>登出</button>
+            </div>
+            <p id="admin-note" class="muted small"></p>
+          </div>
+        </details>
+      </header>
+
+      <div id="error-banner" class="banner" hidden role="alert"></div>
+
+      <!-- 玩家搜尋建議清單（輸入名稱或 ID 時顯示） -->
+      <datalist id="player-options"></datalist>
+      <datalist id="farm-player-options"></datalist>
+
+      <main>
+        <!-- ===== 儀表板 ===== -->
+        <div class="tab-panel" data-tab-panel="overview">
+          <section class="kpi-grid" aria-label="營運總覽">
+            <article class="kpi card">
+              <div class="kpi-head"><span class="kpi-icon tone-green" aria-hidden="true"><svg class="icon"><use href="#i-users"/></svg></span><span class="label">玩家總數</span></div>
+              <span class="value" data-key="players">—</span>
+              <span class="kpi-sub" data-sub="players">—</span>
+            </article>
+            <article class="kpi card">
+              <div class="kpi-head"><span class="kpi-icon tone-soil" aria-hidden="true"><svg class="icon"><use href="#i-barn"/></svg></span><span class="label">農場總數</span></div>
+              <span class="value" data-key="farms">—</span>
+              <span class="kpi-sub" data-sub="farms">—</span>
+            </article>
+            <article class="kpi card">
+              <div class="kpi-head"><span class="kpi-icon tone-gold" aria-hidden="true"><svg class="icon"><use href="#i-coins"/></svg></span><span class="label">全服總金幣</span></div>
+              <span class="value" data-key="total_gold">—</span>
+              <span class="kpi-sub" data-sub="total_gold">—</span>
+            </article>
+            <article class="kpi card">
+              <div class="kpi-head"><span class="kpi-icon tone-info" aria-hidden="true"><svg class="icon"><use href="#i-activity"/></svg></span><span class="label">今日操作數</span></div>
+              <span class="value" data-key="transactions_today">—</span>
+              <span class="kpi-sub" data-sub="transactions_today">—</span>
+            </article>
+          </section>
+
+          <div class="dash-grid">
+            <section class="panel" aria-labelledby="plot-status-title">
+              <div class="panel-head">
+                <h2 id="plot-status-title">土地與作物狀態</h2>
+                <span class="muted small">共 <strong data-key="plots">—</strong> 格土地</span>
+              </div>
+              <div id="plot-status-bar" class="stack-bar" role="img" aria-label="土地狀態分布"></div>
+              <ul class="status-legend" id="plot-status-legend">
+                <li><i class="dot st-empty"></i><span>空地</span><strong data-derived="empty">—</strong></li>
+                <li><i class="dot st-water"></i><span>等待澆水</span><strong data-key="waiting_water">—</strong></li>
+                <li><i class="dot st-grow"></i><span>生長中</span><strong data-key="growing">—</strong></li>
+                <li><i class="dot st-ready"></i><span>可收成</span><strong data-key="ready">—</strong></li>
+                <li><i class="dot st-wither"></i><span>已乾枯</span><strong data-key="withered">—</strong></li>
+              </ul>
+              <p class="muted small">狀態依伺服器時間即時計算；「等待澆水」的作物不會開始生長。</p>
+            </section>
+
+            <section class="panel" aria-labelledby="ops-title">
+              <div class="panel-head">
+                <h2 id="ops-title">營運活動</h2>
+                <span id="ops-status" class="muted small" role="status" aria-live="polite">載入中…</span>
+              </div>
+              <div class="mini-stats">
+                <a class="mini-stat" href="#events"><span class="label">生效中限時活動</span><strong id="ops-events">—</strong></a>
+                <a class="mini-stat" href="#community"><span class="label">進行中任務</span><strong id="ops-quests">—</strong></a>
+                <a class="mini-stat" href="#community"><span class="label">進行中競賽</span><strong id="ops-comps">—</strong></a>
+                <a class="mini-stat tone-bad" href="#steals"><span class="label">今日偷菜成功</span><strong data-key="steals_today">—</strong></a>
+                <a class="mini-stat tone-good" href="#steals"><span class="label">今日阻止偷菜</span><strong data-key="blocks_today">—</strong></a>
+                <a class="mini-stat" href="#backpack"><span class="label">倉庫物品總數</span><strong data-key="inventory_items">—</strong></a>
+              </div>
+              <h3 class="sub-title">目前生效的限時活動</h3>
+              <ul id="ops-event-list" class="chip-list"><li class="muted small">載入中…</li></ul>
+            </section>
+          </div>
+
+          <section class="charts" aria-label="圖表">
+            <figure class="panel">
+              <figcaption>各作物種植狀態</figcaption>
+              <div class="legend">
+                <span><i class="swatch s1"></i>生長中</span>
+                <span><i class="swatch s2"></i>可收成</span>
+              </div>
+              <div id="chart-crops" class="chart"></div>
+            </figure>
+            <figure class="panel">
+              <figcaption>每小時操作數（近 12 小時）</figcaption>
+              <div class="legend"><span><i class="swatch s1"></i>操作數</span></div>
+              <div id="chart-activity" class="chart"></div>
+            </figure>
+            <figure class="panel">
+              <figcaption>全服金幣總量（近 12 小時，依交易紀錄累計）</figcaption>
+              <div class="legend"><span><i class="swatch s1"></i>總金幣</span></div>
+              <div id="chart-gold" class="chart"></div>
+            </figure>
+          </section>
+
+          <section class="panel" aria-labelledby="recent-title">
+            <div class="panel-head">
+              <h2 id="recent-title">最新遊戲活動</h2>
+              <a class="link-btn" href="#logs">查看完整紀錄<svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></a>
+            </div>
+            <ul id="recent-activity" class="activity-list" aria-live="off"><li class="empty-state is-loading">載入中…</li></ul>
+          </section>
+        </div>
+
+        <!-- ===== 農場 ===== -->
+        <div class="tab-panel" data-tab-panel="farms" hidden>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>農場列表</h2>
+              <input id="farm-search" type="search" maxlength="40" placeholder="搜尋玩家或農場名稱" aria-label="搜尋玩家或農場名稱">
+            </div>
+            <p id="farm-note" class="muted small" hidden></p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>玩家</th><th>農場</th><th>所屬群組</th><th class="num">等級</th><th class="num">金幣</th>
+                    <th class="num">土地</th><th class="num">空地</th><th class="num">待澆水</th><th class="num">生長中</th>
+                    <th class="num">可收成</th><th class="num">乾枯</th><th class="num">倉庫</th><th>最近更新</th>
+                  </tr>
+                </thead>
+                <tbody id="farm-rows" data-page-size="20"><tr><td colspan="13" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <p class="muted small">點選一列（或以 Tab 移到該列後按 Enter）查看該農場的土地與倉庫。</p>
+          </section>
+
+          <section id="farm-detail" class="panel" hidden>
+            <div class="panel-head">
+              <h2 id="detail-title">農場詳情</h2>
+              <button id="detail-close" type="button">關閉</button>
+            </div>
+            <p id="detail-meta" class="muted"></p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th class="num">土地</th><th>作物</th><th>播種時間</th><th>澆水時間</th><th>預計成熟</th><th>剩餘時間</th><th class="num">剩餘數量</th><th>狀態</th></tr>
+                </thead>
+                <tbody id="plot-rows" data-page-size="20"></tbody>
+              </table>
+            </div>
+            <h3>倉庫</h3>
+            <p id="detail-inventory" class="muted"></p>
+          </section>
+        </div>
+
+        <!-- ===== 群組 ===== -->
+        <div class="tab-panel" data-tab-panel="groups" hidden>
+          <section class="panel" aria-labelledby="groups-title">
+            <div class="panel-head">
+              <h2 id="groups-title">群組</h2>
+            </div>
+            <p class="muted small">點選群組查看成員。群組的建立與成員管理由 Discord 端處理，網站只提供檢視。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="num">ID</th><th>群組名稱</th><th class="num">成員數</th><th>Discord Guild ID</th><th>建立時間</th></tr></thead>
+                <tbody id="group-rows" data-page-size="15" data-filter="篩選群組名稱或 ID"><tr><td colspan="5" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          <section id="group-detail" class="panel" hidden>
+            <div class="panel-head">
+              <h2 id="group-detail-title">群組成員</h2>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>玩家</th><th>農場</th><th class="num">等級</th><th class="num">金幣</th><th class="num">土地</th>
+                  <th class="num">待澆水</th><th class="num">生長中</th><th class="num">可收成</th><th class="num">乾枯</th>
+                  <th class="num">倉庫</th><th>列入本群組排行</th><th>加入時間</th></tr>
+                </thead>
+                <tbody id="group-member-rows" data-page-size="20" data-filter="篩選成員名稱"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- ===== 排行榜 ===== -->
+        <div class="tab-panel" data-tab-panel="leaderboard" hidden>
+          <section class="panel" aria-labelledby="lb-title">
+            <div class="panel-head">
+              <h2 id="lb-title">排行榜</h2>
+            </div>
+            <div class="controls filters">
+              <div class="seg" role="group" aria-label="排行榜範圍">
+                <button type="button" data-lb-scope="global" class="on">總排行榜</button>
+                <button type="button" data-lb-scope="group">群組內排行</button>
+                <button type="button" data-lb-scope="groups">群組總排行</button>
+              </div>
+              <select id="lb-group" aria-label="選擇群組" hidden></select>
+              <div class="seg" role="group" aria-label="排行榜種類">
+                <button type="button" data-lb-kind="money" class="on">金幣</button>
+                <button type="button" data-lb-kind="sales">農產品販售</button>
+                <button type="button" data-lb-kind="goods">商品總販售</button>
+              </div>
+              <div class="seg" role="group" aria-label="統計期間">
+                <button type="button" data-lb-period="all" class="on">全部</button>
+                <button type="button" data-lb-period="day">本日</button>
+                <button type="button" data-lb-period="week">本週</button>
+                <button type="button" data-lb-period="month">本月</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="leaderboard">
+                <thead id="lb-head"></thead>
+                <tbody id="lb-rows" data-page-size="20" data-filter="篩選玩家名稱"><tr><td class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <p id="lb-note" class="muted small">顯示前 100 名。</p>
+          </section>
+        </div>
+
+        <!-- ===== 偷菜與防守 ===== -->
+        <div class="tab-panel" data-tab-panel="steals" hidden>
+          <section class="panel" aria-labelledby="steal-title">
+            <div class="panel-head">
+              <h2 id="steal-title">偷菜紀錄</h2>
+            </div>
+            <div class="controls filters">
+              <select id="steal-group" aria-label="依群組篩選"><option value="">全部群組</option></select>
+              <input id="steal-player" type="search" list="player-options" placeholder="玩家名稱或 ID（偷菜者或被偷者）" aria-label="依玩家篩選">
+              <select id="steal-outcome" aria-label="依結果篩選">
+                <option value="">全部結果</option><option value="success">偷菜成功</option><option value="blocked">被阻止</option>
+              </select>
+              <label class="small inline">從 <input id="steal-from" type="date"></label>
+              <label class="small inline">到 <input id="steal-to" type="date"></label>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>時間</th><th>群組</th><th>偷菜者</th><th>被偷者</th><th>作物</th><th class="num">數量</th><th class="num">土地</th><th>結果</th></tr></thead>
+                <tbody id="steal-rows" data-page-size="20"><tr><td colspan="8" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <p class="muted small">依條件查詢最近 200 筆。</p>
+          </section>
+
+          <section class="panel" aria-labelledby="def-title">
+            <h2 id="def-title">防守設施</h2>
+            <p class="muted small">各農場持有的防守設施與守護範圍（唯讀）。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>玩家</th><th>農場</th><th>設施</th><th class="num">阻止機率</th><th>守護範圍</th><th>取得時間</th></tr></thead>
+                <tbody id="def-rows" data-page-size="20" data-filter="篩選玩家、農場或設施"><tr><td colspan="6" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- ===== 養殖與加工 ===== -->
+        <div class="tab-panel" data-tab-panel="ranch" hidden>
+          <section class="panel" aria-labelledby="ranch-title">
+            <h2 id="ranch-title">農場養殖概況</h2>
+            <p class="muted small">各農場的畜舍容量、動物狀態、飼料（餵食費用）與加工設施（唯讀）。動物種類的設定請到「動物種類」頁。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>玩家</th><th>農場</th><th>設施</th><th class="num">養殖容量</th><th class="num">待餵食</th>
+                  <th class="num">生產中</th><th class="num">可收集</th><th class="num">餵食待餵食動物需</th><th>下次可收集</th></tr></thead>
+                <tbody id="ranch-rows" data-page-size="15" data-filter="篩選玩家或農場"><tr><td colspan="9" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel">
+            <h2>玩家飼養的動物</h2>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>玩家</th><th class="num">編號</th><th>動物</th><th>狀態</th><th>餵食時間</th><th>可收集時間</th>
+                  <th>剩餘時間</th><th>每次產量</th><th class="num">已完成週期</th></tr></thead>
+                <tbody id="animal-rows" data-page-size="20" data-filter="篩選玩家、動物或狀態"><tr><td colspan="9" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel">
+            <h2>加工訂單</h2>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="num">訂單</th><th>玩家</th><th>設施</th><th>配方</th><th>已扣原料</th><th class="num">成品</th>
+                  <th>開始時間</th><th>預計完成</th><th>剩餘時間</th><th>狀態</th></tr></thead>
+                <tbody id="order-rows" data-page-size="20" data-filter="篩選玩家、配方或狀態"><tr><td colspan="10" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <!-- ===== 任務與競賽 ===== -->
+        <div class="tab-panel" data-tab-panel="community" hidden>
+          <p class="guest-hint guest-only"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>目前為檢視模式。登入管理員後可建立、取消與結算任務和競賽。</p>
+          <section class="panel" aria-labelledby="community-title">
+            <div class="panel-head">
+              <h2 id="community-title">群組任務</h2>
+              <button id="comp-settle" type="button" class="admin-only" hidden>結算到期競賽</button>
+            </div>
+            <p class="muted small">只有「操作時所在群組 = 農場主要群組」的成功操作才會計分；每筆操作最多計入一個群組。任務與競賽建立後條件不可修改，取消須填寫原因。</p>
+
+            <details id="quest-form-box" class="admin-only form-box" hidden>
+              <summary>新增群組任務</summary>
+              <p class="form-hint">標示「必填」的欄位必須填寫，其餘為選填。</p>
+              <div class="form-grid">
+                <label class="req">群組 <select id="qf-group" required></select></label>
+                <label class="req">名稱 <input id="qf-name" type="text" maxlength="60" required></label>
+                <label class="wide">說明 <input id="qf-desc" type="text" maxlength="300"></label>
+                <label>類型
+                  <select id="qf-type">
+                    <option value="harvest">共同收成</option><option value="sell">共同販售</option>
+                    <option value="build">農場建設</option><option value="animal">動物生產</option>
+                    <option value="defense">防守任務</option>
+                  </select>
+                </label>
+                <label>計量
+                  <select id="qf-metric"><option value="quantity">數量／次數</option><option value="amount">金額（只限販售）</option></select>
+                </label>
+                <label>動物產品
+                  <select id="qf-filter"><option value="">全部</option></select>
+                </label>
+                <label class="req">目標 <input id="qf-target" type="number" min="1" max="1000000" step="1" value="10" required></label>
+                <label>獎勵模式
+                  <select id="qf-mode"><option value="fixed">每位貢獻者固定獎勵</option><option value="proportional">獎池依貢獻比例分配</option></select>
+                </label>
+                <label>獎勵類型
+                  <select id="qf-reward"><option value="gold">金幣</option><option value="fertilizer">化肥</option><option value="earthworm">人工養殖蚯蚓</option><option value="patrol_ticket">巡查券</option></select>
+                </label>
+                <label class="req">獎勵數量 <input id="qf-amount" type="number" min="1" max="1000000" step="1" value="100" required></label>
+                <label class="req">開始 <input id="qf-start" type="datetime-local" required></label>
+                <label class="req">截止 <input id="qf-end" type="datetime-local" required></label>
+              </div>
+              <div class="form-actions">
+                <button id="qf-submit" type="button" class="primary">建立任務</button>
+              </div>
+            </details>
+
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="num">ID</th><th>群組</th><th>名稱</th><th>目標</th><th class="num">進度</th><th>狀態</th>
+                  <th>獎勵</th><th>截止</th><th></th></tr></thead>
+                <tbody id="quest-rows" data-page-size="15" data-filter="篩選任務、群組或狀態"><tr><td colspan="9" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <div id="quest-detail" class="subpanel" hidden>
+              <h3 id="quest-detail-title"></h3>
+              <p id="quest-detail-meta" class="muted small"></p>
+              <div class="bp-grid">
+                <div><h4>個人貢獻</h4><ol id="quest-contributors" class="scroll-list"></ol></div>
+                <div><h4>獎勵領取紀錄</h4><ul id="quest-claims" class="scroll-list"></ul></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>群組競賽</h2>
+            <details id="comp-form-box" class="admin-only form-box" hidden>
+              <summary>新增群組競賽</summary>
+              <p class="form-hint">標示「必填」的欄位必須填寫，其餘為選填。</p>
+              <div class="form-grid">
+                <label class="req">名稱 <input id="cf-name" type="text" maxlength="60" required></label>
+                <label>類型
+                  <select id="cf-type">
+                    <option value="harvest">群組收成大賽</option><option value="sales">群組銷售大賽</option>
+                    <option value="development">群組農場發展大賽</option><option value="defense">群組防守大賽</option>
+                  </select>
+                </label>
+                <label class="wide">說明 <input id="cf-desc" type="text" maxlength="300"></label>
+                <label>第 1 名（金幣／人） <input id="cf-r1" type="number" min="0" max="100000" step="1" value="500"></label>
+                <label>第 2 名 <input id="cf-r2" type="number" min="0" max="100000" step="1" value="300"></label>
+                <label>第 3 名 <input id="cf-r3" type="number" min="0" max="100000" step="1" value="100"></label>
+                <label class="req">開始 <input id="cf-start" type="datetime-local" required></label>
+                <label class="req">截止 <input id="cf-end" type="datetime-local" required></label>
+              </div>
+              <div class="form-actions">
+                <button id="cf-submit" type="button" class="primary">建立競賽</button>
+              </div>
+            </details>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="num">ID</th><th>名稱</th><th>類型</th><th>狀態</th><th>期間</th><th>獎勵（金幣／人）</th><th></th></tr></thead>
+                <tbody id="comp-rows" data-page-size="15" data-filter="篩選競賽名稱、類型或狀態"><tr><td colspan="7" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <div id="comp-detail" class="subpanel" hidden>
+              <h3 id="comp-detail-title"></h3>
+              <p id="comp-detail-meta" class="muted small"></p>
+              <div class="bp-grid">
+                <div><h4>群組排名</h4><ol id="comp-ranking" class="scroll-list"></ol></div>
+                <div><h4>個人貢獻</h4><ol id="comp-players" class="scroll-list"></ol></div>
+                <div><h4>結算獎勵</h4><ul id="comp-awards" class="scroll-list"></ul></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- ===== 品質與突變 ===== -->
+        <div class="tab-panel" data-tab-panel="genetics" hidden>
+          <section class="panel" aria-labelledby="genetics-title">
+            <h2 id="genetics-title">作物品質與突變</h2>
+            <p id="genetics-meta" class="muted small">載入中…</p>
+            <div class="bp-grid">
+              <div>
+                <h3>品質</h3>
+                <div class="table-wrap"><table>
+                  <thead><tr><th>品質</th><th class="num">基礎機率</th><th class="num">售價倍率</th></tr></thead>
+                  <tbody id="gen-quality-rows"></tbody>
+                </table></div>
+              </div>
+              <div>
+                <h3>突變（每批最多一個）</h3>
+                <div class="table-wrap"><table>
+                  <thead><tr><th>突變</th><th class="num">機率</th><th>效果</th></tr></thead>
+                  <tbody id="gen-mutation-rows"></tbody>
+                </table></div>
+              </div>
+              <div>
+                <h3>作物生長時間</h3>
+                <div class="table-wrap"><table>
+                  <thead><tr><th>作物</th><th class="num">生長時間（秒）</th><th class="num">基本售價</th><th>修改</th></tr></thead>
+                  <tbody id="gen-crop-rows"></tbody>
+                </table></div>
+              </div>
+            </div>
+
+            <details id="genetics-form-box" class="admin-only form-box" hidden>
+              <summary>調整品質與突變設定（建立新版本；只影響之後播種的作物與之後的販售單價）</summary>
+              <div class="form-grid" id="genetics-form"></div>
+              <p id="genetics-form-check" class="muted small" role="status" aria-live="polite"></p>
+              <div class="form-actions">
+                <button id="genetics-submit" type="button" class="primary">套用新設定</button>
+              </div>
+            </details>
+          </section>
+          <section class="panel">
+            <h2>統計（依品質／突變，皆來自實際紀錄）</h2>
+            <div class="bp-grid">
+              <div><h4>種植中</h4><ul id="gen-stat-planted" class="scroll-list"></ul></div>
+              <div><h4>收成</h4><ul id="gen-stat-harvested" class="scroll-list"></ul></div>
+              <div><h4>被偷取</h4><ul id="gen-stat-stolen" class="scroll-list"></ul></div>
+              <div><h4>販售</h4><ul id="gen-stat-sold" class="scroll-list"></ul></div>
+              <div><h4>目前持有</h4><ul id="gen-stat-holdings" class="scroll-list"></ul></div>
+            </div>
+          </section>
+        </div>
+
+        <!-- ===== 玩家背包 ===== -->
+        <div class="tab-panel" data-tab-panel="backpack" hidden>
+          <section class="panel" aria-labelledby="bp-title">
+            <div class="panel-head">
+              <h2 id="bp-title">玩家背包</h2>
+              <input id="bp-player" type="search" list="farm-player-options" placeholder="輸入玩家名稱或 ID" aria-label="選擇玩家">
+            </div>
+            <div id="bp-body" class="bp-grid"><p class="muted">請輸入玩家名稱或 ID，從建議清單選擇後查看背包。</p></div>
+          </section>
+        </div>
+
+        <!-- ===== 排名獎勵 ===== -->
+        <div class="tab-panel" data-tab-panel="rewards" hidden>
+          <p class="guest-hint guest-only"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>目前為檢視模式。登入管理員後可新增、修改或結算排名獎勵。</p>
+          <section class="panel" aria-labelledby="rr-title">
+            <div class="panel-head">
+              <h2 id="rr-title">排名獎勵規則</h2>
+              <button id="rr-settle" type="button" class="admin-only" hidden>立即結算到期期間</button>
+            </div>
+            <p class="muted small">每日、每週（週一 00:00 起）、每月（1 日 00:00 起）以台灣時間結算；期間結束 1 分鐘後由網頁服務自動結算並發獎（CMD 查詢排行時也會補結算）。
+              群組排名＝主要所屬群組為該群組的成員加總，獎勵發給該群組全體成員；個人排名只發給該玩家。只有分數大於 0 才會得獎，同分時依次要條件與 ID 排序。
+              金幣排名在期間內計算「淨賺金幣」（不含建立農場、管理員調整與各種獎勵）。修改獎勵從下一次結算起生效；停用或改週期後從現在起算，不回溯補發。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="num">ID</th><th>名稱</th><th>對象</th><th>項目</th><th>週期</th><th>獎勵</th><th>本期</th><th>下次結算</th><th>狀態</th><th class="admin-only" hidden></th></tr></thead>
+                <tbody id="rr-rows" data-page-size="10" data-filter="篩選規則名稱"><tr><td colspan="10" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <details id="rr-form-box" class="admin-only form-box" hidden>
+              <summary id="rr-form-title">新增排名獎勵規則</summary>
+              <div class="form-grid">
+                <label class="req">名稱 <input id="rr-name" type="text" maxlength="60" placeholder="每週群組金幣王" required></label>
+                <label>排名對象
+                  <select id="rr-scope"><option value="group">群組（獎勵發給群組全體成員）</option><option value="individual">個人</option></select>
+                </label>
+                <label>排名項目
+                  <select id="rr-metric"><option value="money">金幣（期間淨賺）</option><option value="sales">農產品販售（數量）</option><option value="goods">商品總販售（收入）</option></select>
+                </label>
+                <label>結算週期
+                  <select id="rr-period"><option value="daily">每日</option><option value="weekly" selected>每週</option><option value="monthly">每月</option></select>
+                </label>
+                <label class="check"><input id="rr-enabled" type="checkbox" checked> 啟用</label>
+              </div>
+              <h4>各名次獎勵（金幣最多 10,000,000；道具最多 100 個）</h4>
+              <div id="rr-rewards"></div>
+              <div class="controls">
+                <button id="rr-add-rank" type="button">增加名次</button>
+                <button id="rr-remove-rank" type="button">移除最後一個名次</button>
+              </div>
+              <div class="form-actions">
+                <button id="rr-submit" type="button" class="primary">新增規則</button>
+                <button id="rr-reset" type="button">清除表單（改為新增）</button>
+              </div>
+              <p id="rr-note" class="form-note" role="status" aria-live="polite"></p>
+            </details>
+          </section>
+          <section class="panel" aria-labelledby="rs-title">
+            <h2 id="rs-title">結算紀錄</h2>
+            <p class="muted small">點選紀錄查看當期排名與得獎名單。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="num">ID</th><th>規則</th><th>期間</th><th>第 1 名</th><th class="num">得獎人次</th><th>結算時間</th><th>結算者</th></tr></thead>
+                <tbody id="rs-rows" data-page-size="10" data-filter="篩選規則或得獎者"><tr><td colspan="7" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <div id="rs-detail" class="subpanel" hidden></div>
+          </section>
+        </div>
+
+        <!-- ===== 限時活動 ===== -->
+        <div class="tab-panel" data-tab-panel="events" hidden>
+          <p class="guest-hint guest-only"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>目前為檢視模式。登入管理員後可新增、修改、停用或刪除活動；所有變更都會寫入管理操作紀錄。</p>
+          <section class="panel" aria-labelledby="ev-title">
+            <div class="panel-head">
+              <h2 id="ev-title">限時活動</h2>
+              <button id="catalog-refresh" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>重新整理</button>
+            </div>
+            <p id="ev-help" class="muted small">活動在操作當下判斷是否生效：播種時決定品質、突變與收成量；澆水時決定生長時間；販售作物時決定單價。多個活動同時生效時加成相加，但有上限。每日／每週時段以台灣時間計算。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="num">ID</th><th>名稱</th><th>對象</th><th>效果</th><th>時間</th><th>狀態</th><th class="admin-only" hidden></th></tr></thead>
+                <tbody id="event-rows" data-page-size="10" data-filter="篩選活動名稱或效果"><tr><td colspan="7" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <details id="event-form-box" class="admin-only form-box" hidden>
+              <summary id="ef-title">新增活動</summary>
+              <p class="form-hint">標示「必填」的欄位必須填寫；效果欄位維持預設值代表不加成。</p>
+              <fieldset class="form-section">
+                <legend>基本資料</legend>
+                <div class="form-grid">
+                  <label class="req">名稱 <input id="ef-name" type="text" maxlength="60" required></label>
+                  <label>對象作物 <select id="ef-crop"><option value="">全部作物</option></select></label>
+                  <label class="wide">說明 <input id="ef-desc" type="text" maxlength="300"></label>
+                </div>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>效果</legend>
+                <div class="form-grid">
+                  <label>售價倍率（倍，1 = 不變） <input id="ef-sell" type="number" min="1" max="3" step="0.01" value="1"></label>
+                  <label>生長時間減少（%） <input id="ef-grow" type="number" min="0" max="90" step="1" value="0"></label>
+                  <label>品質加成（%） <input id="ef-quality" type="number" min="0" max="30" step="0.01" value="0"></label>
+                  <label>突變機率加成（%） <input id="ef-mutation" type="number" min="0" max="30" step="0.01" value="0"></label>
+                  <label>收成數量加成（%） <input id="ef-harvest" type="number" min="0" max="200" step="1" value="0"></label>
+                  <label>大風颳走（收成時每格少幾個，至少留 1 個） <input id="ef-wind" type="number" min="0" max="10" step="1" value="0"></label>
+                  <label class="check wide"><input id="ef-free-water" type="checkbox"> 免澆水（活動期間種下立即開始生長）</label>
+                </div>
+              </fieldset>
+              <fieldset class="form-section">
+                <legend>排程</legend>
+                <div class="form-grid">
+                  <label>排程類型
+                    <select id="ef-schedule"><option value="once">單次（開始～結束）</option><option value="daily">每日固定時段</option><option value="weekly">每週固定星期與時段</option></select>
+                  </label>
+                  <label>開始（單次必填；每日／每週可留空） <input id="ef-start" type="datetime-local"></label>
+                  <label>結束（單次必填；每日／每週可留空） <input id="ef-end" type="datetime-local"></label>
+                  <label data-ef-window>每天開始時刻（HH:MM） <input id="ef-time-start" type="text" maxlength="5" placeholder="18:00" inputmode="numeric" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" data-pattern-hint="請用 24 小時制 HH:MM，例如 18:00"></label>
+                  <label data-ef-window>每天結束時刻（HH:MM，可 24:00） <input id="ef-time-end" type="text" maxlength="5" placeholder="20:00" inputmode="numeric" pattern="(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)" data-pattern-hint="請用 24 小時制 HH:MM（可填 24:00），例如 20:00"></label>
+                  <fieldset id="ef-weekdays" class="wide checks"><legend>星期（每週）</legend></fieldset>
+                  <label class="check"><input id="ef-enabled" type="checkbox" checked> 啟用</label>
+                </div>
+              </fieldset>
+              <div class="form-actions">
+                <button id="ef-submit" type="button" class="primary">新增活動</button>
+                <button id="ef-reset" type="button">清除表單（改為新增）</button>
+              </div>
+              <p id="ef-note" class="form-note" role="status" aria-live="polite"></p>
+            </details>
+          </section>
+        </div>
+
+        <!-- ===== 作物種類 ===== -->
+        <div class="tab-panel" data-tab-panel="crops" hidden>
+          <p class="guest-hint guest-only"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>目前為檢視模式。登入管理員後可新增、修改、停用或刪除作物。</p>
+          <section class="panel" aria-labelledby="crop-admin-title">
+            <h2 id="crop-admin-title">作物種類</h2>
+            <p class="muted small">代碼建立後不可修改。已被使用（土地、背包、交易、偷菜、活動或加工配方）的作物只能停用：停用後不能購買種子或種植，已種下、已持有的仍可收成與販售。生長時間修改只影響之後澆水的作物。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>代碼</th><th>名稱</th><th class="num">種子價格</th><th class="num">生長時間</th><th class="num">收成量</th><th class="num">售價</th><th>珍稀變種</th><th>狀態</th><th class="admin-only" hidden></th></tr></thead>
+                <tbody id="crop-admin-rows" data-page-size="15" data-filter="篩選作物代碼或名稱"><tr><td colspan="9" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <details id="crop-form-box" class="admin-only form-box" hidden>
+              <summary id="crf-title">新增作物</summary>
+              <p class="form-hint">所有欄位皆為必填。代碼只能用英文小寫開頭，可包含小寫字母、數字與底線（2–32 字）。</p>
+              <div class="form-grid">
+                <label class="req">代碼（英文小寫） <input id="crf-code" type="text" maxlength="32" placeholder="pumpkin" required pattern="[a-z][a-z0-9_]{1,31}" data-pattern-hint="小寫英文字母開頭，只能包含小寫字母、數字與底線，2–32 字"></label>
+                <label class="req">名稱 <input id="crf-name" type="text" maxlength="32" required></label>
+                <label class="req">種子價格 <input id="crf-seed" type="number" min="1" step="1" value="10" required></label>
+                <label class="req">生長秒數 <input id="crf-grow" type="number" min="60" step="1" value="7200" required></label>
+                <label class="req">收成數量 <input id="crf-qty" type="number" min="1" max="100" step="1" value="2" required></label>
+                <label class="req">售價 <input id="crf-sell" type="number" min="0" step="1" value="15" required></label>
+                <label class="req">珍稀變種代碼 <input id="crf-vcode" type="text" maxlength="32" placeholder="golden_pumpkin" required pattern="[a-z][a-z0-9_]{1,31}" data-pattern-hint="小寫英文字母開頭，只能包含小寫字母、數字與底線，2–32 字"></label>
+                <label class="req">珍稀變種名稱 <input id="crf-vname" type="text" maxlength="32" required></label>
+              </div>
+              <div class="form-actions">
+                <button id="crf-submit" type="button" class="primary">新增作物</button>
+                <button id="crf-reset" type="button">清除表單（改為新增）</button>
+              </div>
+              <p id="crf-note" class="form-note" role="status" aria-live="polite"></p>
+            </details>
+          </section>
+        </div>
+
+        <!-- ===== 動物種類 ===== -->
+        <div class="tab-panel" data-tab-panel="animals" hidden>
+          <p class="guest-hint guest-only"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>目前為檢視模式。登入管理員後可新增、修改、停用或刪除動物種類。</p>
+          <section class="panel" aria-labelledby="animal-admin-title">
+            <h2 id="animal-admin-title">動物種類</h2>
+            <p class="muted small">這裡是動物的種類設定；玩家實際飼養的動物請到「養殖與加工」頁查看。代碼與產品代碼建立後不可修改。已被使用（農場動物、背包、交易或任務）的動物只能停用：停用後不能購買，已飼養的仍可餵食、收集與販售產品。週期修改從下次餵食起生效。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>代碼</th><th>名稱</th><th class="num">價格</th><th class="num">餵食費用</th><th class="num">生產週期</th><th>產品</th><th class="num">每次產量</th><th class="num">產品售價</th><th>狀態</th><th class="admin-only" hidden></th></tr></thead>
+                <tbody id="animal-admin-rows" data-page-size="15" data-filter="篩選動物或產品"><tr><td colspan="10" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <details id="animal-form-box" class="admin-only form-box" hidden>
+              <summary id="atf-title">新增動物</summary>
+              <p class="form-hint">所有欄位皆為必填。代碼規則同作物：小寫英文字母開頭，可包含小寫字母、數字與底線。</p>
+              <div class="form-grid">
+                <label class="req">代碼（英文小寫） <input id="atf-code" type="text" maxlength="32" placeholder="duck" required pattern="[a-z][a-z0-9_]{1,31}" data-pattern-hint="小寫英文字母開頭，只能包含小寫字母、數字與底線，2–32 字"></label>
+                <label class="req">名稱 <input id="atf-name" type="text" maxlength="32" required></label>
+                <label class="req">購買價格 <input id="atf-price" type="number" min="1" step="1" value="500" required></label>
+                <label class="req">餵食費用 <input id="atf-feed" type="number" min="0" step="1" value="20" required></label>
+                <label class="req">生產週期秒數 <input id="atf-cycle" type="number" min="60" step="1" value="86400" required></label>
+                <label class="req">產品代碼 <input id="atf-pcode" type="text" maxlength="32" placeholder="duck_egg" required pattern="[a-z][a-z0-9_]{1,31}" data-pattern-hint="小寫英文字母開頭，只能包含小寫字母、數字與底線，2–32 字"></label>
+                <label class="req">產品名稱 <input id="atf-pname" type="text" maxlength="32" required></label>
+                <label class="req">每次產量 <input id="atf-pqty" type="number" min="1" max="100" step="1" value="1" required></label>
+                <label class="req">產品售價 <input id="atf-pprice" type="number" min="0" step="1" value="30" required></label>
+              </div>
+              <div class="form-actions">
+                <button id="atf-submit" type="button" class="primary">新增動物</button>
+                <button id="atf-reset" type="button">清除表單（改為新增）</button>
+              </div>
+              <p id="atf-note" class="form-note" role="status" aria-live="polite"></p>
+            </details>
+          </section>
+        </div>
+
+        <!-- ===== 玩家調整 ===== -->
+        <div class="tab-panel" data-tab-panel="players" hidden>
+          <p class="guest-hint guest-only"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>調整玩家資料需要管理員權限，請先從右上角登入。只想查看玩家持有物品，請使用「玩家背包」頁。</p>
+          <section id="player-admin" class="panel admin-only" aria-labelledby="pa-title" hidden>
+            <div class="panel-head">
+              <h2 id="pa-title">調整玩家</h2>
+              <div class="controls">
+                <input id="pa-player" type="search" list="farm-player-options" placeholder="輸入玩家名稱或 ID" aria-label="選擇要調整的玩家">
+                <button id="pa-refresh" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>重新整理</button>
+              </div>
+            </div>
+            <p class="muted small">直接修改玩家的金幣、農場等級、背包、土地、建築、動物與作物。每次調整都會寫入玩家交易紀錄（管理員調整）與管理操作紀錄，且不計入任務或競賽。</p>
+            <p id="pa-note" class="form-note" role="status" aria-live="polite"></p>
+            <div id="pa-body"><p class="muted">請輸入玩家名稱或 ID，從建議清單選擇。</p></div>
+          </section>
+        </div>
+
+        <!-- ===== 操作紀錄 ===== -->
+        <div class="tab-panel" data-tab-panel="logs" hidden>
+          <section class="panel">
+            <h2>最新遊戲操作（最近 20 筆，即時更新）</h2>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>時間</th><th>玩家</th><th>農場</th><th>操作</th><th>物品</th><th class="num">數量</th><th class="num">金幣變化</th><th>描述</th></tr>
+                </thead>
+                <tbody id="tx-rows" data-page-size="10" data-filter="篩選玩家、操作或描述"><tr><td colspan="8" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel">
+            <h2>管理操作紀錄</h2>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>時間</th><th>管理員</th><th>操作</th><th>對象</th><th>內容</th></tr></thead>
+                <tbody id="admin-action-rows" data-page-size="10" data-filter="篩選管理員或操作"><tr><td colspan="5" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- 確認對話框（危險或重要操作；文字一律以 textContent 填入） -->
+  <dialog id="confirm-dialog" class="dialog" aria-labelledby="cd-title">
+    <div class="dialog-body">
+      <div class="dialog-head">
+        <span id="cd-icon" class="dialog-icon" aria-hidden="true"><svg class="icon"><use href="#i-alert"/></svg></span>
+        <h2 id="cd-title">確認操作</h2>
+      </div>
+      <p id="cd-message"></p>
+      <table id="cd-diff" class="diff-table" hidden>
+        <thead><tr><th>項目</th><th>調整前</th><th>調整後</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <label id="cd-reason-box" class="dialog-reason" hidden>
+        <span id="cd-reason-label">原因</span>
+        <textarea id="cd-reason" rows="3" maxlength="200"></textarea>
+        <span id="cd-reason-error" class="field-error" hidden></span>
+      </label>
+      <div class="dialog-actions">
+        <button type="button" id="cd-cancel">取消</button>
+        <button type="button" id="cd-ok" class="primary">確認</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+  <div id="tooltip" class="tooltip" hidden></div>
+</body>
+</html>

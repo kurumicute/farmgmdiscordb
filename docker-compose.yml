@@ -1,0 +1,146 @@
+# 監控網站／介紹網站／Discord Bot 共用設定：同一個映像（Dockerfile），其他設定讀 .env，
+# 只把「連到其他容器」的位址改成服務名稱，並讓網站在容器內監聽 0.0.0.0（對外仍只綁定本機 Port）
+x-farmgm-app: &farmgm-app
+  build: .
+  image: farmgm-app:latest
+  restart: unless-stopped
+  # 由 init 程序轉送 SIGTERM（Python 當 PID 1 時收不到預設處理，docker compose stop 會等 10 秒後強制終止）
+  init: true
+  env_file: .env
+  environment: &farmgm-app-env
+    # 容器內以服務名稱連線；POSTGRES_PASSWORD 只能用英數字與 . _ ~ -（直接放進網址，未做編碼）
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-farmgm}
+    LAVALINK_URI: http://lavalink:2333
+    APP_HOST: 0.0.0.0
+    APP_PORT: "8000"
+    SITE_HOST: 0.0.0.0
+    SITE_PORT: "24444"
+    # glibc 預設每個執行緒最多 8×CPU 個 malloc arena，Bot 的執行緒池會讓記憶體碎片化；限制為 2 個
+    MALLOC_ARENA_MAX: "2"
+  depends_on:
+    postgres:
+      condition: service_healthy
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # 資料庫只有數十 MB，預設 shared_buffers=128MB 用不到；32MB 已足夠快取全部資料（資料變大時再調高）
+    command: ["postgres", "-c", "shared_buffers=32MB"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?請在 .env 設定 POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?請在 .env 設定 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-farmgm}
+    ports:
+      # 僅綁定本機，不對區域網路公開
+      - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - farmgm_pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # 音樂播放伺服器（Lavalink v4）：負責解析 YouTube 並把音訊送到 Discord 語音，音樂 Bot 不需要 ffmpeg。
+  # 使用預設（Ubuntu／glibc）映像：Discord 語音加密 DAVE 需要 glibc 2.35 以上，Alpine 版本可能無法初始化。
+  lavalink:
+    image: ghcr.io/lavalink-devs/lavalink:4.2.2
+    restart: unless-stopped
+    environment:
+      LAVALINK_SERVER_PASSWORD: ${LAVALINK_PASSWORD:?請在 .env 設定 LAVALINK_PASSWORD}
+      # SerialGC 的額外記憶體比預設 G1 少，Free Ratio 讓閒置時把用不到的 heap 還給系統（單一 Bot 規模不需要並行 GC）；
+      # -Xms 預設是 VM 記憶體的 1/64（約 250MB），heap 不會縮到比它小，所以明確設小
+      _JAVA_OPTIONS: "-Xms64M -Xmx${LAVALINK_MAX_HEAP:-512M} -XX:+UseSerialGC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30"
+      # youtube-plugin 的 remoteCipher 密碼（與 yt-cipher 的 API_TOKEN 相同）
+      PLUGINS_YOUTUBE_REMOTECIPHER_PASSWORD: ${YT_CIPHER_TOKEN:?請在 .env 設定 YT_CIPHER_TOKEN}
+      # 選用：YouTube OAuth refresh token（Google 分身帳號），未設定時 Lavalink 啟動會在日誌顯示授權代碼
+      PLUGINS_YOUTUBE_OAUTH_REFRESHTOKEN: ${YOUTUBE_OAUTH_REFRESH_TOKEN:-}
+    depends_on:
+      - yt-cipher
+    # 讓 docker compose up --wait（start.bat）等到 Lavalink 真的能接受連線
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -o /dev/null -H \"Authorization: $${LAVALINK_SERVER_PASSWORD}\" http://127.0.0.1:2333/version"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    ports:
+      # 僅綁定本機；Bot 透過 LAVALINK_URI 連線
+      - "127.0.0.1:${LAVALINK_PORT:-2333}:2333"
+    volumes:
+      # 插件（youtube-plugin）在容器第一次啟動時下載到容器內，重建容器時會重新下載
+      - ./docker/lavalink/application.yml:/opt/Lavalink/application.yml:ro
+
+  # YouTube 簽章解析服務（yt-cipher，https://github.com/kikkia/yt-cipher）：youtube-plugin 已不自行解析簽章，
+  # 由 Lavalink 的 remoteCipher 呼叫。只在 Docker 內部網路提供（不開 Port），以 YT_CIPHER_TOKEN 驗證；映像以 digest 固定版本。
+  yt-cipher:
+    image: ghcr.io/kikkia/yt-cipher@sha256:4c5ec381ff57336cfc24822d2b526a5ad7cd0171f61065a1bbc87bb736842449
+    restart: unless-stopped
+    environment:
+      API_TOKEN: ${YT_CIPHER_TOKEN:?請在 .env 設定 YT_CIPHER_TOKEN}
+      OVERRIDE_PLAYER_VARIANT: IAS
+      # 預設每個 CPU 執行緒一個 worker（這台 12 個）；只有點歌時才解析簽章，2 個就夠
+      MAX_THREADS: "2"
+
+  # 監控／管理網站（python -m app.main）。程式啟動時只檢查 Migration，不會自動升級：
+  # 有新 Migration 時先備份，再執行 docker compose run --rm web python -m alembic upgrade head
+  web:
+    <<: *farmgm-app
+    command: ["python", "-m", "app.main"]
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/monitor/summary', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
+  # 介紹網站（python -m app.site）；要對外公開時把下面的 127.0.0.1 改成 0.0.0.0（或放在反向代理後面）
+  site:
+    <<: *farmgm-app
+    command: ["python", "-m", "app.site"]
+    ports:
+      - "127.0.0.1:${SITE_PORT:-24444}:24444"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:24444/api/stats', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
+  # Discord Bot（python -m app.discord_bot，農場＋內建音樂）；需要 .env 的 DISCORD_BOT_TOKEN。
+  # 同一個 Token 只能有一個 Bot 程序，容器在執行時不要再從主機啟動 Bot
+  bot:
+    <<: *farmgm-app
+    command: ["python", "-m", "app.discord_bot"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      lavalink:
+        condition: service_started
+    volumes:
+      - farmgm_data:/app/data
+
+  # 選用：獨立音樂 Bot（設定 MUSIC_BOT_TOKEN 時）。docker compose --profile music up -d 才會啟動
+  music:
+    <<: *farmgm-app
+    command: ["python", "-m", "app.music"]
+    profiles: ["music"]
+    depends_on:
+      lavalink:
+        condition: service_started
+    volumes:
+      - farmgm_data:/app/data
+
+volumes:
+  farmgm_pgdata:
+  # 音樂的伺服器設定（data/music_guild_settings.json）
+  farmgm_data:

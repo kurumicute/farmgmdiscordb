@@ -1,0 +1,232 @@
+# 移植到其他電腦：需要安裝的軟體、套件與步驟
+
+適用：把這個專案（農場 Discord Bot＋音樂＋管理網站＋介紹網站）搬到另一台 Windows 電腦。
+原本的 Discord Bot 改造需求已另存為 `discordbot_原始需求.txt`。
+以下版本是 2026-10-28 在原電腦實際運作並通過全部測試的版本。
+
+---
+
+## 一、要安裝的軟體
+
+| 軟體 | 版本 | 用途 | 必要性 |
+|---|---|---|---|
+| Python | 3.12 以上（原電腦 3.12.2） | 執行 Bot、網站、CMD、測試 | 必要 |
+| Docker Desktop | 有 `docker compose` 即可（原電腦 Docker 29.8、Compose v5.6） | 執行 PostgreSQL 16 與 Lavalink（音樂伺服器） | 必要 |
+| Node.js | 18 以上（原電腦 v24） | 只用於前端測試（`node --check`、`node --test`） | 選用 |
+| Git | 任意 | 用 Git 取得專案時才需要 | 選用 |
+
+**不需要再安裝**（舊版音樂才需要，現在已改用 Lavalink）：ffmpeg、yt-dlp、deno、Java。
+Lavalink 需要的 Java 已包含在 Docker 映像中，電腦本身不用裝 Java。
+
+### Docker 映像（第一次 `docker compose up -d` 會自動下載）
+
+| 映像 | 大小 | 說明 |
+|---|---|---|
+| `postgres:16-alpine` | 約 420 MB | 資料庫（唯一資料來源） |
+| `ghcr.io/lavalink-devs/lavalink:4.2.2` | 約 570 MB | 音樂播放伺服器；必須用這個預設（Ubuntu／glibc）版本，Alpine 版的 Discord 語音加密 DAVE 可能無法初始化 |
+| `ghcr.io/kikkia/yt-cipher`（以 digest 固定） | 約 185 MB | YouTube 簽章解析（Lavalink 的 remoteCipher）；只在 Docker 內部網路，不開 Port |
+
+### Lavalink 插件（每次建立 Lavalink 容器時自動下載，需要網路）
+
+| 插件 | 版本 | 下載來源 |
+|---|---|---|
+| youtube-plugin（YouTube 來源） | snapshot f45bbb7（1.18.2 對多數影片失敗，等上游正式修正版） | maven.lavalink.dev/snapshots |
+
+設定在 `docker/lavalink/application.yml`，版本已固定，不需要手動下載。
+若新電腦的網路擋了上述網站，Lavalink 會啟動失敗（`docker compose logs lavalink` 可看到下載錯誤）。
+
+---
+
+## 二、Python 套件（裝在專案的虛擬環境 `.venv`）
+
+由 `requirements-dev.txt` 一次安裝（它會先安裝 `requirements.txt`）：
+
+| 套件 | 版本需求 | 原電腦實際版本 | 用途 |
+|---|---|---|---|
+| fastapi | >=0.115,<1.0 | 0.162.0 | 管理網站、介紹網站 |
+| uvicorn[standard] | >=0.30,<1.0 | 0.54.0 | 網站伺服器 |
+| SQLAlchemy | >=2.0.30,<3.0 | 2.1.6 | 資料庫存取 |
+| psycopg[binary] | >=3.2,<4.0 | 3.3.6 | PostgreSQL 驅動 |
+| alembic | >=1.13,<2.0 | 1.20.1 | 資料庫 Migration |
+| pydantic-settings | >=2.4,<3.0 | 2.16.1 | 讀取 `.env` |
+| discord.py | ==2.7.1 | 2.7.1 | Discord Bot |
+| wavelink | ==3.5.2 | 3.5.2 | 連線 Lavalink 播放音樂（支援 DAVE） |
+| Pillow | >=11,<13 | 12.3.0 | Discord 面板的農田／建築／商店圖片 |
+| pytest | >=8 | 9.1.1 | 測試（開發用） |
+| httpx | >=0.27 | 0.28.1 | API 測試（開發用） |
+| ruff | >=0.6 | 0.17.3 | 程式檢查（開發用） |
+| psutil | >=5.9 | 7.2.2 | 壓力測試量測 CPU／記憶體（開發用） |
+
+注意：
+- **不要直接複製舊電腦的 `.venv` 資料夾**，路徑寫死在裡面，搬過去不能用；在新電腦重新建立。
+- 一律用 `.\.venv\Scripts\python.exe` 執行。用系統的 `python` 執行會缺少套件（例如介紹網站會因讀不到設定而失敗）。
+
+---
+
+## 三、要一起搬過去的檔案
+
+| 項目 | 要不要搬 | 說明 |
+|---|---|---|
+| 專案程式碼 | 要 | zip 或 Git 都可以 |
+| `.env` | **不會**隨 Git 移轉 | 含密碼與 Token；在新電腦用 `.env.example` 重新建立（見第四節），或用安全的方式另外傳送，不要放進 Git、聊天或雲端公開資料夾 |
+| 資料庫資料 | 視需要 | 用 `pg_dump` 匯出、`pg_restore` 匯入（見第五節）；不要複製 Docker Volume 資料夾 |
+| `data/music_guild_settings.json` | 選用 | 各 Discord 伺服器的音樂音量與前綴；不搬就恢復預設值 |
+| `backups/`、`*.dump` | 選用 | 舊的資料庫備份 |
+| `.venv/`、`__pycache__/`、`.pytest_cache/`、`.ruff_cache/` | 不要 | 新電腦重新產生 |
+
+---
+
+## 四、安裝步驟（在專案資料夾開 PowerShell）
+
+1. 安裝 Python 3.12+ 與 Docker Desktop，並啟動 Docker Desktop（等它顯示 Running）。
+
+2. 建立 `.env`：
+   ```powershell
+   Copy-Item .env.example .env
+   notepad .env
+   ```
+   必須修改：
+   - `POSTGRES_PASSWORD`：資料庫密碼；`DATABASE_URL` 與 `TEST_DATABASE_URL` 裡的 `change-me` 要改成同一組。
+   - `LAVALINK_PASSWORD`：任意一組隨機字串（Bot 與 Lavalink 共用；未設定時 `docker compose` 會直接報錯）。
+   - `YT_CIPHER_TOKEN`：任意一組隨機字串（Lavalink 與 yt-cipher 共用；未設定時 `docker compose` 會直接報錯）。
+   - `DISCORD_BOT_TOKEN`、`DISCORD_APPLICATION_ID`：要啟動 Discord Bot 時才需要。
+   - `ADMIN_USERNAME`、`ADMIN_PASSWORD_HASH`：要用管理網站的管理功能時才需要（見步驟 6）。
+
+3. 啟動資料庫與 Lavalink（先不要啟動網站與 Bot：資料表還沒建立，它們的啟動檢查會失敗並不斷重啟）：
+   ```powershell
+   docker compose up -d postgres lavalink yt-cipher
+   docker compose logs lavalink
+   ```
+   Lavalink 日誌出現 `Loaded 'youtube-plugin-f45bbb7aebfcbc1c553769e04af6cd43afa8b7c3.jar'` 與
+   `Lavalink is ready to accept connections` 即正常（第一次需要下載映像與插件，約 1–2 分鐘）。
+   第一次啟動時會自動建立 `farmgm` 與 `farmgm_test` 兩個資料庫。
+
+4. 建立虛擬環境並安裝套件：
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+   ```
+
+5. 建立資料表（目前 Migration head 為 0012；兩種方式擇一，第二種不需要步驟 4 的 .venv）：
+   ```powershell
+   .\.venv\Scripts\python.exe -m alembic upgrade head
+   docker compose run --rm web python -m alembic upgrade head
+   ```
+
+6. 設定管理員密碼（要用管理網站的新增／修改功能時）：
+   ```powershell
+   .\.venv\Scripts\python.exe -m app.hash_password
+   ```
+   把輸出的整串（`scrypt:` 開頭、將近百個字元）貼到 `.env` 的 `ADMIN_PASSWORD_HASH=`。
+   **不要填明文密碼**，填明文會一直登不進去。帳號（`ADMIN_USERNAME`）建議不要和密碼相同。
+
+7. 驗證：
+   ```powershell
+   .\.venv\Scripts\python.exe -m pytest
+   .\.venv\Scripts\python.exe -m ruff check app tests migrations scripts
+   node --test tests/web/connection.test.js     # 有裝 Node.js 才需要
+   ```
+
+8. 啟動：管理網站、介紹網站、Discord Bot 都在 Docker 的 Linux 容器執行（同一個映像 `farmgm-app`，由專案的 `Dockerfile` 建置）。
+   雙擊 `start.bat`，或：
+   ```powershell
+   docker compose up -d --build --wait     # 管理網站 http://127.0.0.1:8000、介紹網站 http://127.0.0.1:24444、Bot
+   docker compose ps                       # web／site 應顯示 healthy
+   docker compose logs -f bot              # 出現「Bot 已登入」即正常
+   docker compose --profile music up -d    # 選用：有設定 MUSIC_BOT_TOKEN 時啟動獨立音樂 Bot
+   docker compose stop                     # 停止（不要用 down -v，會刪除資料庫）
+   ```
+   - 容器讀 `.env`，但連線位址會改成容器名稱（`postgres:5432`、`lavalink:2333`），`.env` 的 `DATABASE_URL`／`LAVALINK_URI` 只給主機上的程式用。
+     因此 `POSTGRES_PASSWORD` 只能使用英數字與 `. _ ~ -`（compose 直接放進連線網址，沒有編碼）。
+   - 修改 `.env` 後：`docker compose up -d --force-recreate web site bot`；修改 `LAVALINK_PASSWORD`、`YT_CIPHER_TOKEN`
+     或 `YOUTUBE_OAUTH_REFRESH_TOKEN` 後還要加上 `lavalink yt-cipher`。修改程式碼後要加 `--build` 重建映像。
+   - 同一個 Bot Token 只能有一個程序：容器執行中時，不要再用 `.\.venv\Scripts\python.exe -m app.discord_bot` 從主機啟動；
+     主機的網站也會和容器搶 8000／24444 Port。要在主機上開發時先 `docker compose stop web site bot`。
+   - 有新的 Migration 時，網站與 Bot 的啟動檢查會失敗（日誌顯示「請執行 alembic upgrade head」）：先備份資料庫，再執行步驟 5。
+   - 音樂的伺服器設定（`data/music_guild_settings.json`）在容器內，存於 Volume `farmgm_farmgm_data`。
+
+---
+
+## 五、搬移舊電腦的資料庫資料（選用）
+
+PowerShell 的 `>` 會破壞二進位檔，一律在容器內產生檔案再用 `docker cp` 複製。
+
+舊電腦：
+```powershell
+docker exec farmgm-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" -Fc -f /tmp/farmgm.dump farmgm'
+docker cp farmgm-postgres-1:/tmp/farmgm.dump .
+```
+
+新電腦（完成第四節步驟 3 之後；**會覆蓋新電腦上的資料，先確認目標資料庫**）：
+```powershell
+docker cp farmgm.dump farmgm-postgres-1:/tmp/farmgm.dump
+docker exec farmgm-postgres-1 sh -c 'pg_restore -U "$POSTGRES_USER" --clean --if-exists -d farmgm /tmp/farmgm.dump'
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe scripts/farm_stats.py check
+```
+
+- 容器名稱 `farmgm-postgres-1` 取決於專案資料夾名稱，用 `docker compose ps` 確認。
+- 如果新電腦沿用了舊的 Docker Volume（`farmgm_farmgm_pgdata`），資料庫密碼必須是當初建立 Volume 時的密碼。
+- 不要執行 `docker compose down -v`，會刪除資料庫 Volume。
+
+---
+
+## 六、Discord 端需要準備的東西
+
+- Discord Developer Portal 的應用程式：Bot Token、Application ID。
+- 邀請 Bot 時需要的權限：檢視頻道、傳送訊息、嵌入連結、附加檔案、讀取訊息紀錄、**連接**、**說話**
+  （介紹網站的「邀請機器人」連結已包含，需設定 `DISCORD_APPLICATION_ID`）。
+- 開發時建議設定 `DISCORD_DEV_GUILD_ID`（指令立即同步到測試伺服器）。
+- 只有 `MUSIC_PREFIX_COMMANDS=true`（使用 `!play` 等前綴指令）時，才需要在 Developer Portal 開啟 Message Content Intent。
+- 想把音樂拆成獨立程序：另建一個 Discord 應用程式，設定 `MUSIC_BOT_TOKEN`（兩個程序不可共用 Token），
+  再另外執行 `docker compose --profile music up -d`（`start.bat` 偵測到 `MUSIC_BOT_TOKEN` 會自動啟動）。
+
+---
+
+## 七、使用的連接埠（都只綁定本機 127.0.0.1）
+
+| Port | 服務 |
+|---|---|
+| 5434 | PostgreSQL（Docker） |
+| 2333 | Lavalink（Docker） |
+| 8000 | 管理網站 |
+| 24444 | 介紹網站（對外公開時把 `docker-compose.yml` 中 site 的 `127.0.0.1:` 改成 `0.0.0.0:`，並自行處理防火牆與 HTTPS） |
+
+新電腦上若已有其他程式占用，可在 `.env` 改 `POSTGRES_PORT`、`LAVALINK_PORT`（同時改 `LAVALINK_URI`）、`APP_PORT`、`SITE_PORT`。
+
+---
+
+## 八、資源需求（原電腦實測）
+
+- 全部容器合計約 560–620 MiB（優化前約 1,050 MiB；`docker stats` 實測）：
+  Lavalink 約 260 MiB（SerialGC、`-Xms64M`，上限 `LAVALINK_MAX_HEAP` 預設 512M）、yt-cipher 約 95 MiB（`MAX_THREADS=2`）、
+  PostgreSQL 約 30 MiB（`shared_buffers=32MB`，資料變大時再調高）、Bot／網站／介紹網站各約 70–80 MiB。
+- Windows 上的 VmmemWSL 還包含 Docker 本身（約 475 MiB）與 Linux 的磁碟快取，會停在上限附近；可用 `%UserProfile%\.wslconfig` 的
+  `[wsl2] memory=` 限制上限（改完要 `wsl --shutdown` 再重開 Docker Desktop，期間所有容器會停止；註解只用 ASCII，格式錯誤時 WSL 會直接忽略）。
+  原電腦實測 `memory=2GB` ＋ `.env` 的 `LAVALINK_MAX_HEAP=384M`：重建映像、loadtest 100 萬筆、bot_stresstest 200 人＋300 伺服器、
+  music_stresstest 都通過，VM 程式用量高峰約 1.2 GB、swap 最多約 80 MB，VmmemWSL 約 2.05 GB。swap 持續增加時改回 3GB。
+- Docker 映像約 1.5 GB 磁碟空間。
+- 需要網路：Discord、YouTube（音樂）、第一次安裝套件與下載映像／插件；介紹網站會載入 Google Fonts（連不到時改用系統字型）。
+
+---
+
+## 九、常見問題
+
+| 狀況 | 原因與處理 |
+|---|---|
+| `docker compose up -d` 出現「請在 .env 設定 …」 | `.env` 不存在或缺少 `POSTGRES_PASSWORD`／`LAVALINK_PASSWORD` |
+| 程式啟動出現 `database_url Field required` | `.env` 不存在，或不是在專案資料夾執行 |
+| `failed to connect to the docker API` | Docker Desktop 沒有啟動 |
+| 管理員登不進去 | `ADMIN_PASSWORD_HASH` 填成明文；改用 `python -m app.hash_password` 產生的雜湊，並重啟管理網站 |
+| `[啟動失敗] 資料庫 Migration 尚未套用到最新版本` | 執行 `alembic upgrade head` |
+| 點歌顯示「音樂伺服器（Lavalink）目前無法連線」 | `docker compose ps` 確認 lavalink 在執行；檢查 `.env` 的 `LAVALINK_URI`／`LAVALINK_PASSWORD` 與容器一致 |
+| Lavalink 啟動失敗、日誌有下載錯誤 | 網路擋了 maven.lavalink.dev 或 jitpack.io |
+| 網頁改了但畫面沒變 | 瀏覽器快取，按 Ctrl + F5；後端（.py）改了要重啟程式 |
+| 介紹網站名稱或數字跑回舊的 | 確認是用 `.venv` 的 Python 啟動、且已重新啟動 `app.site` |
+
+---
+
+## 十、尚未驗證的部分
+
+- 尚未在真實 Discord 伺服器測試（需要 Bot Token 與測試伺服器），包括 Lavalink 實際語音播放與 DAVE 語音加密。
+- 移植後第一次上線，建議先在測試伺服器：建立農場、種田、`/play` 播一首 YouTube 與一首 Spotify 歌曲，確認有聲音（B 站已停止支援）。

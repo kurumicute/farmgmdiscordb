@@ -1,0 +1,83 @@
+# Lavalink v4 設定（docker compose 的 lavalink 服務）。音樂 Bot 透過 wavelink 連線到這裡播放，Bot 本身不需要 ffmpeg。
+# 密碼不寫在這個檔案：由 .env 的 LAVALINK_PASSWORD 經環境變數 LAVALINK_SERVER_PASSWORD 傳入。
+server:
+  port: 2333
+  address: 0.0.0.0
+  http2:
+    enabled: false
+
+lavalink:
+  plugins:
+    # YouTube 官方插件（Lavalink v4 內建的 YouTube 來源已停止維護）
+    # 暫用 snapshot（commit f45bbb7，maven.lavalink.dev/snapshots）：1.18.2 對多數影片失敗（SABR、簽章解析），
+    # 上游 youtube-source #240／#244 尚未發布修正版；正式版（1.18.3 以上）發布後改回固定版本並設 snapshot: false
+    - dependency: "dev.lavalink.youtube:youtube-plugin:f45bbb7aebfcbc1c553769e04af6cd43afa8b7c3"
+      snapshot: true
+    # B 站（lavabili-plugin）已停止支援：風控（HTTP 412）與插件錯誤導致多數影片無法播放
+  server:
+    sources:
+      youtube: false # 改用上面的 youtube-plugin
+      bandcamp: false
+      soundcloud: true
+      twitch: false
+      vimeo: false
+      nico: false
+      http: false # 不允許播放任意網址（避免被拿來存取內部網路）
+      local: false
+    filters:
+      volume: true
+      equalizer: true # 必須開啟：wavelink 每次 play() 都會送出預設的 equalizer（增益 0），關閉時 Lavalink 回 400
+      karaoke: false
+      timescale: false
+      tremolo: false
+      vibrato: false
+      distortion: false
+      rotation: false
+      channelMix: false
+      lowPass: false
+    bufferDurationMs: 400
+    frameBufferDurationMs: 5000
+    opusEncodingQuality: 10
+    resamplingQuality: LOW
+    trackStuckThresholdMs: 10000
+    useSeekGhosting: true
+    youtubePlaylistLoadLimit: 6
+    playerUpdateInterval: 5
+    youtubeSearchEnabled: true
+    soundcloudSearchEnabled: true
+    gc-warnings: true
+
+plugins:
+  youtube:
+    enabled: true
+    allowSearch: true
+    allowDirectVideoIds: true
+    allowDirectPlaylistIds: true
+    # 簽章由 docker compose 的 yt-cipher 服務解析；密碼由環境變數 PLUGINS_YOUTUBE_REMOTECIPHER_PASSWORD（.env 的 YT_CIPHER_TOKEN）傳入
+    remoteCipher:
+      url: "http://yt-cipher:8001"
+      userAgent: "farmgm"
+    # Google 帳號 OAuth（只有 TV 用戶端使用；建議用分身帳號，官方警告帳號可能被停權）。
+    # refresh token 由環境變數 PLUGINS_YOUTUBE_OAUTH_REFRESHTOKEN（.env 的 YOUTUBE_OAUTH_REFRESH_TOKEN）傳入；
+    # 未設定時 Lavalink 啟動後會在日誌顯示授權網址與代碼，授權完成後日誌會印出 refresh token
+    oauth:
+      enabled: true
+    clients:
+      - MUSIC
+      - TV
+      - MWEB
+      - TVHTML5_SIMPLY
+      - ANDROID_VR
+      - WEB
+      - WEBEMBEDDED
+
+metrics:
+  prometheus:
+    enabled: false
+
+logging:
+  level:
+    root: INFO
+    lavalink: INFO
+    # 顯示 OAuth 授權網址、代碼與 refresh token（日誌含 token，不要外流）
+    dev.lavalink.youtube.http.YoutubeOauth2Handler: INFO

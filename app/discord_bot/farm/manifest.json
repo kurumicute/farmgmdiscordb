@@ -1,0 +1,859 @@
+{
+  "version": 2,
+  "source": "farmimg2.png",
+  "sizes": {
+    "tile": 64,
+    "building": 128,
+    "badge": 24
+  },
+  "tiles": {
+    "grass": "tiles/grass.png",
+    "dirt": "tiles/dirt.png",
+    "water": "tiles/water.png",
+    "soil_dry": "tiles/soil_dry.png",
+    "soil_wet": "tiles/soil_wet.png",
+    "flowers": "tiles/flowers.png",
+    "stone": "tiles/stone.png",
+    "plot_expand": "tiles/plot_expand.png",
+    "fence": "tiles/fence.png"
+  },
+  "crops": {
+    "_generic": {
+      "seeds": "crops/_generic/seeds.png",
+      "sprout": "crops/_generic/sprout.png",
+      "young": "crops/_generic/young.png",
+      "unripe": "crops/_generic/unripe.png",
+      "ready": "crops/_generic/ready.png",
+      "withered": "crops/_generic/withered.png",
+      "item": "crops/_generic/item.png",
+      "seed": "crops/_generic/seed.png"
+    },
+    "wheat": {
+      "unripe": "crops/wheat/unripe.png",
+      "ready": "crops/wheat/ready.png",
+      "withered": "crops/wheat/withered.png",
+      "item": "crops/wheat/item.png",
+      "seed": "crops/wheat/seed.png",
+      "variant": {
+        "code": "amber_wheat",
+        "ready": "crops/wheat/variant_ready.png",
+        "item": "crops/wheat/variant_item.png"
+      }
+    },
+    "carrot": {
+      "unripe": "crops/carrot/unripe.png",
+      "ready": "crops/carrot/ready.png",
+      "withered": "crops/carrot/withered.png",
+      "item": "crops/carrot/item.png",
+      "seed": "crops/carrot/seed.png",
+      "variant": {
+        "code": "amethyst_carrot",
+        "ready": "crops/carrot/variant_ready.png",
+        "item": "crops/carrot/variant_item.png"
+      }
+    },
+    "tomato": {
+      "unripe": "crops/tomato/unripe.png",
+      "ready": "crops/tomato/ready.png",
+      "withered": "crops/tomato/withered.png",
+      "item": "crops/tomato/item.png",
+      "seed": "crops/tomato/seed.png",
+      "variant": {
+        "code": "black_tomato",
+        "ready": "crops/tomato/variant_ready.png",
+        "item": "crops/tomato/variant_item.png"
+      }
+    },
+    "strawberry": {
+      "unripe": "crops/strawberry/unripe.png",
+      "ready": "crops/strawberry/ready.png",
+      "withered": "crops/strawberry/withered.png",
+      "item": "crops/strawberry/item.png",
+      "seed": "crops/strawberry/seed.png",
+      "variant": {
+        "code": "snow_strawberry",
+        "ready": "crops/strawberry/variant_ready.png",
+        "item": "crops/strawberry/variant_item.png"
+      }
+    }
+  },
+  "animals": {
+    "chicken": "animals/chicken.png",
+    "cow": "animals/cow.png",
+    "sheep": "animals/sheep.png",
+    "_generic": "animals/_generic.png"
+  },
+  "products": {
+    "egg": "products/egg.png",
+    "milk": "products/milk.png",
+    "wool": "products/wool.png"
+  },
+  "goods": {
+    "flour": "goods/flour.png",
+    "bread": "goods/bread.png",
+    "strawberry_jam": "goods/strawberry_jam.png"
+  },
+  "items": {
+    "fertilizer": "items/fertilizer.png",
+    "earthworm": "items/earthworm.png",
+    "auto_waterer": "items/auto_waterer.png",
+    "auto_planter": "items/auto_planter.png",
+    "auto_seller": "items/auto_seller.png",
+    "patrol_ticket": "items/patrol_ticket.png",
+    "warehouse_expansion": "items/warehouse_expansion.png"
+  },
+  "defenses": {
+    "scarecrow": "defenses/scarecrow.png",
+    "guard_dog": "defenses/guard_dog.png",
+    "fence": "defenses/fence.png"
+  },
+  "buildings": {
+    "farmhouse": "buildings/farmhouse.png",
+    "farmhouse_upgraded": "buildings/farmhouse_upgraded.png",
+    "barn": "buildings/barn.png",
+    "mill": "buildings/mill.png",
+    "bakery": "buildings/bakery.png",
+    "jam_workshop": "buildings/jam_workshop.png",
+    "warehouse": "buildings/warehouse.png",
+    "_generic": "buildings/_generic.png"
+  },
+  "decor": {
+    "tree": "decor/tree.png",
+    "sakura": "decor/sakura.png",
+    "pine": "decor/pine.png",
+    "bush": "decor/bush.png",
+    "berry_bush": "decor/berry_bush.png",
+    "flowerbed": "decor/flowerbed.png",
+    "crate": "decor/crate.png",
+    "barrel": "decor/barrel.png",
+    "planter": "decor/planter.png",
+    "lamp": "decor/lamp.png",
+    "signpost": "decor/signpost.png"
+  },
+  "badges": {
+    "need_water": "badges/need_water.png",
+    "timer": "badges/timer.png",
+    "ready": "badges/ready.png",
+    "hungry": "badges/hungry.png",
+    "fertilized": "badges/fertilized.png",
+    "earthworm": "badges/earthworm.png",
+    "bubble": "badges/bubble.png",
+    "quality": {
+      "good": "badges/quality_good.png",
+      "rare": "badges/quality_rare.png",
+      "legendary": "badges/quality_legendary.png"
+    },
+    "mutation": {
+      "giant": "badges/mutation_giant.png",
+      "golden": "badges/mutation_golden.png",
+      "fast": "badges/mutation_fast.png",
+      "variant": "badges/mutation_variant.png"
+    }
+  },
+  "field": {
+    "size": [
+      512,
+      502
+    ],
+    "slots": 16,
+    "min_plots": 4,
+    "cells": [
+      {
+        "index": 0,
+        "row": 0,
+        "col": 0,
+        "rect": [
+          51,
+          62,
+          142,
+          147
+        ]
+      },
+      {
+        "index": 1,
+        "row": 0,
+        "col": 1,
+        "rect": [
+          156,
+          62,
+          248,
+          147
+        ]
+      },
+      {
+        "index": 2,
+        "row": 0,
+        "col": 2,
+        "rect": [
+          261,
+          62,
+          354,
+          147
+        ]
+      },
+      {
+        "index": 3,
+        "row": 0,
+        "col": 3,
+        "rect": [
+          368,
+          62,
+          459,
+          147
+        ]
+      },
+      {
+        "index": 4,
+        "row": 1,
+        "col": 0,
+        "rect": [
+          51,
+          161,
+          142,
+          244
+        ]
+      },
+      {
+        "index": 5,
+        "row": 1,
+        "col": 1,
+        "rect": [
+          156,
+          161,
+          248,
+          244
+        ]
+      },
+      {
+        "index": 6,
+        "row": 1,
+        "col": 2,
+        "rect": [
+          261,
+          161,
+          354,
+          244
+        ]
+      },
+      {
+        "index": 7,
+        "row": 1,
+        "col": 3,
+        "rect": [
+          368,
+          161,
+          459,
+          244
+        ]
+      },
+      {
+        "index": 8,
+        "row": 2,
+        "col": 0,
+        "rect": [
+          51,
+          258,
+          142,
+          342
+        ]
+      },
+      {
+        "index": 9,
+        "row": 2,
+        "col": 1,
+        "rect": [
+          156,
+          258,
+          248,
+          342
+        ]
+      },
+      {
+        "index": 10,
+        "row": 2,
+        "col": 2,
+        "rect": [
+          261,
+          258,
+          354,
+          342
+        ]
+      },
+      {
+        "index": 11,
+        "row": 2,
+        "col": 3,
+        "rect": [
+          368,
+          258,
+          459,
+          342
+        ]
+      },
+      {
+        "index": 12,
+        "row": 3,
+        "col": 0,
+        "rect": [
+          51,
+          354,
+          142,
+          440
+        ]
+      },
+      {
+        "index": 13,
+        "row": 3,
+        "col": 1,
+        "rect": [
+          156,
+          354,
+          248,
+          440
+        ]
+      },
+      {
+        "index": 14,
+        "row": 3,
+        "col": 2,
+        "rect": [
+          261,
+          354,
+          354,
+          440
+        ]
+      },
+      {
+        "index": 15,
+        "row": 3,
+        "col": 3,
+        "rect": [
+          368,
+          354,
+          459,
+          440
+        ]
+      }
+    ],
+    "bases": {
+      "4": "field/base_04.png",
+      "5": "field/base_05.png",
+      "6": "field/base_06.png",
+      "7": "field/base_07.png",
+      "8": "field/base_08.png",
+      "9": "field/base_09.png",
+      "10": "field/base_10.png",
+      "11": "field/base_11.png",
+      "12": "field/base_12.png",
+      "13": "field/base_13.png",
+      "14": "field/base_14.png",
+      "15": "field/base_15.png",
+      "16": "field/base_16.png"
+    },
+    "wet_overlay": "field/wet_overlay.png",
+    "obstacle_order": [
+      "weed",
+      "rock_small",
+      "stump_small",
+      "weed_tall",
+      "rock_big",
+      "bramble",
+      "log",
+      "rock_pile",
+      "stump",
+      "flower_bush",
+      "broken_wood",
+      "rock_mossy",
+      "dirt_mound",
+      "stump_big",
+      "bones",
+      "berry_bush"
+    ],
+    "obstacles": {
+      "weed": "field/obstacles/weed.png",
+      "weed_tall": "field/obstacles/weed_tall.png",
+      "flower_bush": "field/obstacles/flower_bush.png",
+      "berry_bush": "field/obstacles/berry_bush.png",
+      "rock_small": "field/obstacles/rock_small.png",
+      "rock_big": "field/obstacles/rock_big.png",
+      "rock_mossy": "field/obstacles/rock_mossy.png",
+      "stump_small": "field/obstacles/stump_small.png",
+      "stump": "field/obstacles/stump.png",
+      "stump_big": "field/obstacles/stump_big.png",
+      "log": "field/obstacles/log.png",
+      "broken_wood": "field/obstacles/broken_wood.png",
+      "rock_pile": "field/obstacles/rock_pile.png",
+      "bones": "field/obstacles/bones.png",
+      "bramble": "field/obstacles/bramble.png",
+      "dirt_mound": "field/obstacles/dirt_mound.png"
+    },
+    "presets": {
+      "4": {
+        "empty": "field/base_04.png",
+        "carrot": {
+          "seeds": "field/presets/04_seeds.png",
+          "sprout": "field/presets/04_sprout.png",
+          "young": "field/presets/04_young.png",
+          "unripe": "field/presets/04_carrot_unripe.png",
+          "ready": "field/presets/04_carrot_ready.png",
+          "withered": "field/presets/04_carrot_withered.png"
+        },
+        "strawberry": {
+          "seeds": "field/presets/04_seeds.png",
+          "sprout": "field/presets/04_sprout.png",
+          "young": "field/presets/04_young.png",
+          "unripe": "field/presets/04_strawberry_unripe.png",
+          "ready": "field/presets/04_strawberry_ready.png",
+          "withered": "field/presets/04_strawberry_withered.png"
+        },
+        "tomato": {
+          "seeds": "field/presets/04_seeds.png",
+          "sprout": "field/presets/04_sprout.png",
+          "young": "field/presets/04_young.png",
+          "unripe": "field/presets/04_tomato_unripe.png",
+          "ready": "field/presets/04_tomato_ready.png",
+          "withered": "field/presets/04_tomato_withered.png"
+        },
+        "wheat": {
+          "seeds": "field/presets/04_seeds.png",
+          "sprout": "field/presets/04_sprout.png",
+          "young": "field/presets/04_young.png",
+          "unripe": "field/presets/04_wheat_unripe.png",
+          "ready": "field/presets/04_wheat_ready.png",
+          "withered": "field/presets/04_wheat_withered.png"
+        }
+      },
+      "6": {
+        "empty": "field/base_06.png",
+        "carrot": {
+          "seeds": "field/presets/06_seeds.png",
+          "sprout": "field/presets/06_sprout.png",
+          "young": "field/presets/06_young.png",
+          "unripe": "field/presets/06_carrot_unripe.png",
+          "ready": "field/presets/06_carrot_ready.png",
+          "withered": "field/presets/06_carrot_withered.png"
+        },
+        "strawberry": {
+          "seeds": "field/presets/06_seeds.png",
+          "sprout": "field/presets/06_sprout.png",
+          "young": "field/presets/06_young.png",
+          "unripe": "field/presets/06_strawberry_unripe.png",
+          "ready": "field/presets/06_strawberry_ready.png",
+          "withered": "field/presets/06_strawberry_withered.png"
+        },
+        "tomato": {
+          "seeds": "field/presets/06_seeds.png",
+          "sprout": "field/presets/06_sprout.png",
+          "young": "field/presets/06_young.png",
+          "unripe": "field/presets/06_tomato_unripe.png",
+          "ready": "field/presets/06_tomato_ready.png",
+          "withered": "field/presets/06_tomato_withered.png"
+        },
+        "wheat": {
+          "seeds": "field/presets/06_seeds.png",
+          "sprout": "field/presets/06_sprout.png",
+          "young": "field/presets/06_young.png",
+          "unripe": "field/presets/06_wheat_unripe.png",
+          "ready": "field/presets/06_wheat_ready.png",
+          "withered": "field/presets/06_wheat_withered.png"
+        }
+      },
+      "8": {
+        "empty": "field/base_08.png",
+        "carrot": {
+          "seeds": "field/presets/08_seeds.png",
+          "sprout": "field/presets/08_sprout.png",
+          "young": "field/presets/08_young.png",
+          "unripe": "field/presets/08_carrot_unripe.png",
+          "ready": "field/presets/08_carrot_ready.png",
+          "withered": "field/presets/08_carrot_withered.png"
+        },
+        "strawberry": {
+          "seeds": "field/presets/08_seeds.png",
+          "sprout": "field/presets/08_sprout.png",
+          "young": "field/presets/08_young.png",
+          "unripe": "field/presets/08_strawberry_unripe.png",
+          "ready": "field/presets/08_strawberry_ready.png",
+          "withered": "field/presets/08_strawberry_withered.png"
+        },
+        "tomato": {
+          "seeds": "field/presets/08_seeds.png",
+          "sprout": "field/presets/08_sprout.png",
+          "young": "field/presets/08_young.png",
+          "unripe": "field/presets/08_tomato_unripe.png",
+          "ready": "field/presets/08_tomato_ready.png",
+          "withered": "field/presets/08_tomato_withered.png"
+        },
+        "wheat": {
+          "seeds": "field/presets/08_seeds.png",
+          "sprout": "field/presets/08_sprout.png",
+          "young": "field/presets/08_young.png",
+          "unripe": "field/presets/08_wheat_unripe.png",
+          "ready": "field/presets/08_wheat_ready.png",
+          "withered": "field/presets/08_wheat_withered.png"
+        }
+      },
+      "10": {
+        "empty": "field/base_10.png",
+        "carrot": {
+          "seeds": "field/presets/10_seeds.png",
+          "sprout": "field/presets/10_sprout.png",
+          "young": "field/presets/10_young.png",
+          "unripe": "field/presets/10_carrot_unripe.png",
+          "ready": "field/presets/10_carrot_ready.png",
+          "withered": "field/presets/10_carrot_withered.png"
+        },
+        "strawberry": {
+          "seeds": "field/presets/10_seeds.png",
+          "sprout": "field/presets/10_sprout.png",
+          "young": "field/presets/10_young.png",
+          "unripe": "field/presets/10_strawberry_unripe.png",
+          "ready": "field/presets/10_strawberry_ready.png",
+          "withered": "field/presets/10_strawberry_withered.png"
+        },
+        "tomato": {
+          "seeds": "field/presets/10_seeds.png",
+          "sprout": "field/presets/10_sprout.png",
+          "young": "field/presets/10_young.png",
+          "unripe": "field/presets/10_tomato_unripe.png",
+          "ready": "field/presets/10_tomato_ready.png",
+          "withered": "field/presets/10_tomato_withered.png"
+        },
+        "wheat": {
+          "seeds": "field/presets/10_seeds.png",
+          "sprout": "field/presets/10_sprout.png",
+          "young": "field/presets/10_young.png",
+          "unripe": "field/presets/10_wheat_unripe.png",
+          "ready": "field/presets/10_wheat_ready.png",
+          "withered": "field/presets/10_wheat_withered.png"
+        }
+      },
+      "12": {
+        "empty": "field/base_12.png",
+        "carrot": {
+          "seeds": "field/presets/12_seeds.png",
+          "sprout": "field/presets/12_sprout.png",
+          "young": "field/presets/12_young.png",
+          "unripe": "field/presets/12_carrot_unripe.png",
+          "ready": "field/presets/12_carrot_ready.png",
+          "withered": "field/presets/12_carrot_withered.png"
+        },
+        "strawberry": {
+          "seeds": "field/presets/12_seeds.png",
+          "sprout": "field/presets/12_sprout.png",
+          "young": "field/presets/12_young.png",
+          "unripe": "field/presets/12_strawberry_unripe.png",
+          "ready": "field/presets/12_strawberry_ready.png",
+          "withered": "field/presets/12_strawberry_withered.png"
+        },
+        "tomato": {
+          "seeds": "field/presets/12_seeds.png",
+          "sprout": "field/presets/12_sprout.png",
+          "young": "field/presets/12_young.png",
+          "unripe": "field/presets/12_tomato_unripe.png",
+          "ready": "field/presets/12_tomato_ready.png",
+          "withered": "field/presets/12_tomato_withered.png"
+        },
+        "wheat": {
+          "seeds": "field/presets/12_seeds.png",
+          "sprout": "field/presets/12_sprout.png",
+          "young": "field/presets/12_young.png",
+          "unripe": "field/presets/12_wheat_unripe.png",
+          "ready": "field/presets/12_wheat_ready.png",
+          "withered": "field/presets/12_wheat_withered.png"
+        }
+      },
+      "14": {
+        "empty": "field/base_14.png",
+        "carrot": {
+          "seeds": "field/presets/14_seeds.png",
+          "sprout": "field/presets/14_sprout.png",
+          "young": "field/presets/14_young.png",
+          "unripe": "field/presets/14_carrot_unripe.png",
+          "ready": "field/presets/14_carrot_ready.png",
+          "withered": "field/presets/14_carrot_withered.png"
+        },
+        "strawberry": {
+          "seeds": "field/presets/14_seeds.png",
+          "sprout": "field/presets/14_sprout.png",
+          "young": "field/presets/14_young.png",
+          "unripe": "field/presets/14_strawberry_unripe.png",
+          "ready": "field/presets/14_strawberry_ready.png",
+          "withered": "field/presets/14_strawberry_withered.png"
+        },
+        "tomato": {
+          "seeds": "field/presets/14_seeds.png",
+          "sprout": "field/presets/14_sprout.png",
+          "young": "field/presets/14_young.png",
+          "unripe": "field/presets/14_tomato_unripe.png",
+          "ready": "field/presets/14_tomato_ready.png",
+          "withered": "field/presets/14_tomato_withered.png"
+        },
+        "wheat": {
+          "seeds": "field/presets/14_seeds.png",
+          "sprout": "field/presets/14_sprout.png",
+          "young": "field/presets/14_young.png",
+          "unripe": "field/presets/14_wheat_unripe.png",
+          "ready": "field/presets/14_wheat_ready.png",
+          "withered": "field/presets/14_wheat_withered.png"
+        }
+      },
+      "16": {
+        "empty": "field/base_16.png",
+        "carrot": {
+          "seeds": "field/presets/16_seeds.png",
+          "sprout": "field/presets/16_sprout.png",
+          "young": "field/presets/16_young.png",
+          "unripe": "field/presets/16_carrot_unripe.png",
+          "ready": "field/presets/16_carrot_ready.png",
+          "withered": "field/presets/16_carrot_withered.png"
+        },
+        "strawberry": {
+          "seeds": "field/presets/16_seeds.png",
+          "sprout": "field/presets/16_sprout.png",
+          "young": "field/presets/16_young.png",
+          "unripe": "field/presets/16_strawberry_unripe.png",
+          "ready": "field/presets/16_strawberry_ready.png",
+          "withered": "field/presets/16_strawberry_withered.png"
+        },
+        "tomato": {
+          "seeds": "field/presets/16_seeds.png",
+          "sprout": "field/presets/16_sprout.png",
+          "young": "field/presets/16_young.png",
+          "unripe": "field/presets/16_tomato_unripe.png",
+          "ready": "field/presets/16_tomato_ready.png",
+          "withered": "field/presets/16_tomato_withered.png"
+        },
+        "wheat": {
+          "seeds": "field/presets/16_seeds.png",
+          "sprout": "field/presets/16_sprout.png",
+          "young": "field/presets/16_young.png",
+          "unripe": "field/presets/16_wheat_unripe.png",
+          "ready": "field/presets/16_wheat_ready.png",
+          "withered": "field/presets/16_wheat_withered.png"
+        }
+      }
+    }
+  },
+  "yard": {
+    "size": [
+      640,
+      640
+    ],
+    "building_size": 144,
+    "machine_order": [
+      "mill",
+      "bakery",
+      "jam_workshop"
+    ],
+    "barn_slots": [
+      {
+        "rect": [
+          103,
+          121,
+          247,
+          265
+        ],
+        "anchor": [
+          175,
+          265
+        ],
+        "bubble": [
+          159,
+          102
+        ]
+      },
+      {
+        "rect": [
+          248,
+          121,
+          392,
+          265
+        ],
+        "anchor": [
+          320,
+          265
+        ],
+        "bubble": [
+          304,
+          102
+        ]
+      },
+      {
+        "rect": [
+          393,
+          121,
+          537,
+          265
+        ],
+        "anchor": [
+          465,
+          265
+        ],
+        "bubble": [
+          449,
+          102
+        ]
+      }
+    ],
+    "machines": {
+      "mill": {
+        "rect": [
+          103,
+          286,
+          247,
+          430
+        ],
+        "anchor": [
+          175,
+          430
+        ],
+        "bubble": [
+          159,
+          256
+        ]
+      },
+      "bakery": {
+        "rect": [
+          248,
+          286,
+          392,
+          430
+        ],
+        "anchor": [
+          320,
+          430
+        ],
+        "bubble": [
+          304,
+          256
+        ]
+      },
+      "jam_workshop": {
+        "rect": [
+          393,
+          286,
+          537,
+          430
+        ],
+        "anchor": [
+          465,
+          430
+        ],
+        "bubble": [
+          449,
+          266
+        ]
+      }
+    },
+    "animal_size": 48,
+    "animal_spots": [
+      [
+        [
+          141,
+          520
+        ],
+        [
+          209,
+          520
+        ],
+        [
+          141,
+          572
+        ],
+        [
+          209,
+          572
+        ]
+      ],
+      [
+        [
+          286,
+          520
+        ],
+        [
+          354,
+          520
+        ],
+        [
+          286,
+          572
+        ],
+        [
+          354,
+          572
+        ]
+      ],
+      [
+        [
+          431,
+          520
+        ],
+        [
+          499,
+          520
+        ],
+        [
+          431,
+          572
+        ],
+        [
+          499,
+          572
+        ]
+      ]
+    ],
+    "bases": {
+      "0-000": "yard/base_0_000.png",
+      "0-001": "yard/base_0_001.png",
+      "0-010": "yard/base_0_010.png",
+      "0-011": "yard/base_0_011.png",
+      "0-100": "yard/base_0_100.png",
+      "0-101": "yard/base_0_101.png",
+      "0-110": "yard/base_0_110.png",
+      "0-111": "yard/base_0_111.png",
+      "1-000": "yard/base_1_000.png",
+      "1-001": "yard/base_1_001.png",
+      "1-010": "yard/base_1_010.png",
+      "1-011": "yard/base_1_011.png",
+      "1-100": "yard/base_1_100.png",
+      "1-101": "yard/base_1_101.png",
+      "1-110": "yard/base_1_110.png",
+      "1-111": "yard/base_1_111.png",
+      "2-000": "yard/base_2_000.png",
+      "2-001": "yard/base_2_001.png",
+      "2-010": "yard/base_2_010.png",
+      "2-011": "yard/base_2_011.png",
+      "2-100": "yard/base_2_100.png",
+      "2-101": "yard/base_2_101.png",
+      "2-110": "yard/base_2_110.png",
+      "2-111": "yard/base_2_111.png",
+      "3-000": "yard/base_3_000.png",
+      "3-001": "yard/base_3_001.png",
+      "3-010": "yard/base_3_010.png",
+      "3-011": "yard/base_3_011.png",
+      "3-100": "yard/base_3_100.png",
+      "3-101": "yard/base_3_101.png",
+      "3-110": "yard/base_3_110.png",
+      "3-111": "yard/base_3_111.png"
+    }
+  },
+  "scenes": {
+    "shop": "scenes/shop.png"
+  },
+  "layering": {
+    "field": "依農場土地數選 field.bases[n]（4～16），第 k 塊地（依 plot_number 排序，0 起算）畫在 field.cells[k].rect",
+    "plot": [
+      "底：農田底圖本身就是乾土；growing／ready 在格子上疊 field.wet_overlay（縮放成格子大小）",
+      "植物：waiting_water=crops._generic.seeds；growing 依進度 <40% sprout、<75% young、其餘 crops.<code>.unripe；ready=crops.<code>.ready（珍稀變種用 variant.ready）；withered=crops.<code>.withered",
+      "標記（右上角 24×24）：waiting_water=badges.need_water、growing=badges.timer、ready=badges.ready；只有 ready 在左上角畫品質星與突變標記（其他階段由文字清單顯示）"
+    ],
+    "growing_thresholds": {
+      "sprout": 0.4,
+      "young": 0.75
+    },
+    "animal": "animals.<code>（未知用 _generic）；上方放 badges.bubble，內放 hungry／timer／products.<產品代碼>",
+    "building": "128×128 佔 2×2 格，貼齊底部；加工中在泡泡放 timer，待領取放 goods.<成品代碼>",
+    "fallback": "資料庫新增、沒有專屬素材的作物用 crops._generic，動物用 animals._generic，建築用 buildings._generic"
+  }
+}

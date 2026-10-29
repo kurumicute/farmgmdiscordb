@@ -1,0 +1,21 @@
+[project]
+name = "farmgm"
+version = "0.1.0"
+description = "CMD 農場經營遊戲 + PostgreSQL + 即時網頁監控"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# 由原 YTDiscordBot 移植的音樂模組保留原本寫法，方便與原專案對照更新
+"app/music/*" = ["E501", "UP045", "B904"]
