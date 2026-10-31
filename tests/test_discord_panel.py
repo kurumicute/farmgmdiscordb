@@ -441,6 +441,54 @@ def test_pages_attach_images(cmds):
         assert (kw["embed"].image.url == "attachment://farm.png") == bool(expected), page
 
 
+def test_fast_pages_reply_directly_without_defer(cmds):
+    """準備得夠快時直接以新畫面回覆互動，不先 defer（少一次和 Discord 的往返）。"""
+    p = make_player(cmds, ALICE)
+    for action in (lambda: p.go("plots"), lambda: p.go("main"), lambda: p.click("背包")):
+        interaction = action()
+        kinds = [kind for kind, _c, _kw in interaction.log]
+        assert kinds == ["edit"] and last_edit(interaction)["direct"] is True
+
+
+def test_slow_page_defers_first(cmds, monkeypatch):
+    """讀取超過 DIRECT_REPLY_SECONDS 時先 defer，避免超過 Discord 3 秒的首次回覆期限，再編輯原訊息。"""
+    import time
+
+    from app.discord_bot import panels
+
+    p = make_player(cmds, ALICE)
+    monkeypatch.setattr(panels, "DIRECT_REPLY_SECONDS", 0.05)
+    real = p.panel._load_backpack
+    monkeypatch.setattr(p.panel, "_load_backpack", lambda: (time.sleep(0.3), real())[1])
+    interaction = p.go("backpack")
+    assert [kind for kind, _c, _kw in interaction.log] == ["defer", "edit"]
+    assert "direct" not in last_edit(interaction) and "背包" in p.text
+
+
+def test_slow_action_shares_reply_budget(cmds, monkeypatch):
+    """操作本身用掉直接回覆的時間後，重新讀取頁面前就先 defer（兩段不各自重新計時）。"""
+    import time
+
+    from app.discord_bot import panels
+
+    p = make_player(cmds, ALICE)
+    monkeypatch.setattr(panels, "DIRECT_REPLY_SECONDS", 0.2)
+    interaction = p._interaction()
+    run(p.panel.act(interaction, lambda: (time.sleep(0.25), "做完了")[1]))
+    assert [kind for kind, _c, _kw in interaction.log] == ["defer", "edit"]
+    p._update(interaction)
+    assert "做完了" in p.text
+    # 操作失敗的錯誤畫面同樣可以直接回覆
+    failing = p._interaction()
+    monkeypatch.setattr(panels, "DIRECT_REPLY_SECONDS", 1.5)
+
+    def fail():
+        raise panels.ValidationError("不行")
+
+    run(p.panel.act(failing, fail))
+    assert [kind for kind, _c, _kw in failing.log] == ["edit"] and "不行" in embed_text(last_edit(failing))
+
+
 def test_unchanged_image_reuses_existing_attachment(cmds):
     """同一張圖（例如賭場連續操作）沿用訊息上已有的附件，不重新上傳；圖換了或換到沒圖的頁面才更新。"""
     from types import SimpleNamespace
@@ -517,13 +565,13 @@ def test_upgrade_adds_one_plot_and_plant_select_is_registered_before_edit(cmds, 
 
     interaction = p._interaction()
     interaction._state, interaction.message = State(), type("Msg", (), {"id": 42})()
-    real_edit = interaction.edit_original_response
+    real_edit = interaction.response.edit_message
 
     async def edit(**kw):
         order.append(("edit",))
         await real_edit(**kw)
 
-    interaction.edit_original_response = edit
+    interaction.response.edit_message = edit  # 很快準備好：直接以新畫面回覆互動
     run(p.panel.refresh(interaction))
     select = next(c for c in p.panel.children if isinstance(c, discord.ui.Select))
     assert order[0][:2] == ("store", 42) and select.custom_id in order[0][2]

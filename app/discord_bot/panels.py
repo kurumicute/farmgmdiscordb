@@ -10,6 +10,7 @@
 - 總覽、農田、動物、加工、建造與商店頁附上圖片（farm_image，在執行緒中拼圖）；產生失敗時只顯示文字。
 """
 
+import asyncio
 import hashlib
 import io
 import logging
@@ -30,6 +31,9 @@ from app.services.game_service import genetics_label, long_duration
 logger = logging.getLogger(__name__)
 
 PANEL_TIMEOUT_SECONDS = 15 * 60  # Discord 私密訊息的互動權杖有效 15 分鐘
+# 換頁／操作在這段時間內準備好就直接以新畫面回覆互動（少一次 defer 往返）；超過才先 defer，
+# 避免超過 Discord 3 秒的首次回覆期限（還要扣掉網路與上傳時間）
+DIRECT_REPLY_SECONDS = 1.5
 FARM_IMAGE = "farm.png"  # 面板圖片的附件檔名（Embed 以 attachment:// 引用）
 GREEN, BLUE, GOLD, RED, GREY = 0x57F287, 0x5865F2, 0xF1C40F, 0xED4245, 0x99AAB5
 
@@ -277,12 +281,34 @@ class FarmPanel(discord.ui.View):
             return notice
         return f"{notice}\n{note}" if notice else note
 
-    async def refresh(self, interaction: discord.Interaction, notice: str | None = None) -> None:
-        embed = await self.render(notice)
+    async def _in_time(self, interaction: discord.Interaction, coro, budget: float | None = None):
+        """執行 coro；尚未回覆互動且 budget 秒（預設 DIRECT_REPLY_SECONDS）內沒完成時先 defer，之後改編輯原訊息。"""
+        task = asyncio.ensure_future(coro)
+        if not interaction.response.is_done():
+            budget = DIRECT_REPLY_SECONDS if budget is None else budget
+            done, _ = await asyncio.wait({task}, timeout=max(0.0, budget))
+            if not done:
+                try:
+                    await interaction.response.defer()
+                except discord.HTTPException as exc:  # 互動已失效：仍等工作完成，之後的更新會失敗並記錄
+                    logger.warning("延後回覆失敗：%s", type(exc).__name__)
+        return await task
+
+    async def _show(self, interaction: discord.Interaction, embed: discord.Embed, attachments: list) -> None:
+        """還沒回覆就直接以新畫面回覆互動，已 defer 則編輯原訊息。"""
+        if interaction.response.is_done():
+            await interaction.edit_original_response(embed=embed, view=self, attachments=attachments)
+        else:
+            await interaction.response.edit_message(embed=embed, view=self, attachments=attachments)
+
+    async def refresh(
+        self, interaction: discord.Interaction, notice: str | None = None, *, budget: float | None = None
+    ) -> None:
+        embed = await self._in_time(interaction, self.render(notice), budget)
         self._register_items(interaction)
         try:
             # attachments：傳新檔案會取代舊圖，傳 [] 會移除，傳訊息上既有的附件則保留不重傳
-            await interaction.edit_original_response(embed=embed, view=self, attachments=self._attachments(interaction))
+            await self._show(interaction, embed, self._attachments(interaction))
             self.sent_digest = self.image_digest
         except discord.HTTPException as exc:
             self.sent_digest = None  # 不確定訊息上現在是哪張圖，下次重新上傳
@@ -298,7 +324,6 @@ class FarmPanel(discord.ui.View):
         return self.files
 
     async def goto(self, interaction: discord.Interaction, page: str, notice: str | None = None) -> None:
-        await interaction.response.defer()
         self.page, self.picker, self.confirm = page, None, None
         await self.refresh(interaction, notice)
 
@@ -308,21 +333,28 @@ class FarmPanel(discord.ui.View):
     ) -> None:
         """執行一個操作（在執行緒中）。成功時結果以 ✅ 顯示在頁面頂端並重新整理；
         失敗時改顯示獨立的錯誤畫面，只有錯誤原因與「返回」按鈕，返回後保留剛才的選擇。"""
-        if not interaction.response.is_done():
-            await interaction.response.defer()
         self.confirm = None
-        try:
-            notice = f"{prefix}{clean_message(await self.run(work))}"
-        except Exception as exc:
-            if not isinstance(exc, GameError):
-                logger.exception("面板操作失敗（玩家 #%s）", self.player_id)
-            await self.show_error(interaction, clean_message(player_message(exc)))
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+
+        async def perform() -> tuple[str | None, str | None]:
+            try:
+                return f"{prefix}{clean_message(await self.run(work))}", None
+            except Exception as exc:
+                if not isinstance(exc, GameError):
+                    logger.exception("面板操作失敗（玩家 #%s）", self.player_id)
+                return None, clean_message(player_message(exc))
+
+        notice, error = await self._in_time(interaction, perform())
+        if error is not None:
+            await self.show_error(interaction, error)
             return
         if not keep:  # 購買後保留已選商品與數量按鈕，方便確認與加購
             self.picker = None
         if page:
             self.page = page
-        await self.refresh(interaction, cut(notice, 1500))
+        # 操作與重新讀取共用同一段直接回覆的時間
+        await self.refresh(interaction, cut(notice, 1500), budget=DIRECT_REPLY_SECONDS - (loop.time() - started))
 
     async def show_error(self, interaction: discord.Interaction, message: str) -> None:
         self.clear_items()
@@ -330,13 +362,12 @@ class FarmPanel(discord.ui.View):
         embed.set_footer(text="按「返回」回到剛才的畫面")
 
         async def back(i):
-            await i.response.defer()
             await self.refresh(i)
 
         self.button("返回", back, emoji="↩️", style=discord.ButtonStyle.primary)
         self._register_items(interaction)
         try:
-            await interaction.edit_original_response(embed=embed, view=self, attachments=[])
+            await self._show(interaction, embed, [])
             self.sent_digest = None
         except discord.HTTPException as exc:
             self.sent_digest = None
@@ -648,7 +679,6 @@ class FarmPanel(discord.ui.View):
 
         async def upgrade(interaction):
             if self.confirm != "upgrade":
-                await interaction.response.defer()
                 self.confirm = "upgrade"
                 await self.refresh(
                     interaction,
@@ -728,7 +758,6 @@ class FarmPanel(discord.ui.View):
                 self.picker = {"key": "fake_coin", "label": f"💱 兌換假幣（1 個 = {exploration.FAKE_COIN_VALUE} 金）",
                                "verb": "換", "max": coins, "presets": (1, 5, 10),
                                "run": lambda q: self.svc.exchange_fake_coins(self.player_id, q).message}
-                await interaction.response.defer()
                 await self.refresh(interaction)
 
             self.button(f"兌換假幣（持有 {coins}）", exchange, emoji="💱", row=1, style=discord.ButtonStyle.success)
@@ -850,7 +879,6 @@ class FarmPanel(discord.ui.View):
                         "max": max(1, min(balance.MAX_TRADE_QUANTITY, d["gold"] // price)), "presets": (1, 5, 10),
                         "keep": True, "run": buy_item,
                     }
-            await interaction.response.defer()
             await self.refresh(interaction)
 
         options = [(f"{c.name}種子", f"seed:{c.code}", f"🌰 種子｜💰 {c.seed_price} 金", crop_emoji(c.code))
@@ -1004,7 +1032,6 @@ class FarmPanel(discord.ui.View):
             self.picker = {"key": key, "label": label,
                            "verb": "賣", "max": row["quantity"], "presets": sorted({1, half, row["quantity"]}),
                            "run": run}
-            await interaction.response.defer()
             await self.refresh(interaction)
 
         self.select("💰 選擇要賣的東西…", [(f"{r['name']} ×{r['quantity']}", r["key"], f"🏷️ 單價 {r['price']}",
@@ -1013,7 +1040,6 @@ class FarmPanel(discord.ui.View):
 
         async def sell_everything(interaction):
             if self.confirm != "sell_all":
-                await interaction.response.defer()
                 self.confirm = "sell_all"
                 await self.refresh(
                     interaction, f"⚠️ 確定要把背包裡所有農產品與商品賣掉嗎（約 {money(total)} 金幣）？再按一次確認。"
@@ -1101,7 +1127,6 @@ class FarmPanel(discord.ui.View):
                                                  f"剩餘欄位 {st['capacity'] - st['used']}）",
                            "verb": "買", "max": min(balance.ANIMAL_MAX_BUY, free), "presets": (1, 2, 4),
                            "run": lambda q: self.svc.buy_animals(self.player_id, code, q).message}
-            await interaction.response.defer()
             await self.refresh(interaction)
 
         self.select("🛒 購買動物…", [(t["name"], t["code"], f"💰 {t['price']} 金｜產{t['product_name']}",
@@ -1169,7 +1194,6 @@ class FarmPanel(discord.ui.View):
             self.picker = {"key": code, "label": f"🏭 {r['name']}（{r['building_name']}）", "verb": "做",
                            "max": balance.CRAFT_MAX_QUANTITY, "presets": (1, 5, balance.CRAFT_MAX_QUANTITY),
                            "run": lambda q: self.svc.start_craft(self.player_id, code, q).message}
-            await interaction.response.defer()
             await self.refresh(interaction)
 
         async def collect(interaction):
@@ -1351,7 +1375,6 @@ class FarmPanel(discord.ui.View):
 
         async def choose(interaction, key):
             self.bet = {"key": key, "qty": 1}
-            await interaction.response.defer()
             await self.refresh(interaction)
 
         self.select("🎰 選擇要下注的作物…",
@@ -1363,7 +1386,6 @@ class FarmPanel(discord.ui.View):
             for label, qty in (("×1", 1), ("一半", max(1, have // 2)), ("全部", have)):
                 async def set_qty(interaction, qty=qty):
                     bet["qty"] = qty
-                    await interaction.response.defer()
                     await self.refresh(interaction)
 
                 current = qty == bet["qty"]
@@ -1373,7 +1395,6 @@ class FarmPanel(discord.ui.View):
             async def custom_qty(interaction):
                 async def submitted(modal_interaction, q):
                     bet["qty"] = q
-                    await modal_interaction.response.defer()
                     await self.refresh(modal_interaction)
 
                 await interaction.response.send_modal(QuantityModal("下注數量", "數量", have, submitted))
@@ -1608,7 +1629,6 @@ class FarmPanel(discord.ui.View):
 
         async def transfer(interaction):
             if self.confirm != "transfer":
-                await interaction.response.defer()
                 self.confirm = "transfer"
                 await self.refresh(
                     interaction,
@@ -1885,7 +1905,6 @@ class FarmPanel(discord.ui.View):
                 self.picker = {"key": value, "label": f"🧬 {r['name']}", "verb": "培育",
                                "max": exploration.INCUBATOR_MAX_QUANTITY, "presets": (1, 3, 5),
                                "run": lambda q: self.svc.start_incubation(self.player_id, code, q).message}
-            await interaction.response.defer()
             await self.refresh(interaction)
 
         self.select("⚙️ 使用機器…", options[:25], use, row=1, selected=(self.picker or {}).get("key"))

@@ -52,6 +52,12 @@ class FakeResponse:
         self._done = True
         self.log.append(("defer", None, kw))
 
+    async def edit_message(self, **kw):
+        """直接以新畫面回覆元件互動（等同 defer＋編輯原訊息，少一次往返）。"""
+        assert not self._done
+        self._done = True
+        self.log.append(("edit", kw.get("content"), {**kw, "direct": True}))
+
 
 class FakeMessage:
     def __init__(self, log):
