@@ -90,6 +90,7 @@ if (typeof document !== "undefined") {
     build: "建造設施", buy_animal: "購買動物", feed_animal: "餵食動物", collect_animal: "收集動物產品",
     craft_start: "開始加工", craft_collect: "領取加工品", quest_reward: "任務獎勵", competition_reward: "競賽獎勵", admin_adjust: "管理員調整", ranking_reward: "排名獎勵",
     transfer_group: "轉移所屬群組", gamble: "賭場",
+    explore: "山洞探索", build_machine: "製作機器", exchange: "假幣兌換", make_seed: "製造種子",
   };
 
   const state = {
@@ -615,6 +616,7 @@ if (typeof document !== "undefined") {
     harvest: "good", sell: "good", collect_animal: "good", craft_collect: "good", quest_reward: "good",
     competition_reward: "good", ranking_reward: "good", create_farm: "info", steal: "bad", stolen: "bad",
     steal_blocked: "info", defended: "info", admin_adjust: "warn", gamble: "warn",
+    explore: "good", exchange: "good",
   };
   const EVENT_ICONS = {
     harvest: "i-sprout", plant: "i-sprout", buy_seed: "i-sprout", water: "i-droplet", sell: "i-coins",
@@ -622,6 +624,7 @@ if (typeof document !== "undefined") {
     defense_place: "i-shield", buy_animal: "i-paw", feed_animal: "i-paw", collect_animal: "i-paw",
     craft_start: "i-factory", craft_collect: "i-factory", build: "i-factory", quest_reward: "i-flag",
     competition_reward: "i-trophy", ranking_reward: "i-trophy", admin_adjust: "i-user-cog", gamble: "i-coins",
+    explore: "i-flag", build_machine: "i-factory", exchange: "i-coins", make_seed: "i-sprout",
   };
 
   function iconEl(id) {

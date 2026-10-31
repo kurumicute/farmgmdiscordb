@@ -199,23 +199,44 @@ def yard_png(workshop: dict, animals: list[dict]) -> bytes:
         elif order["state"] == "ready":
             draw_bubble(target(), info["bubble"], m["goods"].get(order["output_code"], badges["ready"]))
 
-    # 動物：依 animal_no 排序，第 i 隻放第 i // 4 座畜舍那一欄的第 i % 4 個位置，超過容量的不畫
+    # 動物：依 animal_no 排序，第 i 隻站在第 i // 4 座畜舍旁的第 i % 4 個固定位置（[中心 x, 腳底 y, 是否左右翻轉]，
+    # 位置已避開建築與其他動物），超過容量的不畫；由後往前畫，泡泡最後畫才不會被其他動物蓋住
     barns = min(workshop["counts"].get("barn", 0), len(yard["barn_slots"]))
     size = yard["animal_size"]
-    for i, a in enumerate(sorted(animals, key=lambda a: a["animal_no"])[:barns * 4]):
-        cx, by = yard["animal_spots"][i // 4][i % 4]
+    placed = [(yard["animal_spots"][i // 4][i % 4], a)
+              for i, a in enumerate(sorted(animals, key=lambda a: a["animal_no"])[:barns * 4])]
+    placed.sort(key=lambda t: t[0][1])
+    for (cx, by, flip), a in placed:
         sprite = img(m["animals"].get(a["code"], m["animals"]["_generic"])).resize((size, size), Image.LANCZOS)
+        if flip:
+            sprite = sprite.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
         target().alpha_composite(sprite, (cx - size // 2, by - size))
+    for (cx, by, _flip), a in placed:
+        bubble = [cx + size // 2 - 20, by - size - 12]  # 頭部右上方，盡量不蓋到其他動物
         if a["state"] == "hungry":
-            draw_bubble(target(), [cx - 16, by - size - 26], badges["hungry"])
+            draw_bubble(target(), bubble, badges["hungry"])
         elif a["state"] == "ready":
-            draw_bubble(target(), [cx - 16, by - size - 26], m["products"].get(a.get("product_code"), badges["ready"]))
+            draw_bubble(target(), bubble, m["products"].get(a.get("product_code"), badges["ready"]))
 
     if canvas is None:
         return (ASSETS / base_rel).read_bytes()  # 沒有動物、機器都閒置：直接上傳底圖
     return encode(canvas)
 
 
+def scene_png(name: str) -> bytes:
+    """固定場景圖（manifest 的 scenes），直接上傳檔案。"""
+    return (ASSETS / manifest()["scenes"][name]).read_bytes()
+
+
 def shop_png() -> bytes:
-    """商店頁面是固定圖片，直接上傳檔案。"""
-    return (ASSETS / manifest()["scenes"]["shop"]).read_bytes()
+    return scene_png("shop")
+
+
+def casino_png() -> bytes:
+    return scene_png("casino")
+
+
+def explore_png(area_code: str) -> bytes | None:
+    """山洞冒險區域圖；沒有對應圖片的區域回傳 None（面板只顯示文字）。"""
+    name = f"explore_{area_code}"
+    return scene_png(name) if name in manifest()["scenes"] else None

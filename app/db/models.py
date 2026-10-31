@@ -60,6 +60,10 @@ EVENT_TYPES = (
     "ranking_reward",
     "transfer_group",
     "gamble",
+    "explore",
+    "build_machine",
+    "exchange",
+    "make_seed",
 )
 
 QUALITY_CODES = ("normal", "good", "rare", "legendary")
@@ -138,6 +142,8 @@ class CropType(Base):
     variant_name: Mapped[str] = mapped_column(String(32), nullable=False)
     # 停用：不能購買種子或種植；已種植、已持有的仍可收成、販售
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # false：商店不販售種子（稀有作物，只能探索或培育取得），仍可種植已持有的種子
+    shop_buyable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
 
 
 class AnimalType(Base):
@@ -400,6 +406,53 @@ class FarmTool(Base):
     tool_code: Mapped[str] = mapped_column(String(64), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # 機器設定（例如自動加工機的加工項目 {"recipe": "flour"}）；一般工具為空
+    settings: Mapped[dict | None] = mapped_column(JSON)
+
+
+class FarmExploration(Base):
+    """各區域的探索次數與最近一次探險（出發時間、回來時間）：每座農場每個區域一列。
+    一次只能進行一趟探險，由 exploration_logs 的未領取紀錄判斷（Migration 0015）。"""
+
+    __tablename__ = "farm_explorations"
+    __table_args__ = (
+        UniqueConstraint("farm_id", "area_code", name="uq_farm_explorations_farm_area"),
+        CheckConstraint("area_code IN ('grassland', 'forest', 'mine')", name="area_code_valid"),
+        CheckConstraint("next_available_at > last_explored_at", name="next_after_last"),
+        CheckConstraint("explore_count >= 1", name="explore_count_positive"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), nullable=False)
+    area_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    last_explored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    next_available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    explore_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ExplorationLog(Base):
+    """探險紀錄：出發時決定獎勵明細，回來（next_available_at）後領取才放進背包（claimed_at）。
+    claimed_at 為 NULL 的紀錄就是進行中或待領取的探險，每座農場最多一筆（部分唯一索引）。"""
+
+    __tablename__ = "exploration_logs"
+    __table_args__ = (
+        CheckConstraint("area_code IN ('grassland', 'forest', 'mine')", name="area_code_valid"),
+        Index("ix_exploration_logs_farm_explored", "farm_id", "explored_at"),
+        Index(
+            "uq_exploration_logs_farm_unclaimed", "farm_id", unique=True, postgresql_where=text("claimed_at IS NULL")
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), nullable=False)
+    area_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    farm_level: Mapped[int] = mapped_column(Integer, nullable=False)
+    advanced: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    rewards: Mapped[dict] = mapped_column(JSON, nullable=False)  # {物品代碼: 數量}
+    events: Mapped[list] = mapped_column(JSON, nullable=False)  # 觸發的特殊事件名稱
+    explored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)  # 出發時間
+    next_available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)  # 回來時間
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 領取獎勵時間
 
 
 class FarmEffect(Base):

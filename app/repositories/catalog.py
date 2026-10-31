@@ -4,12 +4,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import AnimalType, CropType
-from app.game import balance, rules
+from app.game import balance, exploration, rules
 from app.repositories import animals as animals_repo
 from app.repositories import crops as crops_repo
 
 # 物品種類
 SEED, PRODUCE, VARIANT, ANIMAL_PRODUCT, GOODS, ITEM = "seed", "produce", "variant", "animal_product", "goods", "item"
+MATERIAL = "material"  # 山洞探索取得的素材與假幣
 
 
 def items(session: Session) -> dict[str, tuple[str, str]]:
@@ -26,6 +27,8 @@ def items(session: Session) -> dict[str, tuple[str, str]]:
     for code, (name, _price, kind, _desc, _aliases) in balance.ITEMS.items():
         if kind == "consumable":
             result[code] = (ITEM, name)
+    for code, (name, _rarity, _use) in exploration.MATERIALS.items():
+        result[code] = (MATERIAL, name)
     return result
 
 
@@ -33,6 +36,8 @@ def item_names(session: Session) -> dict[str, str]:
     names = {code: name for code, (_kind, name) in items(session).items()}
     for code, (name, *_rest) in balance.ITEMS.items():
         names.setdefault(code, name)
+    for code, machine in exploration.MACHINES.items():
+        names.setdefault(code, machine.name)
     return names
 
 
@@ -43,6 +48,7 @@ def reserved_codes(session: Session) -> set[str]:
         codes.update((code, variant))
     for code, product in session.execute(select(AnimalType.code, AnimalType.product_code)):
         codes.update((code, product))
-    for table in (balance.GOODS, balance.ITEMS, balance.BUILDINGS, balance.RECIPES, balance.DEFENSES):
+    for table in (balance.GOODS, balance.ITEMS, balance.BUILDINGS, balance.RECIPES, balance.DEFENSES,
+                  exploration.MATERIALS, exploration.MACHINES, exploration.INCUBATOR_RECIPES):
         codes.update(table)
     return codes

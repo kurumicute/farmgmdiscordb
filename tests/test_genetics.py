@@ -382,9 +382,10 @@ def test_migrations_set_growth_times_and_default_settings(engine, database_url):
     finally:
         command.upgrade(cfg, "head")
     with engine.connect() as conn:
-        # 0007 設為 2 小時，0011 再改為小麥 1、胡蘿蔔 2、番茄 4、草莓 8 小時
+        # 0007 設為 2 小時，0011 再改為小麥 1、胡蘿蔔 2、番茄 4、草莓 8 小時；0014 新增稀有作物（12、24 小時）
         rows = dict(conn.execute(text("SELECT code, grow_seconds FROM crop_types")).all())
-        assert rows == {"wheat": 3600, "carrot": 7200, "tomato": 14400, "strawberry": 28800}
+        assert rows == {"wheat": 3600, "carrot": 7200, "tomato": 14400, "strawberry": 28800,
+                        "amber_melon": 43200, "moonflower": 86400}
         row = conn.execute(text("SELECT version, created_by, settings FROM crop_genetics_settings")).one()
         assert row[0] == 1 and row[1] == "migration"
         assert genetics.validate_settings(row[2]) == genetics.validate_settings(D)

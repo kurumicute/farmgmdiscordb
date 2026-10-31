@@ -11,7 +11,7 @@ from sqlalchemy import make_url, text
 
 from app.clock import ManualClock
 from app.db.session import make_engine, make_session_factory
-from app.game import balance
+from app.game import balance, exploration
 from app.services.monitor_service import MonitorService
 from app.services.ranking_service import RankingService
 
@@ -20,6 +20,7 @@ GAME_TABLES = (
     "ranking_awards, ranking_settlements, ranking_reward_rules, game_events, "
     "competition_awards, competition_results, competition_contributions, competitions, "
     "quest_claims, quest_contributions, quests, admin_actions, "
+    "exploration_logs, farm_explorations, "
     "craft_orders, farm_animals, farm_buildings, farm_defenses, steal_records, group_members, groups, "
     "gamble_prizes, farm_daily_stats, farm_stats, farm_effects, farm_tools, game_transactions, inventory_items, "
     "farm_plots, farms, "
@@ -67,7 +68,7 @@ BASELINE_GENETICS = {
 
 def set_test_crop_times(eng) -> None:
     """crop_types／animal_types 不會被清空，因此每個測試前都刪除測試新增的種類，並把初始種類重設為已知值。"""
-    crop_codes = [c[0] for c in balance.INITIAL_CROPS]
+    crop_codes = [c[0] for c in balance.INITIAL_CROPS] + [c[0] for c in exploration.RARE_CROPS]
     animal_codes = [a[0] for a in balance.INITIAL_ANIMALS]
     with eng.begin() as conn:
         conn.execute(text("DELETE FROM crop_types WHERE NOT (code = ANY(:c))"), {"c": crop_codes})
@@ -77,9 +78,20 @@ def set_test_crop_times(eng) -> None:
             conn.execute(
                 text(
                     "UPDATE crop_types SET name = :name, grow_seconds = :g, seed_price = :seed, harvest_quantity = :q, "
-                    "sell_price = :sell, variant_code = :vc, variant_name = :vn, active = true WHERE code = :c"
+                    "sell_price = :sell, variant_code = :vc, variant_name = :vn, active = true, shop_buyable = true "
+                    "WHERE code = :c"
                 ),
                 {"name": name, "g": TEST_GROW_SECONDS[code], "seed": seed, "q": qty, "sell": sell, "c": code,
+                 "vc": variant_code, "vn": variant_name},
+            )
+        for code, name, seed, grow, qty, sell, variant_code, variant_name in exploration.RARE_CROPS:
+            conn.execute(
+                text(
+                    "UPDATE crop_types SET name = :name, grow_seconds = :g, seed_price = :seed, harvest_quantity = :q, "
+                    "sell_price = :sell, variant_code = :vc, variant_name = :vn, active = true, shop_buyable = false "
+                    "WHERE code = :c"
+                ),
+                {"name": name, "g": grow, "seed": seed, "q": qty, "sell": sell, "c": code,
                  "vc": variant_code, "vn": variant_name},
             )
         for code, name, price, feed, cycle, _product, pname, pqty, pprice in balance.INITIAL_ANIMALS:

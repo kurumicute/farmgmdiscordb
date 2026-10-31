@@ -54,6 +54,7 @@ def test_music_invite_and_no_cache(session_factory):
     assert client(session_factory).get("/api/info").json()["music_invite_url"] is None
     page = c.get("/")
     assert page.headers["cache-control"] == "no-cache" and 'id="guide"' in page.text and "農場操作手冊" in page.text
+    assert 'id="cave"' in page.text and "山洞冒險" in page.text
 
 
 def test_guide_follows_game_settings_without_player_data(service, session_factory, clock):
@@ -74,6 +75,13 @@ def test_guide_follows_game_settings_without_player_data(service, session_factor
     assert {q["name"] for q in guide["qualities"]} == {"普通", "優良", "稀有", "傳說"}
     assert sum(q["chance_pct"] for q in guide["qualities"]) == 100
     assert guide["recipes"] and guide["defenses"] and guide["items"]
+    x = guide["exploration"]
+    assert [a["name"] for a in x["areas"]] == ["青青草原", "古老森林", "神秘礦坑"]
+    assert {m["name"] for m in x["machines"]} == {"種子製造機", "自動收割機", "自動加工機", "稀有作物培育器"}
+    assert all(sum(t["chance_pct"] for t in x["reward_types"][k]) == 100 for k in ("normal", "advanced"))
+    assert x["areas"][0]["seeds"] == [{"name": "琥珀瓜種子", "min_level": 1}] and x["max_level"] == 13
+    melon = next(c for c in guide["crops"] if c["name"] == "琥珀瓜")
+    assert melon["shop_buyable"] is False  # 稀有作物：商店不販售種子
     assert "祕密農夫" not in res.text and "祕密伺服器" not in res.text and "123456789012345678" not in res.text
 
 

@@ -43,7 +43,7 @@ def test_withered_crop_cannot_be_harvested_and_can_be_cleared(service, player_id
 
 def test_fertilizer_reduces_time_once(service, player_id, clock):
     service.buy(player_id, "化肥", 2)
-    assert service.get_farm_status(player_id).gold == 500 - 80
+    assert service.get_farm_status(player_id).gold == 500 - 2 * balance.ITEMS[balance.ITEM_FERTILIZER][1]
     service.buy_seeds(player_id, "strawberry", 1)
     service.plant_crop(player_id, 1, "strawberry")
     with pytest.raises(ValidationError):  # 等待澆水時不能施肥
@@ -69,7 +69,8 @@ def test_fertilizer_requires_item(service, player_id):
         service.use_item(player_id, "fertilizer", 1)
 
 
-def test_earthworm_effect_lifecycle_and_restart(service, player_id, clock, database_url):
+def test_earthworm_effect_lifecycle_and_restart(service, player_id, clock, session_factory, database_url):
+    rich(session_factory, player_id)
     service.buy(player_id, "蚯蚓", 2)
     eff = service.get_backpack(player_id).effects[0]
     assert eff.status == "inactive"
@@ -102,7 +103,7 @@ def test_earthworm_effect_lifecycle_and_restart(service, player_id, clock, datab
 def test_auto_waterer_permanent_no_double_charge(service, player_id, clock, session_factory, database_url):
     with pytest.raises(InsufficientGoldError):
         service.buy(player_id, "auto_waterer", 1)
-    rich(session_factory, player_id, 1000)
+    rich(session_factory, player_id, balance.ITEMS[balance.TOOL_AUTO_WATERER][1] + 200)
     with pytest.raises(ValidationError):
         service.buy(player_id, "auto_waterer", 2)
     service.buy(player_id, "自動澆水器", 1)
@@ -146,7 +147,7 @@ def test_concurrent_tool_purchase_charges_once(service, player_id, session_facto
     for t in threads:
         t.join()
     assert len(errors) == 4 and all(isinstance(e, AlreadyExistsError) for e in errors)
-    assert service.get_farm_status(player_id).gold == 5000 - 800
+    assert service.get_farm_status(player_id).gold == 5000 - balance.ITEMS[balance.TOOL_AUTO_WATERER][1]
     with session_factory() as s:
         assert s.scalar(select(func.count()).select_from(FarmTool)) == 1
         assert s.scalar(select(func.count()).where(GameTransaction.event_type == "buy_item")) == 1

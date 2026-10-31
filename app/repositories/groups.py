@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.db.models import Farm, FarmPlot, Group, GroupMember, InventoryItem, Player
+from app.repositories import inventory as inventory_repo
 
 
 def create(session: Session, name: str, discord_guild_id: str | None = None) -> Group:
@@ -80,6 +81,7 @@ def members_with_farms(session: Session, group_id: int, now: datetime, wither_cu
     )
     inv = (
         select(InventoryItem.farm_id, func.sum(InventoryItem.quantity).label("used"))
+        .where(inventory_repo.in_warehouse())  # 素材背包不佔倉庫
         .group_by(InventoryItem.farm_id)
         .subquery()
     )

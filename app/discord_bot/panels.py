@@ -21,7 +21,7 @@ import discord
 from app.cli.commands import CommandHandler
 from app.discord_bot import farm_image
 from app.discord_bot.runner import player_message
-from app.game import balance, rules
+from app.game import balance, exploration, rules
 from app.game.errors import GameError, ValidationError
 from app.game.rules import EVENT_TYPE_LABELS, PlotState
 from app.services.game_service import genetics_label, long_duration
@@ -32,8 +32,11 @@ PANEL_TIMEOUT_SECONDS = 15 * 60  # Discord 私密訊息的互動權杖有效 15 
 FARM_IMAGE = "farm.png"  # 面板圖片的附件檔名（Embed 以 attachment:// 引用）
 GREEN, BLUE, GOLD, RED, GREY = 0x57F287, 0x5865F2, 0xF1C40F, 0xED4245, 0x99AAB5
 
-CROP_EMOJI = {"wheat": "🌾", "carrot": "🥕", "tomato": "🍅", "strawberry": "🍓"}
+CROP_EMOJI = {"wheat": "🌾", "carrot": "🥕", "tomato": "🍅", "strawberry": "🍓", "amber_melon": "🍈",
+              "moonflower": "🌙"}
 ANIMAL_EMOJI = {"chicken": "🐔", "cow": "🐄", "sheep": "🐑"}
+MATERIAL_EMOJI = {"wood": "🪵", "stone": "🪨", "copper_ore": "🟠", "iron_ore": "⛓️", "resin": "🍯", "herb": "🌿",
+                  "gear": "⚙️", "crystal": "💎", "ancient_core": "🌳", "machine_core": "🔩", "fake_coin": "🪙"}
 ITEM_EMOJI = {"fertilizer": "🧪", "earthworm": "🪱", "auto_waterer": "🚿", "patrol_ticket": "🔦",
               "auto_planter": "🤖", "auto_seller": "🏧"}
 PLOT_EMOJI = {
@@ -184,6 +187,10 @@ class FarmPanel(discord.ui.View):
         self.detail: dict | None = None
         self.bet: dict | None = None  # 賭場：已選的作物與下注數量
         self.avatar_url: str | None = None
+        # 山洞：目前查看的區域、最近一次探索結果、探索進行中（擋住同一面板的連續點擊）
+        self.cave_area: str | None = None
+        self.cave_result: dict | None = None
+        self.exploring = False
         self.files: list[discord.File] = []  # 本次畫面要附上的圖片；每次 render 重建
 
     @property
@@ -222,6 +229,8 @@ class FarmPanel(discord.ui.View):
         """讀取目前頁面的資料並重建元件；讀取失敗時顯示錯誤並提供回總覽按鈕。"""
         self.clear_items()
         self.files = []  # 換頁時舊圖片也要移除
+        if self.page != "welcome":
+            notice = await self._run_machines(notice)
         try:
             data = await self.run(getattr(self, f"_load_{self.page}"))
             embed = getattr(self, f"_build_{self.page}")(data)
@@ -241,8 +250,31 @@ class FarmPanel(discord.ui.View):
             embed.description = cut(embed.description, max(200, len(embed.description) - overflow))
         return embed
 
+    def _register_items(self, interaction: discord.Interaction) -> None:
+        """在編輯訊息前先把新元件登記到 discord.py 的 View store。
+
+        discord.py 要等編輯的 HTTP 回應回來才登記；附圖片時回應較慢，玩家若在這段時間點新出現的元件
+        （例如擴建後才出現的種植選單），互動會被直接丟棄，Discord 顯示「此交互失敗」。"""
+        state, message = getattr(interaction, "_state", None), getattr(interaction, "message", None)
+        if state is not None and message is not None and self.is_dispatchable():
+            state.store_view(self, message.id)
+
+    async def _run_machines(self, notice: str | None) -> str | None:
+        """自動收割機／自動加工機在開啟或切換頁面時運作；失敗不影響面板顯示。"""
+        try:
+            note = await self.run(self.svc.run_machines, self.player_id)
+        except GameError:
+            return notice
+        except Exception:
+            logger.exception("自動機器執行失敗（玩家 #%s）", self.player_id)
+            return notice
+        if not note:
+            return notice
+        return f"{notice}\n{note}" if notice else note
+
     async def refresh(self, interaction: discord.Interaction, notice: str | None = None) -> None:
         embed = await self.render(notice)
+        self._register_items(interaction)
         try:
             # attachments：傳新檔案會取代舊圖，傳 [] 會移除
             await interaction.edit_original_response(embed=embed, view=self, attachments=self.files)
@@ -286,6 +318,7 @@ class FarmPanel(discord.ui.View):
             await self.refresh(i)
 
         self.button("返回", back, emoji="↩️", style=discord.ButtonStyle.primary)
+        self._register_items(interaction)
         try:
             await interaction.edit_original_response(embed=embed, view=self, attachments=[])
         except discord.HTTPException as exc:
@@ -514,6 +547,7 @@ class FarmPanel(discord.ui.View):
         self.nav("紀錄", "log", emoji="🧾", row=3)
         self.nav("作物價格", "prices", emoji="📈", row=4)
         self.nav("賭場", "casino", emoji="🎰", row=4, style=discord.ButtonStyle.primary)
+        self.nav("山洞", "cave", emoji="⛰️", row=4, style=discord.ButtonStyle.primary)
         self.nav("說明", "help", emoji="❓", row=4)
         return e
 
@@ -573,10 +607,11 @@ class FarmPanel(discord.ui.View):
         empty = sum(1 for p in s.plots if p.state == PlotState.EMPTY)
         if empty:
             options = [
-                (f"{c.name}（種子 {c.seed_price} 金，持有 {seeds.get(c.code, 0)}）", c.code,
+                (f"{c.name}（種子 {c.seed_price} 金，持有 {seeds.get(c.code, 0)}）" if c.shop_buyable
+                 else f"{c.name}（稀有種子，持有 {seeds.get(c.code, 0)}）", c.code,
                  f"⏱️ {long_duration(c.grow_seconds)}｜🧺 收成 ×{c.harvest_quantity} {c.name}｜🏷️ {c.sell_price} 金／個",
                  crop_emoji(c.code))
-                for c in d["crops"]
+                for c in d["crops"] if c.shop_buyable or seeds.get(c.code)
             ]
 
             async def plant(interaction, code):
@@ -590,21 +625,23 @@ class FarmPanel(discord.ui.View):
                     disabled=not counts[PlotState.READY])
         self.button("清除乾枯", self._clear_all, emoji="🥀", row=1, disabled=not counts[PlotState.WITHERED])
 
+        price = balance.upgrade_price(len(s.plots))
+
         async def upgrade(interaction):
             if self.confirm != "upgrade":
                 await interaction.response.defer()
                 self.confirm = "upgrade"
                 await self.refresh(
                     interaction,
-                    f"⚠️ 擴建需要 {balance.UPGRADE_COST} 金幣（+{balance.UPGRADE_PLOTS_ADDED} 格），"
+                    f"⚠️ 擴建需要 {money(price or 0)} 金幣（+{balance.UPGRADE_PLOTS_ADDED} 格），"
                     "再按一次「確認擴建」。",
                 )
                 return
             await self.act(interaction, lambda: self.svc.upgrade_farm(self.player_id).message)
 
         confirming = self.confirm == "upgrade"
-        full = len(s.plots) + balance.UPGRADE_PLOTS_ADDED > balance.MAX_PLOTS
-        label = "已達上限" if full else ("確認擴建" if confirming else f"擴建（{balance.UPGRADE_COST} 金）")
+        full = price is None
+        label = "已達上限" if full else ("確認擴建" if confirming else f"擴建（{money(price)} 金）")
         self.button(label, upgrade, emoji="⬆️", row=1, disabled=full,
                     style=discord.ButtonStyle.danger if confirming else discord.ButtonStyle.secondary)
         growing = [p for p in s.plots if p.state == PlotState.GROWING and not p.fertilized]
@@ -648,6 +685,9 @@ class FarmPanel(discord.ui.View):
             ("🧪 道具", [f"{ITEM_EMOJI.get(x.code, '🎁')} {x.name}　×**{x.quantity}**" for x in bp.consumables]),
             ("🏆 賭場獎品", [f"🏆 {p['name']}　×**{p['quantity']}**"
                            f"　（價值 ×{p['multiplier']}，{p['unit_price']} 金／個）" for p in bp.prizes]),
+            (f"⛰️ 素材背包 {bp.material_used}/{bp.material_capacity}（不佔倉庫）",
+             [f"{MATERIAL_EMOJI.get(x.code, '🪨')} {x.name}　×**{x.quantity}**　（{x.description}）"
+              for x in bp.materials]),
             ("🔧 工具", tools),
             ("✨ 生效中的效果", effects),
         ))
@@ -660,6 +700,21 @@ class FarmPanel(discord.ui.View):
                 self.button(f"{'停用' if t.enabled else '啟用'}{t.name}", toggle, emoji="🔧", row=0)
         self.nav("前往販售", "sell", emoji="💰", row=1)
         self.nav("商店", "shop", emoji="🏪", row=1)
+        coins = next((x.quantity for x in bp.materials if x.code == exploration.FAKE_COIN), 0)
+        if coins:
+            async def exchange(interaction):
+                self.picker = {"key": "fake_coin", "label": f"💱 兌換假幣（1 個 = {exploration.FAKE_COIN_VALUE} 金）",
+                               "verb": "換", "max": coins, "presets": (1, 5, 10),
+                               "run": lambda q: self.svc.exchange_fake_coins(self.player_id, q).message}
+                await interaction.response.defer()
+                await self.refresh(interaction)
+
+            self.button(f"兌換假幣（持有 {coins}）", exchange, emoji="💱", row=1, style=discord.ButtonStyle.success)
+            if self.picker and self.picker.get("key") == "fake_coin":
+                self.picker["max"] = coins
+                e.add_field(name="💱 兌換假幣", inline=False,
+                            value=f"持有 **{coins}** 個，1 個 = **{exploration.FAKE_COIN_VALUE}** 金\n👇 選擇兌換數量")
+                self.quantity_buttons(row=2)
         self._nav_back()
         return e
 
@@ -674,7 +729,8 @@ class FarmPanel(discord.ui.View):
         held |= {f"item:{x.code}": x.quantity for x in bp.consumables}
         held |= {f"item:{t.code}": 1 for t in bp.tools if t.owned}
         status = svc.get_farm_status(self.player_id)
-        return {"crops": svc.get_market_prices(), "events": svc.active_events(), "gold": status.gold,
+        crops = [c for c in svc.get_market_prices() if c.shop_buyable]  # 稀有作物只能探索或培育取得
+        return {"crops": crops, "events": svc.active_events(), "gold": status.gold,
                 "capacity": status.warehouse_capacity, "used": status.warehouse_used, "held": held,
                 "image": self._image("商店", farm_image.shop_png)}
 
@@ -705,7 +761,7 @@ class FarmPanel(discord.ui.View):
         for code, (name, price, kind, desc, _a) in balance.ITEMS.items():
             have = held.get(f"item:{code}", 0)
             if kind == "tool":
-                tag = "💎 奢侈品" if price >= 100_000 else "♾️ 永久工具"
+                tag = "💎 奢侈品" if code in (balance.TOOL_AUTO_PLANTER, balance.TOOL_AUTO_SELLER) else "♾️ 永久工具"
                 own = "✅ 已擁有" if have else "🔒 未擁有"
                 tools.append(f"{mark('item:' + code)}{ITEM_EMOJI.get(code, '🎁')} **{name}**　💰 **{money(price)}** 金"
                              f"　{tag}　{own}\n　📝 {desc}")
@@ -1104,6 +1160,7 @@ class FarmPanel(discord.ui.View):
         self.nav("建造設施", "build", emoji="🏗️", row=2, style=discord.ButtonStyle.primary)
         self.button(f"領取完成品（{ready}）", collect, emoji="📥", row=2, disabled=not ready,
                     style=discord.ButtonStyle.success)
+        self.nav("機器", "machines", emoji="🔧", row=2)
         self._nav_back()
         self.attach_image(e, d["image"])
         return e
@@ -1226,7 +1283,8 @@ class FarmPanel(discord.ui.View):
 
     def _load_casino(self):
         svc = self.svc
-        return {"options": svc.gamble_options(self.player_id), "prizes": svc.list_prizes(self.player_id)}
+        return {"options": svc.gamble_options(self.player_id), "prizes": svc.list_prizes(self.player_id),
+                "image": self._image("賭場", farm_image.casino_png)}
 
     def _build_casino(self, d):
         options = d["options"]
@@ -1324,6 +1382,7 @@ class FarmPanel(discord.ui.View):
                         exact, row=3)
         self.nav("賣獎品", "sell", emoji="🏆", row=4)
         self._nav_back()
+        self.attach_image(e, d["image"])
         return e
 
     # ======================================================================
@@ -1345,7 +1404,8 @@ class FarmPanel(discord.ui.View):
         e = discord.Embed(title=f"🥷 ✦ 偷菜｜{self.group_name} ✦", color=RED, description=sections(
             ("可以偷的成熟作物", lines, "\n\n") if lines else "目前沒有可以偷的成熟作物。"
         ))
-        e.set_footer(text=f"每株作物每人只能偷一次，每次最多 {balance.STEAL_MAX_PER_ACTION} 個；對方可能有防守設施。"
+        e.set_footer(text=f"每株作物每人只能偷一次，每次最多 {balance.STEAL_MAX_PER_ACTION} 個；"
+                          f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田；對方可能有防守設施。"
                           + (f"第 {self.steal_page + 1}/{pages} 頁" if pages > 1 else ""))
 
         async def steal(interaction, value):
@@ -1547,6 +1607,280 @@ class FarmPanel(discord.ui.View):
         return e
 
     # ======================================================================
+    # 山洞冒險
+    # ======================================================================
+
+    @staticmethod
+    def _area_status(a, trip) -> str:
+        if not a["unlocked"]:
+            return f"🔒 農場 Lv.{a['unlock_level']} 解鎖"
+        if a["exploring"]:
+            return "📦 已經回來了，等你領取獎勵" if trip["finished"] else f"🧭 探險中，{ts(trip['ends_at'])}回來"
+        if trip:
+            return f"⏸️ 正在{trip['area_name']}探險，回來後才能出發"
+        return "✅ 可以出發"
+
+    @staticmethod
+    def _trip_text(trip) -> str:
+        if trip is None:
+            return "🏕️ 目前沒有在探險，選一個區域出發吧！"
+        if trip["finished"]:
+            return f"📦 {trip['emoji']} **{trip['area_name']}**探險回來了！按「領取探險獎勵」把物品放進背包。"
+        return (f"🧭 正在 {trip['emoji']} **{trip['area_name']}**探險，{ts(trip['ends_at'])}回來"
+                f"（{ts(trip['ends_at'], 'f')}）")
+
+    def _claim_button(self, trip, row: int) -> None:
+        if trip and trip["finished"]:
+            async def claim(interaction):
+                await self.act(interaction, self._claim, page="cave_result")
+
+            self.button("領取探險獎勵", claim, emoji="📦", row=row, style=discord.ButtonStyle.success)
+
+    def _area_image(self, area_code: str) -> bytes | None:
+        return self._image("探險區域", lambda: farm_image.explore_png(area_code))
+
+    def _load_cave(self):
+        d = self.svc.exploration_overview(self.player_id)
+        d["image"] = self._area_image(d["trip"]["area"]) if d["trip"] else None  # 探險中顯示所在區域
+        return d
+
+    def _build_cave(self, d):
+        trip = d["trip"]
+        e = discord.Embed(title="⛰️ ✦ 山洞冒險 ✦", color=GOLD, description=sections(
+            f"👨‍🌾 **{d['player_name']}**　⭐ 農場 **Lv {d['level']}**",
+            "探索三個區域收集素材、稀有種子與假幣，素材可以製作自動化機器（「🏭 加工」→「🔧 機器」）。\n"
+            "一次只能去一個區域；出發後要等探險時間結束才會回來，回來後領取獎勵才能再出發。\n"
+            "素材與假幣放進獨立的素材背包，不佔倉庫。",
+            self._trip_text(trip),
+        ))
+        for a in d["areas"]:
+            e.add_field(
+                name=f"{a['emoji']} {a['name']}（Lv.{a['unlock_level']}）", inline=False,
+                value=f"{self._area_status(a, trip)}　🕒 探險 {long_duration(a['duration_seconds'])}\n"
+                      f"🪨 主要素材：{'、'.join(a['common'][:3])}",
+            )
+        for a in d["areas"]:
+            async def open_area(interaction, code=a["code"]):
+                self.cave_area = code
+                await self.goto(interaction, "cave_area")
+
+            style = discord.ButtonStyle.success if a["ready"] or a["exploring"] else discord.ButtonStyle.secondary
+            self.button(a["name"], open_area, emoji=a["emoji"], row=0, style=style)
+        self._claim_button(trip, row=1)
+        self.nav("探索紀錄", "cave_log", emoji="📖", row=1)
+        self.nav("機器", "machines", emoji="🔧", row=1)
+        self.nav("返回主選單", "main", emoji="↩️", row=1)
+        self.attach_image(e, d["image"])
+        return e
+
+    def _load_cave_area(self):
+        d = self.svc.exploration_overview(self.player_id)
+        d["area"] = next(a for a in d["areas"] if a["code"] == (self.cave_area or exploration.AREA_ORDER[0]))
+        d["image"] = self._area_image(d["area"]["code"])
+        return d
+
+    def _build_cave_area(self, d):
+        a, level, trip = d["area"], d["level"], d["trip"]
+
+        def unlocked(min_level):
+            return "" if level >= min_level else f"（Lv.{min_level}）"
+
+        notes = [f"{'✅' if level >= lv else '🔒'} Lv.{lv} {text}" for lv, text in a["level_notes"]]
+        kind = "🌟 高級探索" if a["advanced"] else f"普通探索（Lv.{a['advanced_level']} 起高級探索）"
+        e = discord.Embed(title=f"{a['emoji']} ✦ {a['name']} ✦", color=GREEN if a["ready"] else GREY,
+                          description=sections(
+                              a["description"],
+                              f"🔑 解鎖：農場 **Lv.{a['unlock_level']}**（你是 Lv {level}）\n"
+                              f"🕒 探險時間：{long_duration(a['duration_seconds'])}　"
+                              f"🎲 每次 {a['rolls']} 份獎勵　{kind}\n"
+                              f"📌 狀態：{self._area_status(a, trip)}",
+                              ("🪨 主要素材", ["、".join(a["common"])]),
+                              ("💎 稀有素材", ["、".join(a["rare"]) or "—"]),
+                              ("🌰 稀有種子", ["、".join(a["seeds"]) or "這裡沒有稀有種子"]),
+                              ("🎁 特殊發現", [f"{name}{unlocked(lv)}" for name, lv in a["events"]] + ["🪙 假幣"]),
+                              ("⭐ 等級解鎖", notes),
+                          ))
+
+        async def explore(interaction):
+            if self.exploring:  # 同一面板連點：第一次還在處理，忽略後續點擊（後端另有一次一趟的保護）
+                await interaction.response.defer()
+                return
+            self.exploring = True
+            try:
+                await self.act(interaction, lambda: self._explore(a["code"]), page="cave")
+            finally:
+                self.exploring = False
+
+        if a["exploring"] and trip["finished"]:
+            self._claim_button(trip, row=0)
+        else:
+            if not a["unlocked"]:
+                label = "尚未解鎖"
+            elif a["exploring"]:
+                label = "探險中"
+            elif trip:
+                label = "正在其他區域探險"
+            else:
+                label = "出發探險"
+            self.button(label, explore, emoji="🧭", row=0, disabled=not a["ready"],
+                        style=discord.ButtonStyle.success if a["ready"] else discord.ButtonStyle.secondary)
+        self.nav("返回冒險介面", "cave", emoji="↩️", row=0)
+        self._nav_back(row=0)
+        self.attach_image(e, d["image"])
+        return e
+
+    def _explore(self, code: str) -> str:
+        r = self.svc.explore(self.player_id, code)
+        return (f"{r['emoji']} 出發前往{r['area_name']}！探險 {long_duration(r['duration_seconds'])}，"
+                f"{ts(r['ends_at'])}回來後記得領取獎勵。")
+
+    def _claim(self) -> str:
+        self.cave_result = self.svc.claim_exploration(self.player_id)
+        return f"{self.cave_result['emoji']} 從{self.cave_result['area_name']}探險回來了！"
+
+    def _load_cave_result(self):
+        if self.cave_result is None:
+            raise ValidationError("目前沒有探索結果，請回冒險介面選擇區域探索。")
+        return {**self.cave_result, "image": self._area_image(self.cave_result["area"])}
+
+    def _build_cave_result(self, r):
+        items = [f"{MATERIAL_EMOJI.get(i['code'], crop_emoji(i['code'].removeprefix('seed_')))} {i['name']}"
+                 f"　×**{i['quantity']}**　（{i['rarity']}）" for i in r["items"]]
+        seeds = "、".join(f"{n} ×{q}" for n, q in r["seeds"].items())
+        coins = f"🎉 {r['fake_coins']} 個" if r["fake_coins"] else "沒有"
+        e = discord.Embed(title=f"{r['emoji']} ✦ {r['area_name']}探索結果 ✦", color=GOLD, description=sections(
+            ("🎒 獲得物品", items or ["這次什麼都沒找到…"]),
+            f"🌰 稀有種子：{'🎉 ' + seeds if seeds else '沒有'}\n"
+            f"🪙 假幣：{coins}\n"
+            f"🎁 特殊事件：{'、'.join(r['events']) if r['events'] else '沒有'}"
+            + ("\n🌟 高級探索" if r["advanced"] else ""),
+            "🧭 獎勵已放進背包，現在可以再出發探險了！",
+        ))
+        self.nav("返回冒險介面", "cave", emoji="🔄", row=0, style=discord.ButtonStyle.primary)
+        self.nav("返回主選單", "main", emoji="🏠", row=0)
+        self.attach_image(e, r["image"])
+        return e
+
+    def _load_cave_log(self):
+        return {"logs": self.svc.exploration_logs(self.player_id, 10)}
+
+    def _build_cave_log(self, d):
+        lines = [
+            f"{x['emoji']} **{x['area_name']}**　{ts(x['explored_at'])}{'　🌟高級' if x['advanced'] else ''}\n"
+            "　🎒 " + ("、".join(f"{n} ×{q}" for n, q in x["rewards"].items()) or "一無所獲")
+            + (f"\n　🎁 {'、'.join(x['events'])}" if x["events"] else "")
+            for x in d["logs"]
+        ]
+        e = discord.Embed(title="📖 ✦ 探索紀錄 ✦", color=BLUE,
+                          description=sections(("最近 10 次探索", lines, "\n\n"), "" if lines else "還沒有探索紀錄。"))
+        self.nav("返回冒險介面", "cave", emoji="↩️", row=0)
+        self._nav_back(row=0)
+        return e
+
+    # ======================================================================
+    # 機器（素材製作；種子製造機、稀有作物培育器、自動加工機設定）
+    # ======================================================================
+
+    def _load_machines(self):
+        svc, pid = self.svc, self.player_id
+        return {"status": svc.machines_status(pid), "backpack": svc.get_backpack(pid),
+                "incubator": svc.incubator_recipes(), "recipes": svc.recipes(pid)}
+
+    def _build_machines(self, d):
+        st, bp = d["status"], d["backpack"]
+        machines = {m["code"]: m for m in st["machines"]}
+        blocks = []
+        for m in st["machines"]:
+            if m["owned"]:
+                state = "✅ 已擁有，" + ("啟用中" if m["enabled"] else "已停用")
+            elif not m["unlocked"]:
+                state = f"🔒 農場 Lv.{m['unlock_level']} 解鎖"
+            elif m["missing"]:
+                state = "🧺 材料不足"
+            else:
+                state = "🛠️ 可以製作"
+            mats = "、".join(f"{'✅' if have >= need else '❌'}{name} {have}/{need}"
+                            for name, need, have in m["materials"])
+            extra = ""
+            if m["code"] == "auto_processor" and m["owned"]:
+                recipe = m["settings"].get("recipe")
+                extra = f"\n　⚙️ 加工項目：{balance.RECIPES[recipe][0] if recipe in balance.RECIPES else '未設定'}"
+            blocks.append(f"{m['emoji']} **{m['name']}**（Lv.{m['unlock_level']}）　{state}\n　📝 {m['description']}"
+                          + ("" if m["owned"] else f"\n　🧱 {mats}") + extra)
+        e = discord.Embed(title="🔧 ✦ 機器 ✦", color=BLUE, description=sections(
+            f"⭐ 農場 Lv {st['level']}　素材從「⛰️ 山洞」探索取得",
+            ("機器", blocks, "\n\n"),
+        ))
+        if self.picker:
+            e.add_field(name="🛒 已選擇", inline=False, value=f"**{self.picker['label']}**\n👇 選擇數量")
+
+        def build_hint(m) -> str:
+            if not m["unlocked"]:
+                return "等級不足"
+            if m["missing"]:
+                return "缺少 " + "、".join(f"{k}×{v}" for k, v in m["missing"].items())
+            return "可以製作"
+
+        async def build(interaction, code):
+            await self.act(interaction, lambda: self.svc.build_machine(self.player_id, code).message)
+
+        self.select("🛠️ 製作機器（消耗素材）…",
+                    [(m["name"], m["code"], f"Lv.{m['unlock_level']}｜{build_hint(m)}", m["emoji"])
+                     for m in st["machines"] if not m["owned"]], build, row=0)
+
+        options = []
+        if machines["seed_maker"]["owned"]:
+            rare = {c for c, *_rest in exploration.RARE_CROPS}
+            for x in bp.produce:
+                if (x.quality in exploration.SEED_MAKER_QUALITIES and x.mutation in exploration.SEED_MAKER_MUTATIONS
+                        and (exploration.SEED_MAKER_RARE_CROPS or x.code not in rare)):
+                    options.append((f"種子製造：{x.name}（持有 {x.quantity}）", f"seed:{x.code}",
+                                    f"1 個{x.name} → {exploration.SEED_MAKER_RATIO} 顆種子", "🌱"))
+        if machines["rare_incubator"]["owned"]:
+            options += [(f"培育：{r['name']}", f"incubate:{r['code']}",
+                         "、".join(f"{k}×{v}" for k, v in r["inputs"].items()) + f"｜{long_duration(r['seconds'])}／份",
+                         "🧬") for r in d["incubator"]]
+        if machines["auto_processor"]["owned"]:
+            options += [(f"自動加工設為：{r['name']}", f"proc:{r['code']}", r["building_name"], "🏭")
+                        for r in d["recipes"]]
+            options.append(("自動加工：不自動開單", "proc:", "只自動領取完成的加工品", "🏭"))
+
+        async def use(interaction, value):
+            kind, code = value.split(":", 1)
+            if kind == "proc":
+                await self.act(interaction, lambda: self.svc.set_processor_recipe(self.player_id, code or None).message)
+                return
+            if kind == "seed":
+                stack = next((x for x in bp.produce if x.code == code and x.quality == "normal"
+                              and x.mutation == "none"), None)
+                name, have = (stack.name, stack.quantity) if stack else (code, 1)
+                ratio = exploration.SEED_MAKER_RATIO
+                self.picker = {"key": value, "label": f"🌱 種子製造：{name}（1 個 → {ratio} 顆）", "verb": "用",
+                               "max": max(1, min(have, exploration.SEED_MAKER_MAX)), "presets": (1, 5, 10),
+                               "run": lambda q: self.svc.make_seeds(self.player_id, code, q).message}
+            else:
+                r = next(x for x in d["incubator"] if x["code"] == code)
+                self.picker = {"key": value, "label": f"🧬 {r['name']}", "verb": "培育",
+                               "max": exploration.INCUBATOR_MAX_QUANTITY, "presets": (1, 3, 5),
+                               "run": lambda q: self.svc.start_incubation(self.player_id, code, q).message}
+            await interaction.response.defer()
+            await self.refresh(interaction)
+
+        self.select("⚙️ 使用機器…", options[:25], use, row=1, selected=(self.picker or {}).get("key"))
+        self.quantity_buttons(row=2)
+        for m in st["machines"]:
+            if m["owned"]:
+                async def toggle(interaction, m=m):
+                    await self.act(interaction, lambda: self.svc.set_machine_enabled(
+                        self.player_id, m["code"], not m["enabled"]).message)
+
+                self.button(f"{'停用' if m['enabled'] else '啟用'}{m['name']}", toggle, emoji=m["emoji"], row=3)
+        self.nav("加工", "craft", emoji="🏭", row=4)
+        self.nav("山洞", "cave", emoji="⛰️", row=4)
+        self._nav_back(row=4)
+        return e
+
+    # ======================================================================
     # 紀錄與說明
     # ======================================================================
 
@@ -1582,6 +1916,11 @@ def help_embed() -> discord.Embed:
         "先建造畜舍再買動物，餵食後等待生產再收集。磨坊、烘焙坊、果醬工坊可以把作物加工成更值錢的商品。"))
     e.add_field(name="🥷 偷菜與防守", inline=False, value=(
         "可以偷同一伺服器成員已成熟的作物；稻草人、警戒犬、防盜圍欄能阻止別人偷你的菜，巡查券可以查是誰來偷。"))
+    e.add_field(name="⛰️ 山洞冒險", inline=False, value=(
+        "總覽「⛰️ 山洞」探索青青草原（Lv.1）、古老森林（Lv.5）、神秘礦坑（Lv.10），分別探險 8／16／24 小時，"
+        "一次只能去一個區域，回來後領取獎勵才能再出發；可取得素材、稀有種子與假幣（背包兌換，1 個 = 100 金）。"
+        "素材可在「🔧 機器」製作種子製造機、自動收割機、"
+        "自動加工機與稀有作物培育器。"))
     e.add_field(name="👥 群組", inline=False, value=(
         "每個 Discord 伺服器是一個群組。你的農場屬於建立時的伺服器，只有在那裡的操作才計入群組任務與競賽；"
         "可在「👥 群組」把農場轉移到目前的伺服器（每 7 天一次）。"))

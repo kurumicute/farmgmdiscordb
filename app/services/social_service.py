@@ -5,13 +5,14 @@
 """
 
 import re
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.clock import TAIPEI_TZ
 from app.db.models import Group, Player
 from app.game import balance, genetics, rules
 from app.game.errors import (
@@ -38,8 +39,8 @@ from app.repositories import leaderboard as leaderboard_repo
 from app.repositories import players as players_repo
 from app.repositories import steals as steals_repo
 from app.services.dto import ActionResult, ExternalContext, FarmStatus, GroupInfo, StealTarget
+from app.services.exploration_service import ExplorationService
 from app.services.game_service import genetics_label
-from app.services.ranch_service import RanchService
 
 GUILD_ID_RE = re.compile(r"^[0-9]{1,20}$")
 LEADERBOARD_MAX = 50
@@ -55,7 +56,7 @@ def external_name(raw: str | None, max_len: int, fallback: str) -> str:
     return name or fallback
 
 
-class SocialService(RanchService):
+class SocialService(ExplorationService):
     # ---------- 外部平台（Discord）對應 ----------
 
     def _ensure_guild_group(self, session: Session, guild_id: str, guild_name: str | None) -> Group:
@@ -199,6 +200,11 @@ class SocialService(RanchService):
 
     # ---------- 偷菜 ----------
 
+    @staticmethod
+    def _taipei_day_start(now: datetime) -> datetime:
+        local = now.astimezone(TAIPEI_TZ)
+        return local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+
     def steal_targets(self, group_id: int, player_id: int) -> list[StealTarget]:
         now = self._clock.now()
         with self._transaction() as session:
@@ -209,7 +215,15 @@ class SocialService(RanchService):
             free = farm.warehouse_capacity - inventory_repo.total_quantity(session, farm.id)
             if free <= 0:
                 return []
-            rows = steals_repo.candidate_plots(session, group_id, player_id, now, self._wither_cutoff(now))
+            rows = steals_repo.candidate_plots(
+                session,
+                group_id,
+                player_id,
+                now,
+                self._wither_cutoff(now),
+                self._taipei_day_start(now),
+                balance.STEAL_PLOTS_PER_VICTIM_PER_DAY,
+            )
             return [
                 StealTarget(
                     pid, pname, fname, plot_no, crop_name, remaining, min(balance.STEAL_MAX_PER_ACTION, remaining, free)
@@ -259,6 +273,16 @@ class SocialService(RanchService):
                 raise PlotWitheredError("這塊土地的作物已經乾枯，不能偷。")
             if steals_repo.already_stolen(session, plot.id, plot.planting_no, thief_player_id):
                 raise AlreadyStolenError("你已經偷過這株作物了，每株作物每人只能偷一次。")
+            if (
+                steals_repo.plots_stolen_since(
+                    session, thief_player_id, victim_player_id, self._taipei_day_start(now)
+                )
+                >= balance.STEAL_PLOTS_PER_VICTIM_PER_DAY
+            ):
+                raise AlreadyStolenError(
+                    f"你今天已經偷過這位玩家的 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格土地了，"
+                    f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田，明天（台灣時間 0 點後）再來。"
+                )
             if plot.remaining_quantity < quantity:
                 raise InsufficientItemsError(f"剩餘數量不足：只剩 {plot.remaining_quantity} 個。")
             used = inventory_repo.total_quantity(session, thief_farm.id)

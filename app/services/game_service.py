@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.clock import TAIPEI_TZ, Clock, SystemClock
 from app.db.models import CropType, Farm, FarmEffect
-from app.game import balance, genetics, rules
+from app.game import balance, exploration, genetics, rules
 from app.game import events as event_rules
 from app.game.errors import (
     AlreadyExistsError,
@@ -73,6 +73,7 @@ def _crop_info(crop: CropType) -> CropInfo:
         grow_seconds=crop.grow_seconds,
         harvest_quantity=crop.harvest_quantity,
         sell_price=crop.sell_price,
+        shop_buyable=crop.shop_buyable,
     )
 
 
@@ -84,6 +85,7 @@ class GameService:
         rng: Callable[[], float] | None = None,
         genetics_rng: Callable[[], float] | None = None,
         dice: Callable[[], int] | None = None,
+        explore_rng: Callable[[], float] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._clock = clock or SystemClock()
@@ -95,6 +97,8 @@ class GameService:
         self._pick = random.SystemRandom().choice
         # 賭場擲數字（1–10）；測試可注入固定值
         self._dice = dice or (lambda: random.SystemRandom().randint(balance.GAMBLE_MIN, balance.GAMBLE_MAX))
+        # 山洞探索掉落判定（回傳 [0, 1)）；測試可注入固定值
+        self._explore_rng = explore_rng or random.SystemRandom().random
         self._context_group_id: int | None = None
 
     def in_group_context(self, group_id: int | None) -> "GameService":
@@ -469,6 +473,8 @@ class GameService:
         with self._transaction() as session:
             farm = self._locked_farm(session, player_id)
             crop = self._crop(session, crop_key, require_active=True)
+            if not crop.shop_buyable:
+                raise ValidationError(f"商店不販售{crop.name}種子，只能從山洞探索或稀有作物培育器取得。")
             cost = crop.seed_price * quantity
             if farm.gold < cost:
                 raise InsufficientGoldError(f"金幣不足：需要 {cost}，目前只有 {farm.gold}。")
@@ -707,7 +713,10 @@ class GameService:
             item = rules.seed_item_code(crop.code)
             have = inventory_repo.get_quantity(session, farm.id, item)
             bought = 0
-            if len(plots) > have:
+            if len(plots) > have and not crop.shop_buyable:
+                if have <= 0:
+                    raise InsufficientItemsError(f"沒有{crop.name}種子（商店不販售，只能從山洞探索或培育取得）。")
+            elif len(plots) > have:
                 bought = min(len(plots) - have, farm.gold // crop.seed_price)
                 if bought <= 0 and have <= 0:
                     raise InsufficientGoldError(f"金幣不足：{crop.name}種子每顆 {crop.seed_price} 金幣。")
@@ -727,7 +736,8 @@ class GameService:
                 watered += seconds is not None
             text = f"在 {count} 格種下{crop.name}" + (f"（購買 {bought} 顆種子）" if bought else "")
             if count < len(plots):
-                text += f"；金幣不夠，還有 {len(plots) - count} 格空著"
+                reason = "金幣不夠" if crop.shop_buyable else "種子不夠"
+                text += f"；{reason}，還有 {len(plots) - count} 格空著"
             if watered == count:
                 text += "，已自動澆水。"
             else:
@@ -847,9 +857,9 @@ class GameService:
     def upgrade_farm(self, player_id: int) -> ActionResult:
         with self._transaction() as session:
             farm = self._locked_farm(session, player_id)
-            if farms_repo.count_plots(session, farm.id) + balance.UPGRADE_PLOTS_ADDED > balance.MAX_PLOTS:
+            cost = balance.upgrade_price(farms_repo.count_plots(session, farm.id))
+            if cost is None:
                 raise ValidationError(f"農田已達上限 {balance.MAX_PLOTS} 格，無法再擴建。")
-            cost = balance.UPGRADE_COST
             if farm.gold < cost:
                 raise InsufficientGoldError(f"金幣不足：擴建需要 {cost}，目前只有 {farm.gold}。")
             farm.gold -= cost
@@ -865,9 +875,11 @@ class GameService:
                 gold_delta=-cost,
             )
             auto = self._auto_plant(session, farm)
+            nxt = balance.upgrade_price(total)
+            tail = f"下一次擴建需要 {nxt} 金幣。" if nxt else "農田已達上限。"
             return ActionResult(
-                f"擴建完成！農場升到 {farm.level} 級，新增第 {numbers[0]}–{numbers[-1]} 格，"
-                f"共 {total} 格土地，花費 {cost} 金幣。{auto}",
+                f"擴建完成！農場升到 {farm.level} 級，新增第 {numbers[0]} 格，"
+                f"共 {total} 格土地，花費 {cost} 金幣。{tail}{auto}",
                 farm.gold,
                 -cost,
                 quantity=len(numbers),
@@ -1444,8 +1456,15 @@ def build_backpack(session: Session, farm: Farm, now: datetime) -> Backpack:
     ]
     produce.sort(key=lambda x: (x.code, list(balance.QUALITIES).index(x.quality), x.mutation))
     prizes = prize_views(session, farm, settings)
+    materials = [
+        BackpackLine(code, name, quantities[code],
+                     exploration.FAKE_COIN_VALUE if code == exploration.FAKE_COIN else 0, f"{rarity}・{use}")
+        for code, (name, rarity, use) in exploration.MATERIALS.items()
+        if quantities.get(code)
+    ]
     return Backpack(
         prizes=prizes,
+        materials=materials,
         player_id=farm.player_id,
         goods=goods,
         seeds=seeds,
@@ -1453,7 +1472,11 @@ def build_backpack(session: Session, farm: Farm, now: datetime) -> Backpack:
         consumables=consumables,
         tools=tools,
         effects=effects,
-        used=sum(i.quantity for i in stacks) + sum(p["quantity"] for p in prizes),  # 賭場獎品也佔倉庫空間
+        # 賭場獎品也佔倉庫空間；山洞素材放在素材背包，不佔倉庫
+        used=sum(i.quantity for i in stacks if not inventory_repo.is_material(i.item_code))
+        + sum(p["quantity"] for p in prizes),
+        material_used=sum(x.quantity for x in materials),
+        material_capacity=exploration.MATERIAL_BAG_CAPACITY,
         capacity=farm.warehouse_capacity,
         now=now,
     )

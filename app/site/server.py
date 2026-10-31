@@ -1,7 +1,7 @@
 """介紹網站（公開）：Bot 功能介紹、邀請連結與彙總統計。預設 Port 24444。
 
 - 只提供彙總數字（玩家數、農場數、伺服器數、今日操作數等），不輸出任何玩家名稱、ID 或個別資料。
-- /api/guide 提供操作手冊用的遊戲設定（作物、動物、道具、品質與突變、啟用中的活動），
+- /api/guide 提供操作手冊用的遊戲設定（作物、動物、道具、品質與突變、山洞冒險與機器、啟用中的活動），
   數值即時讀自資料庫與 balance，管理員在後台調整後網站會跟著更新；同樣不含玩家資料。
 - 查詢都在唯讀交易中執行並快取（統計 STATS_CACHE_SECONDS、手冊 GUIDE_CACHE_SECONDS 秒），訪客再多也不會增加資料庫負擔。
 - 沒有任何寫入端點；頁面為靜態檔，前端只用 textContent 填入資料。
@@ -22,7 +22,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.models import Farm, FarmPlot, GameTransaction, Group, Player
-from app.game import balance
+from app.game import balance, exploration
 from app.game import events as event_rules
 from app.repositories import animals as animals_repo
 from app.repositories import crops as crops_repo
@@ -104,6 +104,58 @@ def _duration(seconds: int) -> str:
     return " ".join(p for p in parts if p) or f"{seconds} 秒"
 
 
+def build_exploration(names: dict[str, str]) -> dict:
+    """山洞冒險的規則（區域、機率、機器、培育配方、等級解鎖），全部來自 game/exploration.py。"""
+    def name(code: str) -> str:
+        if code in exploration.MATERIALS:
+            return exploration.MATERIALS[code][0]
+        if code.startswith("seed_"):
+            return f"{names.get(code[5:], code[5:])}種子"
+        return names.get(code, code)
+
+    def items(area: exploration.Area, kind: str) -> list[dict]:
+        # 同一物品可能在不同等級各列一筆（提高機率），手冊只列最早可取得的等級
+        first: dict[str, int] = {}
+        for d in area.pools.get(kind, ()):
+            first[d.item] = min(first.get(d.item, d.min_level), d.min_level)
+        return [{"name": name(code), "min_level": lv} for code, lv in first.items()]
+
+    def type_pct(key: str) -> list[dict]:
+        bp = exploration.REWARD_TYPE_BP[key]
+        return [{"name": exploration.REWARD_TYPE_LABELS[t], "chance_pct": _pct(bp[t])}
+                for t in exploration.REWARD_TYPES]
+
+    return {
+        "max_level": balance.INITIAL_LEVEL + (balance.MAX_PLOTS - balance.INITIAL_PLOTS) // balance.UPGRADE_PLOTS_ADDED,
+        "fake_coin_value": exploration.FAKE_COIN_VALUE,
+        "material_bag_capacity": exploration.MATERIAL_BAG_CAPACITY,
+        "reward_types": {"normal": type_pct("normal"), "advanced": type_pct("advanced")},
+        "areas": [
+            {"emoji": a.emoji, "name": a.name, "description": a.description, "unlock_level": a.unlock_level,
+             "duration_seconds": a.duration_seconds, "rolls": a.rolls, "advanced_level": a.advanced_level,
+             "common": items(a, "common"), "rare": items(a, "rare"), "seeds": items(a, "seed"),
+             "events": [{"name": e.name, "min_level": e.min_level} for e in a.events]}
+            for a in (exploration.AREAS[c] for c in exploration.AREA_ORDER)
+        ],
+        "materials": [
+            {"name": n, "rarity": rarity, "usage": usage} for n, rarity, usage in exploration.MATERIALS.values()
+        ],
+        "machines": [
+            {"emoji": m.emoji, "name": m.name, "unlock_level": m.unlock_level, "description": m.description,
+             "materials": [{"name": name(code), "quantity": qty} for code, qty in m.materials.items()]}
+            for m in (exploration.MACHINES[c] for c in exploration.MACHINE_ORDER)
+        ],
+        "seed_maker_ratio": exploration.SEED_MAKER_RATIO,
+        "incubator": [
+            {"name": n, "inputs": [{"name": name(code), "quantity": qty} for code, qty in inputs.items()],
+             "output": name(output), "output_quantity": qty_out, "seconds": seconds}
+            for n, inputs, output, qty_out, seconds, _aliases in exploration.INCUBATOR_RECIPES.values()
+        ],
+        "incubator_max": exploration.INCUBATOR_MAX_QUANTITY,
+        "level_unlocks": [{"level": lv, "text": t} for lv, t in exploration.LEVEL_UNLOCKS],
+    }
+
+
 def build_guide(session: Session, now: datetime) -> dict:
     """操作手冊需要的遊戲設定。只輸出規則與數值，不含任何玩家、農場或群組資料。"""
     crops = [c for c in crops_repo.list_all(session) if c.active]
@@ -124,7 +176,7 @@ def build_guide(session: Session, now: datetime) -> dict:
             "gold": balance.INITIAL_GOLD,
             "plots": balance.INITIAL_PLOTS,
             "warehouse": balance.INITIAL_WAREHOUSE_CAPACITY,
-            "upgrade_cost": balance.UPGRADE_COST,
+            "upgrade_prices": list(balance.UPGRADE_PRICES),
             "upgrade_plots": balance.UPGRADE_PLOTS_ADDED,
             "max_plots": balance.MAX_PLOTS,
             "wither_minutes": balance.WITHER_SECONDS // 60,
@@ -140,9 +192,11 @@ def build_guide(session: Session, now: datetime) -> dict:
         },
         "crops": [
             {"name": c.name, "seed_price": c.seed_price, "grow_seconds": c.grow_seconds,
-             "harvest_quantity": c.harvest_quantity, "sell_price": c.sell_price, "variant_name": c.variant_name}
+             "harvest_quantity": c.harvest_quantity, "sell_price": c.sell_price, "variant_name": c.variant_name,
+             "shop_buyable": c.shop_buyable}
             for c in crops
         ],
+        "exploration": build_exploration(names),
         "qualities": [
             {"name": label, "chance_pct": _pct(g["quality_bp"][code]), "price_mul": g["quality_price_pct"][code] / 100}
             for code, label in balance.QUALITIES.items()

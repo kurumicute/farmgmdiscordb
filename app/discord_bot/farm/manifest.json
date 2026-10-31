@@ -746,60 +746,72 @@
         ]
       }
     },
-    "animal_size": 48,
+    "animal_size": 44,
     "animal_spots": [
       [
         [
-          141,
-          520
+          126,
+          96,
+          0
         ],
         [
-          209,
-          520
+          198,
+          82,
+          1
         ],
         [
-          141,
-          572
+          146,
+          140,
+          1
         ],
         [
-          209,
-          572
+          226,
+          124,
+          0
         ]
       ],
       [
         [
-          286,
-          520
+          270,
+          106,
+          1
         ],
         [
-          354,
-          520
+          322,
+          76,
+          0
         ],
         [
-          286,
-          572
+          356,
+          116,
+          1
         ],
         [
-          354,
-          572
+          296,
+          142,
+          0
         ]
       ],
       [
         [
-          431,
-          520
+          414,
+          84,
+          0
         ],
         [
-          499,
-          520
+          468,
+          100,
+          1
         ],
         [
-          431,
-          572
+          426,
+          136,
+          1
         ],
         [
-          499,
-          572
+          506,
+          130,
+          0
         ]
       ]
     ],
@@ -839,7 +851,11 @@
     }
   },
   "scenes": {
-    "shop": "scenes/shop.png"
+    "shop": "scenes/shop.png",
+    "casino": "scenes/casino.png",
+    "explore_grassland": "scenes/explore_grassland.png",
+    "explore_forest": "scenes/explore_forest.png",
+    "explore_mine": "scenes/explore_mine.png"
   },
   "layering": {
     "field": "依農場土地數選 field.bases[n]（4～16），第 k 塊地（依 plot_number 排序，0 起算）畫在 field.cells[k].rect",

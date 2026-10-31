@@ -395,11 +395,14 @@ class AdminService(RankingService):
             if delta == 0:
                 return {"item_code": item_code, "quantity": quantity, "changed": False}
             if delta > 0:
-                used = inventory_repo.total_quantity(session, farm.id)
-                if used + delta > farm.warehouse_capacity:
-                    raise WarehouseFullError(
-                        f"倉庫空間不足：目前 {used}/{farm.warehouse_capacity}，無法再放入 {delta} 個。"
-                    )
+                if inventory_repo.is_material(item_code):
+                    self._ensure_material_space(session, farm, delta)
+                else:
+                    used = inventory_repo.total_quantity(session, farm.id)
+                    if used + delta > farm.warehouse_capacity:
+                        raise WarehouseFullError(
+                            f"倉庫空間不足：目前 {used}/{farm.warehouse_capacity}，無法再放入 {delta} 個。"
+                        )
                 inventory_repo.add(session, farm.id, item_code, delta, quality, mutation)
             else:
                 inventory_repo.remove(session, farm.id, item_code, -delta, quality, mutation)

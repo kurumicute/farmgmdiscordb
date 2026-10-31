@@ -3,6 +3,19 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.db.models import GamblePrize, InventoryItem
+from app.game import exploration
+
+# 山洞素材與假幣放在獨立的素材背包，不計入倉庫空間
+MATERIAL_CODES = tuple(exploration.MATERIALS)
+
+
+def is_material(item_code: str) -> bool:
+    return item_code in exploration.MATERIALS
+
+
+def in_warehouse():
+    """SQL 條件：佔倉庫空間的庫存（排除素材背包的物品）。"""
+    return InventoryItem.item_code.not_in(MATERIAL_CODES)
 
 
 def list_items(session: Session, farm_id: int) -> list[InventoryItem]:
@@ -32,10 +45,20 @@ def get_quantity(
 
 
 def total_quantity(session: Session, farm_id: int) -> int:
-    """倉庫已使用空間：一般庫存加上賭場獎品。"""
-    items = select(func.coalesce(func.sum(InventoryItem.quantity), 0)).where(InventoryItem.farm_id == farm_id)
+    """倉庫已使用空間：一般庫存加上賭場獎品（素材背包的物品不計入）。"""
+    items = select(func.coalesce(func.sum(InventoryItem.quantity), 0)).where(
+        InventoryItem.farm_id == farm_id, in_warehouse()
+    )
     prizes = select(func.coalesce(func.sum(GamblePrize.quantity), 0)).where(GamblePrize.farm_id == farm_id)
     return int(session.scalar(items) or 0) + int(session.scalar(prizes) or 0)
+
+
+def material_quantity(session: Session, farm_id: int) -> int:
+    """素材背包已使用空間（山洞素材與假幣的總數）。"""
+    stmt = select(func.coalesce(func.sum(InventoryItem.quantity), 0)).where(
+        InventoryItem.farm_id == farm_id, InventoryItem.item_code.in_(MATERIAL_CODES)
+    )
+    return int(session.scalar(stmt) or 0)
 
 
 def list_prizes(session: Session, farm_id: int, *, for_update: bool = False) -> list[GamblePrize]:

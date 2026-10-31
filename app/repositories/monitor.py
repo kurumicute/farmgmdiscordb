@@ -6,6 +6,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import CropType, Farm, FarmPlot, GameTransaction, Group, InventoryItem, Player, StealRecord
+from app.repositories import inventory as inventory_repo
 
 
 def _escape_like(value: str) -> str:
@@ -67,6 +68,7 @@ def farms(
     )
     inv = (
         select(InventoryItem.farm_id, func.sum(InventoryItem.quantity).label("used"))
+        .where(inventory_repo.in_warehouse())  # 素材背包不佔倉庫
         .group_by(InventoryItem.farm_id)
         .subquery()
     )

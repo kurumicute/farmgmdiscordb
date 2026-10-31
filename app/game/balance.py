@@ -22,9 +22,19 @@ def warehouse_expansion_price(capacity: int) -> int | None:
     tier = max(0, (capacity - INITIAL_WAREHOUSE_CAPACITY) // WAREHOUSE_EXPANSION_STEP)
     return WAREHOUSE_EXPANSION_PRICES[min(tier, len(WAREHOUSE_EXPANSION_PRICES) - 1)]
 
-UPGRADE_COST = 500
-UPGRADE_PLOTS_ADDED = 2
+# 擴建土地：每次 +1 格，價格依目前格數遞增（第 5 格 500 … 第 16 格 180,000）
+UPGRADE_PLOTS_ADDED = 1
+UPGRADE_PRICES = (500, 1_000, 2_000, 4_000, 8_000, 20_000, 40_000, 80_000, 120_000, 160_000, 170_000, 180_000)
 MAX_PLOTS = 16  # 每座農場最多土地數（Discord 農田圖片為 4×4）
+
+
+def upgrade_price(plots: int) -> int | None:
+    """目前有 plots 格時，下一次擴建的價格；已達上限時回傳 None。"""
+    if plots >= MAX_PLOTS:
+        return None
+    tier = max(0, plots - INITIAL_PLOTS)
+    return UPGRADE_PRICES[min(tier, len(UPGRADE_PRICES) - 1)]
+
 
 # 單次購買／販售數量上限，避免誤輸入過大數字
 MAX_TRADE_QUANTITY = 9999
@@ -33,6 +43,7 @@ PLAYER_NAME_MAX_LEN = 32
 FARM_NAME_MAX_LEN = 40
 
 # 初始作物設定（供測試參考；遊戲執行時以資料庫 crop_types 為準，可在監控網站新增／修改／停用）
+# Migration 0013 已把資料庫價格調整為：小麥 5/11、胡蘿蔔 12/15、番茄 25/22、草莓 60/34（種子價格/單位售價）
 INITIAL_CROPS = [
     # code, 名稱, 種子價格, 生長秒數, 收成數量, 單位售價（生長秒數由 Migration 0011 改為 1／2／4／8 小時，可在網站調整）
     ("wheat", "小麥", 10, 3600, 2, 15),
@@ -53,6 +64,8 @@ WITHER_SECONDS = 16 * 3600
 
 # ---------- 偷菜 ----------
 STEAL_MAX_PER_ACTION = 2
+# 每位偷菜者每天（台灣時間）對同一位玩家只能成功偷 1 格土地；被防守設施阻止的不算
+STEAL_PLOTS_PER_VICTIM_PER_DAY = 1
 GROUP_NAME_MAX_LEN = 40
 # 農場轉移所屬群組的冷卻時間（首次建立農場後的第一次轉移不需等待）
 GROUP_TRANSFER_COOLDOWN_SECONDS = 7 * 24 * 3600
@@ -73,33 +86,33 @@ EFFECT_EARTHWORM = "earthworm"
 # code: (名稱, 價格, 種類, 說明, 別名)
 ITEMS = {
     ITEM_FERTILIZER: (
-        "化肥", 40, "consumable", "用於生長中的農田，剩餘生長時間減少 25%（每次種植限用一次）", ("化肥",)
+        "化肥", 30, "consumable", "用於生長中的農田，剩餘生長時間減少 25%（每次種植限用一次）", ("化肥",)
     ),
     ITEM_EARTHWORM: (
         "人工養殖蚯蚓",
-        150,
+        300,
         "consumable",
         "使用後 3 天內澆水的作物，生長時間 ×0.75（效果期間再次使用可再延長 3 天）",
         ("蚯蚓", "人工養殖蚯蚓"),
     ),
-    TOOL_AUTO_WATERER: ("自動澆水器", 800, "tool", "永久工具：啟用時種植後自動澆水", ("澆水器", "自動澆水器")),
+    TOOL_AUTO_WATERER: ("自動澆水器", 3500, "tool", "永久工具：啟用時種植後自動澆水", ("澆水器", "自動澆水器")),
     TOOL_AUTO_PLANTER: (
         "自動播種機",
-        100_000,
+        60_000,
         "tool",
         "奢侈品：啟用時，收成、清除乾枯、擴建或購買種子後，自動從背包隨機挑選種子把空著的農田種滿",
         ("播種機", "自動播種機"),
     ),
     TOOL_AUTO_SELLER: (
         "自動販售機",
-        1_000_000,
+        300_000,
         "tool",
         "奢侈品：啟用時，收成的農作物依當下價目表自動賣出（不佔倉庫）",
         ("販售機", "自動販售機"),
     ),
     "patrol_ticket": (
         "巡查券",
-        100,
+        60,
         "consumable",
         "使用後查看自己農場近 7 天所有偷菜嘗試（成功與被阻止，含偷菜者）",
         ("巡查券", "patrol"),
@@ -122,9 +135,9 @@ GAMBLE_MODES = {"big": "比大（6–10）", "small": "比小（1–5）", "exac
 # ---------- 防守設施 ----------
 # code: (名稱, 價格, 每座農場上限, 阻止機率, 守護格數（None = 全部土地）, 別名)
 DEFENSES = {
-    "scarecrow": ("稻草人", 500, 2, 0.25, 3, ("稻草人",)),
-    "guard_dog": ("警戒犬", 1500, 1, 0.30, None, ("警戒犬", "dog", "狗")),
-    "fence": ("防盜圍欄", 1000, 1, 0.20, 4, ("防盜圍欄", "圍欄")),
+    "scarecrow": ("稻草人", 400, 2, 0.25, 3, ("稻草人",)),
+    "guard_dog": ("警戒犬", 1200, 1, 0.30, None, ("警戒犬", "dog", "狗")),
+    "fence": ("防盜圍欄", 800, 1, 0.20, 4, ("防盜圍欄", "圍欄")),
 }
 # 判定順序固定：稻草人 → 警戒犬 → 防盜圍欄；同種設施重疊守護同一格只計算一次
 DEFENSE_ORDER = ("scarecrow", "guard_dog", "fence")
@@ -172,9 +185,9 @@ CRAFT_MAX_QUANTITY = 10  # 單張訂單最多份數；每座設施同時只能�
 # ---------- 加工品（可販售商品；動物產品在資料庫 animal_types） ----------
 # code: (名稱, 單位售價, 別名)
 GOODS = {
-    "flour": ("麵粉", 60, ("麵粉",)),
-    "bread": ("麵包", 160, ("麵包",)),
-    "strawberry_jam": ("草莓果醬", 110, ("草莓果醬", "果醬", "jam")),
+    "flour": ("麵粉", 45, ("麵粉",)),
+    "bread": ("麵包", 130, ("麵包",)),
+    "strawberry_jam": ("草莓果醬", 140, ("草莓果醬", "果醬", "jam")),
 }
 
 # ---------- 群組共同任務 ----------

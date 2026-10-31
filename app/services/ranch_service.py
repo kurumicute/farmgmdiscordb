@@ -6,7 +6,7 @@
 
 from datetime import timedelta
 
-from app.game import balance, genetics, rules
+from app.game import balance, exploration, genetics, rules
 from app.game.errors import (
     AlreadyExistsError,
     InsufficientGoldError,
@@ -43,6 +43,8 @@ def item_name(code: str, names: dict[str, str] | None = None) -> str:
         return balance.GOODS[code][0]
     if code in balance.ITEMS:
         return balance.ITEMS[code][0]
+    if code in exploration.MATERIALS:
+        return exploration.MATERIALS[code][0]
     return _CROP_NAMES.get(code, code)
 
 
@@ -83,16 +85,30 @@ def animal_type_view(a) -> dict:
     }
 
 
+def facility_name(code: str) -> str:
+    """加工設施名稱：建築（磨坊等）或機器（稀有作物培育器）。"""
+    if code in balance.BUILDINGS:
+        return balance.BUILDINGS[code][0]
+    if code in exploration.MACHINES:
+        return exploration.MACHINES[code].name
+    return code
+
+
+def recipe_name(code: str) -> str:
+    for table in (balance.RECIPES, exploration.INCUBATOR_RECIPES):
+        if code in table:
+            return table[code][0]
+    return code
+
+
 def order_view(order, now, names: dict[str, str] | None = None) -> dict:
     state = rules.craft_state(order.status, order.ready_at, now)
     return {
         "order_id": order.id,
         "recipe_code": order.recipe_code,
-        "recipe_name": balance.RECIPES[order.recipe_code][0]
-        if order.recipe_code in balance.RECIPES
-        else order.recipe_code,
+        "recipe_name": recipe_name(order.recipe_code),
         "building_code": order.building_code,
-        "building_name": balance.BUILDINGS[order.building_code][0],
+        "building_name": facility_name(order.building_code),
         "quantity": order.quantity,
         "inputs": {item_name(k, names): v for k, v in order.inputs.items()},
         "input_codes": dict(order.inputs),
@@ -419,56 +435,63 @@ class RanchService(GameService):
             farm = self._locked_farm(session, player_id)
             if ranch_repo.count_buildings(session, farm.id, building) == 0:
                 raise ValidationError(f"需要先建造{building_name}才能加工{name}（workshop build {building_name}）。")
-            now = self._clock.now()
-            busy = ranch_repo.busy_order(session, farm.id, building, now)
-            if busy is not None:
-                left = rules.format_duration(rules.remaining_seconds(busy.ready_at, now))
-                raise ValidationError(
-                    f"{building_name}正在處理訂單 #{busy.id}，還需要 {left}；每座設施一次只能加工一張訂單。"
-                )
-            names = catalog_repo.item_names(session)
-            needed = {item: per * quantity for item, per in inputs.items()}
-            lacking = []
-            for item, amount in needed.items():
-                have = inventory_repo.get_quantity(session, farm.id, item)
-                if have < amount:
-                    lacking.append(f"{item_name(item, names)} 需要 {amount}、只有 {have}")
-            if lacking:
-                raise InsufficientItemsError(f"原料不足：{'；'.join(lacking)}。")
-            # 扣除原料與建立訂單在同一筆交易中完成
-            for item, amount in needed.items():
-                if not inventory_repo.remove(session, farm.id, item, amount):
-                    raise InsufficientItemsError(f"原料不足：{item_name(item, names)}。")
-            ready_at = now + timedelta(seconds=seconds * quantity)
-            order = ranch_repo.add_order(
-                session,
-                farm_id=farm.id,
-                recipe_code=code,
-                building_code=building,
-                quantity=quantity,
-                inputs=needed,
-                output_code=output,
-                output_quantity=out_qty * quantity,
-                status="in_progress",
-                started_at=now,
-                ready_at=ready_at,
+            return self._start_order(session, farm, code, name, building, inputs, output, out_qty, seconds, quantity)
+
+    def _start_order(
+        self, session, farm, code, name, building, inputs, output, out_qty, seconds, quantity, *, source: str = ""
+    ) -> ActionResult:
+        """在已鎖定的農場開一張加工訂單（設施檢查由呼叫端負責）；原料扣除與訂單建立在同一筆交易中。"""
+        building_name = facility_name(building)
+        now = self._clock.now()
+        busy = ranch_repo.busy_order(session, farm.id, building, now)
+        if busy is not None:
+            left = rules.format_duration(rules.remaining_seconds(busy.ready_at, now))
+            raise ValidationError(
+                f"{building_name}正在處理訂單 #{busy.id}，還需要 {left}；每座設施一次只能加工一張訂單。"
             )
-            used = "、".join(f"{item_name(k, names)} x{v}" for k, v in needed.items())
-            self._record(
-                session,
-                farm,
-                EventType.CRAFT_START,
-                f"訂單 #{order.id}：以 {used} 開始加工 {out_qty * quantity} 份{name}",
-                item_code=output,
-                quantity=out_qty * quantity,
-            )
-            return ActionResult(
-                f"已建立加工訂單 #{order.id}：{building_name}加工 {out_qty * quantity} 份{name}，"
-                f"扣除原料 {used}，{rules.format_duration(seconds * quantity)}後完成。",
-                farm.gold,
-                item_code=output,
-                quantity=out_qty * quantity,
-            )
+        names = catalog_repo.item_names(session)
+        needed = {item: per * quantity for item, per in inputs.items()}
+        lacking = []
+        for item, amount in needed.items():
+            have = inventory_repo.get_quantity(session, farm.id, item)
+            if have < amount:
+                lacking.append(f"{item_name(item, names)} 需要 {amount}、只有 {have}")
+        if lacking:
+            raise InsufficientItemsError(f"原料不足：{'；'.join(lacking)}。")
+        # 扣除原料與建立訂單在同一筆交易中完成
+        for item, amount in needed.items():
+            if not inventory_repo.remove(session, farm.id, item, amount):
+                raise InsufficientItemsError(f"原料不足：{item_name(item, names)}。")
+        ready_at = now + timedelta(seconds=seconds * quantity)
+        order = ranch_repo.add_order(
+            session,
+            farm_id=farm.id,
+            recipe_code=code,
+            building_code=building,
+            quantity=quantity,
+            inputs=needed,
+            output_code=output,
+            output_quantity=out_qty * quantity,
+            status="in_progress",
+            started_at=now,
+            ready_at=ready_at,
+        )
+        used = "、".join(f"{item_name(k, names)} x{v}" for k, v in needed.items())
+        self._record(
+            session,
+            farm,
+            EventType.CRAFT_START,
+            f"{source}訂單 #{order.id}：以 {used} 開始加工 {out_qty * quantity} 份{name}",
+            item_code=output,
+            quantity=out_qty * quantity,
+        )
+        return ActionResult(
+            f"已建立加工訂單 #{order.id}：{building_name}加工 {out_qty * quantity} 份{name}，"
+            f"扣除原料 {used}，{rules.format_duration(seconds * quantity)}後完成。",
+            farm.gold,
+            item_code=output,
+            quantity=out_qty * quantity,
+        )
 
     def craft_orders(self, player_id: int, *, include_collected: bool = False, limit: int = 20) -> list[dict]:
         now = self._clock.now()
@@ -484,37 +507,42 @@ class RanchService(GameService):
             order = ranch_repo.get_order(session, farm.id, order_id, for_update=True)
             if order is None:
                 raise NotFoundError(f"找不到你的加工訂單 #{order_id}。")
-            now = self._clock.now()
-            state = rules.craft_state(order.status, order.ready_at, now)
-            out_name = item_name(order.output_code, catalog_repo.item_names(session))
-            if state == CraftState.COLLECTED:
-                raise ValidationError(f"訂單 #{order_id} 的{out_name}已經領取過了。")
-            if state == CraftState.IN_PROGRESS:
-                left = rules.format_duration(rules.remaining_seconds(order.ready_at, now))
-                raise ValidationError(f"訂單 #{order_id} 還在加工中，還需要 {left}。")
-            used = inventory_repo.total_quantity(session, farm.id)
-            if used + order.output_quantity > farm.warehouse_capacity:
-                raise WarehouseFullError(
-                    f"背包空間不足：目前 {used}/{farm.warehouse_capacity}，需要 {order.output_quantity} 格。"
-                    f"成品會保留在訂單 #{order_id}（待領取），清出空間後再領取。"
-                )
-            inventory_repo.add(session, farm.id, order.output_code, order.output_quantity)
-            order.status = "collected"
-            order.collected_at = now
-            self._record(
-                session,
-                farm,
-                EventType.CRAFT_COLLECT,
-                f"領取訂單 #{order_id}：{order.output_quantity} 份{out_name}",
-                item_code=order.output_code,
-                quantity=order.output_quantity,
+            return self._collect_order(session, farm, order)
+
+    def _collect_order(self, session, farm, order, *, source: str = "") -> ActionResult:
+        """領取已鎖定農場的一張訂單；倉庫不足時在修改任何資料前丟出 WarehouseFullError。"""
+        order_id = order.id
+        now = self._clock.now()
+        state = rules.craft_state(order.status, order.ready_at, now)
+        out_name = item_name(order.output_code, catalog_repo.item_names(session))
+        if state == CraftState.COLLECTED:
+            raise ValidationError(f"訂單 #{order_id} 的{out_name}已經領取過了。")
+        if state == CraftState.IN_PROGRESS:
+            left = rules.format_duration(rules.remaining_seconds(order.ready_at, now))
+            raise ValidationError(f"訂單 #{order_id} 還在加工中，還需要 {left}。")
+        used = inventory_repo.total_quantity(session, farm.id)
+        if used + order.output_quantity > farm.warehouse_capacity:
+            raise WarehouseFullError(
+                f"背包空間不足：目前 {used}/{farm.warehouse_capacity}，需要 {order.output_quantity} 格。"
+                f"成品會保留在訂單 #{order_id}（待領取），清出空間後再領取。"
             )
-            return ActionResult(
-                f"已領取訂單 #{order_id}：{order.output_quantity} 份{out_name}。",
-                farm.gold,
-                item_code=order.output_code,
-                quantity=order.output_quantity,
-            )
+        inventory_repo.add(session, farm.id, order.output_code, order.output_quantity)
+        order.status = "collected"
+        order.collected_at = now
+        self._record(
+            session,
+            farm,
+            EventType.CRAFT_COLLECT,
+            f"{source}領取訂單 #{order_id}：{order.output_quantity} 份{out_name}",
+            item_code=order.output_code,
+            quantity=order.output_quantity,
+        )
+        return ActionResult(
+            f"已領取訂單 #{order_id}：{order.output_quantity} 份{out_name}。",
+            farm.gold,
+            item_code=order.output_code,
+            quantity=order.output_quantity,
+        )
 
     # ---------- 商品販售 ----------
 

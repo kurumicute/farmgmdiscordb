@@ -200,17 +200,41 @@ def test_steal_validation(service, world, clock, session_factory):
     service.steal_crop(g1, a, b, 3, 1)
     with pytest.raises(AlreadyStolenError):
         service.steal_crop(g1, a, b, 3, 1)  # 重複指令
-
-    # 背包滿
-    with session_factory.begin() as s:
-        s.execute(update(Farm).where(Farm.player_id == a).values(gold=10_000))
-    service.buy_seeds(a, "wheat", 49)  # 1 + 49 = 50
-    with pytest.raises(WarehouseFullError):
+    # 今天已偷過 b 的 1 格田，b 的其他土地也不能再偷
+    with pytest.raises(AlreadyStolenError) as info:
         service.steal_crop(g1, a, b, 1, 1)
+    assert "每天只能偷同一位玩家 1 格田" in str(info.value)
+
+    # 背包滿（另一位偷菜者 c，今天還沒偷過 b）
+    with session_factory.begin() as s:
+        s.execute(update(Farm).where(Farm.player_id == world["c"]).values(gold=10_000))
+    service.buy_seeds(world["c"], "wheat", 50 - sum(i.quantity for i in service.get_inventory(world["c"]).items))
+    with pytest.raises(WarehouseFullError):
+        service.steal_crop(g1, world["c"], b, 1, 1)
 
     clock.advance(600 + balance.WITHER_SECONDS)
     with pytest.raises(PlotWitheredError):
         service.steal_crop(g1, world["c"], b, 1, 1)
+
+
+def test_steal_one_plot_per_victim_per_day(service, world, clock):
+    g1, a, b, c = world["g1"], world["a"], world["b"], world["c"]
+    for plot in (1, 2):
+        grow(service, b, plot, "wheat")
+    grow(service, c, 1, "wheat")
+    clock.advance(60)
+    assert {(t.player_id, t.plot_number) for t in service.steal_targets(g1, a)} == {(b, 1), (b, 2), (c, 1)}
+    service.steal_crop(g1, a, b, 1, 1)
+    # 今天偷過 b 一格後，b 的其他土地不再列出；其他玩家不受影響
+    assert {(t.player_id, t.plot_number) for t in service.steal_targets(g1, a)} == {(c, 1)}
+    with pytest.raises(AlreadyStolenError):
+        service.steal_crop(g1, a, b, 2, 1)
+    service.steal_crop(g1, a, c, 1, 1)
+    # 台灣時間隔天 0 點後重新計算（測試起點為台灣 08:00，再過 16 小時即隔天 0 點）
+    clock.advance(16 * 3600 - 60)
+    grow(service, b, 3, "wheat")
+    clock.advance(60)
+    assert service.steal_crop(g1, a, b, 3, 1).success
 
 
 def test_steal_more_than_remaining(service, world, clock):

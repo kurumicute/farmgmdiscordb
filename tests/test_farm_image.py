@@ -83,6 +83,43 @@ def test_shop_is_fixed_file():
     assert farm_image.shop_png() == (ASSETS / "scenes/shop.png").read_bytes()
 
 
+def test_casino_and_explore_scenes():
+    from app.game import exploration
+
+    assert farm_image.casino_png() == (ASSETS / "scenes/casino.png").read_bytes()
+    for code in exploration.AREA_ORDER:  # 每個探險區域都有自己的圖
+        assert farm_image.explore_png(code) == (ASSETS / f"scenes/explore_{code}.png").read_bytes()
+    assert farm_image.explore_png("unknown_area") is None
+
+
+def _solid(sprite: Image.Image) -> set[tuple[int, int]]:
+    alpha = sprite.getchannel("A")
+    return {(x, y) for y in range(sprite.height) for x in range(sprite.width) if alpha.getpixel((x, y)) > 40}
+
+
+def test_animal_spots_do_not_overlap_buildings_or_each_other():
+    """動物固定站在畜舍旁：12 個位置都不能和任何建築或其他動物的實心像素重疊（避免看起來像穿模）。"""
+    m = farm_image.manifest()
+    yard, size = m["yard"], m["yard"]["animal_size"]
+    taken: set[tuple[int, int]] = set()
+    rects = [(slot["rect"], "barn") for slot in yard["barn_slots"]]
+    rects += [(info["rect"], code) for code, info in yard["machines"].items()]
+    for rect, code in rects:
+        sprite = farm_image.img(m["buildings"][code]).resize((rect[2] - rect[0], rect[3] - rect[1]))
+        taken |= {(rect[0] + x, rect[1] + y) for x, y in _solid(sprite)}
+    spots = [spot for barn in yard["animal_spots"] for spot in barn]
+    assert len(spots) == len(yard["barn_slots"]) * 4
+    for code in ("chicken", "cow", "sheep", "_generic"):
+        sprite = farm_image.img(m["animals"][code]).resize((size, size), Image.LANCZOS)
+        solid, flipped = _solid(sprite), _solid(sprite.transpose(Image.Transpose.FLIP_LEFT_RIGHT))
+        occupied = set(taken)
+        for cx, by, flip in spots:
+            pixels = {(cx - size // 2 + x, by - size + y) for x, y in (flipped if flip else solid)}
+            assert not pixels & occupied, (code, cx, by)
+            assert all(0 <= x < yard["size"][0] and 0 <= y < yard["size"][1] for x, y in pixels)
+            occupied |= pixels
+
+
 def test_missing_assets_raise(tmp_path, monkeypatch):
     monkeypatch.setattr(farm_image, "ASSETS", tmp_path)
     farm_image.reset_cache()

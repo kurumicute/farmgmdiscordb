@@ -42,7 +42,7 @@ HELP_TEXT = f"""\
   tool on|off auto_waterer      啟用／停用自動澆水器
   inventory [items|tools]       查看背包：全部／可堆疊物品／工具與效果
   sell <作物|商品> <數量> [品質] [突變]  出售農產品或商品，例如：sell wheat 2、sell 小麥 1 稀有 黃金、sell 琥珀小麥 1
-  upgrade                       擴建土地（{balance.UPGRADE_COST} 金幣，+{balance.UPGRADE_PLOTS_ADDED} 格）
+  upgrade                       擴建土地（+{balance.UPGRADE_PLOTS_ADDED} 格，{balance.UPGRADE_PRICES[0]} 金幣起漲價）
   log [筆數]                    查看最近操作紀錄
 群組（模擬 Discord 伺服器）：
   group create <群組名稱>       建立群組
@@ -53,7 +53,8 @@ HELP_TEXT = f"""\
   group members [關鍵字] [頁碼] 查看／搜尋目前群組成員
   group status                  查看目前群組基本資訊
   steal targets [頁碼]          列出目前群組可以偷的作物（每頁 10 筆）
-  steal <玩家ID> <土地編號> <數量>  偷菜（每次最多 {balance.STEAL_MAX_PER_ACTION} 個，每株每人限偷一次）
+  steal <玩家ID> <土地編號> <數量>  偷菜（每次最多 {balance.STEAL_MAX_PER_ACTION} 個，每株限偷一次，
+                                    每天同一位玩家限 1 格田）
   defense | defense status      查看防守設施、守護範圍與各土地阻止機率
   defense shop                  查看防守商店
   defense buy <設施|巡查券> [數量]  購買防守設施（稻草人／警戒犬／防盜圍欄）或巡查券
@@ -374,6 +375,8 @@ class CommandHandler:
     def _shop(self, args: list[str]) -> str:
         lines = ["代碼        名稱    種子價  生長時間     收成數  單位售價"]
         for c in self.service.get_market_prices():
+            if not c.shop_buyable:  # 稀有作物只能探索或培育取得
+                continue
             lines.append(
                 f"{c.code:<11} {c.name:<6}  {c.seed_price:>5}   {rules.format_duration(c.grow_seconds):<10}  "
                 f"{c.harvest_quantity:>5}   {c.sell_price:>6}"
@@ -382,7 +385,8 @@ class CommandHandler:
         for code, (name, price, _kind, desc, _aliases) in balance.ITEMS.items():
             lines.append(f"  {code:<13} {name:<8} {price:>5} 金幣  {desc}")
         lines.append(
-            f"擴建土地：{balance.UPGRADE_COST} 金幣 / +{balance.UPGRADE_PLOTS_ADDED} 格（最多 {balance.MAX_PLOTS} 格）"
+            f"擴建土地：每次 +{balance.UPGRADE_PLOTS_ADDED} 格，"
+            f"{' → '.join(str(p) for p in balance.UPGRADE_PRICES)} 金幣（最多 {balance.MAX_PLOTS} 格）"
         )
         return "\n".join(lines)
 
@@ -658,7 +662,7 @@ class CommandHandler:
 
     @staticmethod
     def _items_text(bp: Backpack) -> list[str]:
-        if not (bp.seeds or bp.produce or bp.consumables or bp.goods):
+        if not (bp.seeds or bp.produce or bp.consumables or bp.goods or bp.materials):
             return ["【物品】目前沒有任何可堆疊物品。"]
         lines = []
         if bp.seeds:
@@ -677,6 +681,9 @@ class CommandHandler:
         if bp.consumables:
             lines.append("【消耗型道具】")
             lines += [f"  {x.name:<10} x {x.quantity:<4} {x.description}" for x in bp.consumables]
+        if bp.materials:
+            lines.append("【山洞素材】")
+            lines += [f"  {x.name:<10} x {x.quantity:<4} {x.description}" for x in bp.materials]
         return lines
 
     @staticmethod

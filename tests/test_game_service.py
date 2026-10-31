@@ -165,24 +165,33 @@ def test_sell_updates_gold_and_inventory(service, player_id, clock):
 
 
 def test_upgrade_adds_plots(service, player_id):
-    result = service.upgrade_farm(player_id)
+    result = service.upgrade_farm(player_id)  # 第 5 格 500 金幣
     status = service.get_farm_status(player_id)
     assert result.gold == 0 and status.gold == 0
+    assert "下一次擴建需要 1000 金幣" in result.message
     assert status.level == 2
-    assert [p.plot_number for p in status.plots] == [1, 2, 3, 4, 5, 6]
-    with pytest.raises(InsufficientGoldError):
+    assert [p.plot_number for p in status.plots] == [1, 2, 3, 4, 5]
+    with pytest.raises(InsufficientGoldError, match="1000"):
         service.upgrade_farm(player_id)
-    assert len(service.get_farm_status(player_id).plots) == 6
+    assert len(service.get_farm_status(player_id).plots) == 5
+
+
+def test_upgrade_price_ladder():
+    assert [balance.upgrade_price(n) for n in range(4, 17)] == [*balance.UPGRADE_PRICES, None]
+    assert balance.upgrade_price(1) == balance.UPGRADE_PRICES[0]  # 管理員刪減後低於初始格數
+    assert len(balance.UPGRADE_PRICES) == balance.MAX_PLOTS - balance.INITIAL_PLOTS
 
 
 def test_upgrade_stops_at_max_plots(service, player_id, session_factory):
     with session_factory() as s:
-        s.execute(update(Farm).values(gold=100_000))
+        s.execute(update(Farm).values(gold=1_000_000))
         s.commit()
     while len(service.get_farm_status(player_id).plots) < balance.MAX_PLOTS:
         service.upgrade_farm(player_id)
     before = service.get_farm_status(player_id)
     assert len(before.plots) == balance.MAX_PLOTS
+    assert before.gold == 1_000_000 - sum(balance.UPGRADE_PRICES)
+    assert before.level == 1 + len(balance.UPGRADE_PRICES)
     with session_factory() as s:
         records = s.scalar(select(func.count()).select_from(GameTransaction))
     with pytest.raises(ValidationError, match="上限"):

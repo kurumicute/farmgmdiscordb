@@ -10,6 +10,7 @@ from app.auth import AdminAuth
 from app.cli.commands import CommandHandler
 from app.db.models import CraftOrder, Farm, GameTransaction
 from app.db.session import make_engine, make_session_factory
+from app.game import balance
 from app.game.errors import (
     AlreadyExistsError,
     InsufficientGoldError,
@@ -416,7 +417,7 @@ def test_goods_sales_and_leaderboards(service, farmer, home_group, session_facto
     # 商品總販售納入動物產品與加工品，依收入排名
     goods = service.leaderboard("goods")
     assert [(r["player_name"], r["sold_quantity"], r["sales_income"]) for r in goods] == [
-        ("牧場主", 5, 260),
+        ("牧場主", 5, 100 + balance.GOODS["bread"][1]),
         ("對手", 3, 45),
     ]
 
@@ -480,6 +481,6 @@ def test_cli_ranch_and_craft_flow(service, farmer, clock, session_factory):
     clock.advance(1800)
     assert "已領取" in cli.handle(f"craft collect {order_id}")
     assert "【動物產品與加工品】" in cli.handle("inventory items")
-    assert "獲得 60 金幣" in cli.handle("sell 麵粉 1")
+    assert f"獲得 {balance.GOODS['flour'][1]} 金幣" in cli.handle("sell 麵粉 1")
     assert "商品總販售" in cli.handle("leaderboard global goods")
     assert "用法" in cli.handle("craft")

@@ -447,7 +447,8 @@ def register_advanced(tree: app_commands.CommandTree, cmds: FarmCommands) -> Non
     @farm.command(
         name="upgrade",
         description=(
-            f"擴建土地（{balance.UPGRADE_COST} 金幣，+{balance.UPGRADE_PLOTS_ADDED} 格，最多 {balance.MAX_PLOTS} 格）"
+            f"擴建土地（+{balance.UPGRADE_PLOTS_ADDED} 格，{balance.UPGRADE_PRICES[0]} 金幣起逐次漲價，"
+            f"最多 {balance.MAX_PLOTS} 格）"
         ),
     )
     async def farm_upgrade(interaction: discord.Interaction):

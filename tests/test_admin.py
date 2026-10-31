@@ -320,6 +320,17 @@ def test_quest_item_filter_uses_db_products(admin, farmer, clock):
 # ---------- 調整玩家 ----------
 
 
+def test_set_inventory_materials_use_material_bag(admin, farmer):
+    from app.game import exploration
+
+    cap = balance.INITIAL_WAREHOUSE_CAPACITY
+    admin.set_inventory(ACTOR, farmer, "egg", "normal", "none", cap)  # 倉庫全滿
+    admin.set_inventory(ACTOR, farmer, "wood", "normal", "none", 10)  # 素材放素材背包，不受倉庫限制
+    assert admin.get_backpack(farmer).material_used == 10
+    with pytest.raises(WarehouseFullError, match="素材背包"):
+        admin.set_inventory(ACTOR, farmer, "stone", "normal", "none", exploration.MATERIAL_BAG_CAPACITY)
+
+
 def test_set_inventory_add_edit_delete(admin, farmer, session_factory):
     admin.set_inventory(ACTOR, farmer, "fertilizer", "normal", "none", 3)
     admin.set_inventory(ACTOR, farmer, "wheat", "legendary", "golden", 2)

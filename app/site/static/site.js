@@ -115,7 +115,7 @@
     const s = g.start;
     setText("g-start", `${num.format(s.gold)} 金幣、${s.plots} 格農田、倉庫 ${s.warehouse} 格`);
     setText("g-wither", duration(s.wither_minutes * 60));
-    setText("g-upgrade", `${num.format(s.upgrade_cost)} 金幣，農田 +${s.upgrade_plots} 格（最多 ${s.max_plots} 格）`);
+    setText("g-upgrade", `每次農田 +${s.upgrade_plots} 格：${s.upgrade_prices.map((p) => num.format(p)).join(" → ")} 金幣（最多 ${s.max_plots} 格）`);
     setText("g-steal-max", String(s.steal_max));
     setText("g-transfer", `${s.transfer_cooldown_days} 天`);
     setText("g-craft-max", String(s.craft_max));
@@ -128,8 +128,8 @@
       ? g.crops.map((c) => `${c.name} ${duration(c.grow_seconds)}`).join("、")
       : "目前沒有開放種植的作物");
     fillRows("g-crops", g.crops.length
-      ? g.crops.map((c) => [c.name, num.format(c.seed_price), duration(c.grow_seconds), `×${c.harvest_quantity}`,
-        num.format(c.sell_price), c.variant_name])
+      ? g.crops.map((c) => [c.name, c.shop_buyable ? num.format(c.seed_price) : "不販售（探索／培育）",
+        duration(c.grow_seconds), `×${c.harvest_quantity}`, num.format(c.sell_price), c.variant_name])
       : [["目前沒有開放種植的作物", "", "", "", "", ""]]);
     fillRows("g-qualities", g.qualities.map((q) => [q.name, pct(q.chance_pct), mul(q.price_mul)]));
     setText("g-level-note", `農場每升 1 級，有 ${pct(g.level_bonus_pct)} 機率從普通升到較高品質（最多 ${pct(g.level_bonus_max_pct)}）。`);
@@ -146,6 +146,8 @@
     setText("g-defense-note", `判定順序：${g.defenses.map((d) => d.name).join(" → ")}，整體阻止機率最高 ${s.max_block_pct}%。`
       + `「📍 調整守護範圍」輸入起始農田編號；「🔦 巡查」消耗 1 張巡查券，可以看到近 ${s.patrol_days} 天是誰來偷。`);
 
+    renderExploration(g.exploration);
+
     const gm = g.gamble;
     const half = gm.big_from - gm.min;
     const span = gm.max - gm.min + 1;
@@ -160,6 +162,35 @@
     fillRows("g-events", g.events.length
       ? g.events.map((e) => [e.name, e.effects_text, e.schedule_text, statusTag(e.active_now)])
       : [["目前沒有排定的活動", "", "", ""]]);
+  }
+
+  // 山洞冒險與機器：區域、抽獎類型機率、素材、機器配方、培育配方與等級解鎖
+  function renderExploration(x) {
+    const lv = (n) => `Lv.${n}`;
+    const qty = (list) => list.map((i) => `${i.name} ×${i.quantity}`).join("、");
+    // 物品需要比區域解鎖更高的等級時才標示等級
+    const names = (list, unlock) => list.map((i) => (i.min_level > unlock ? `${i.name}（${lv(i.min_level)}）` : i.name))
+      .join("、");
+    setText("g-fake-coin", `1 個 = ${num.format(x.fake_coin_value)} 金幣`);
+    setText("g-material-bag", `上限 ${num.format(x.material_bag_capacity)} 個`);
+    fillRows("g-areas", x.areas.map((a) => [`${a.emoji} ${a.name}`, lv(a.unlock_level), duration(a.duration_seconds),
+      `${a.rolls} 次`, lv(a.advanced_level),
+      [names(a.common, a.unlock_level), a.rare.length ? `稀有：${names(a.rare, a.unlock_level)}` : "",
+        a.seeds.length ? `種子：${names(a.seeds, a.unlock_level)}` : ""].filter(Boolean).join("；")]));
+    fillRows("g-reward-types", x.reward_types.normal.map((t, i) =>
+      [t.name, pct(t.chance_pct), pct(x.reward_types.advanced[i].chance_pct)]));
+    fillRows("g-area-events", x.areas.map((a) => [`${a.emoji} ${a.name}`,
+      a.events.map((e) => `${e.name}（${lv(Math.max(e.min_level, a.unlock_level))}）`).join("、")]));
+    fillRows("g-materials", x.materials.map((m) => [m.name, m.rarity, m.usage]));
+    setText("g-seed-ratio", `1 個普通作物 = ${x.seed_maker_ratio} 顆種子`);
+    setText("g-incubator-max", String(x.incubator_max));
+    fillRows("g-machines", x.machines.map((m) => [`${m.emoji} ${m.name}`, lv(m.unlock_level), qty(m.materials),
+      m.description]));
+    fillRows("g-incubator", x.incubator.map((r) => [r.name, qty(r.inputs), `${r.output} ×${r.output_quantity}`,
+      duration(r.seconds)]));
+    setText("g-level-max", `農場等級靠「⬆️ 擴建」提升，每擴建 1 次 +1 級，目前最高 ${lv(x.max_level)}。`);
+    fillRows("g-level-unlocks", x.level_unlocks.map((u) => [lv(u.level),
+      u.level > x.max_level ? `${u.text}（尚未開放）` : u.text]));
   }
 
   async function loadGuide() {

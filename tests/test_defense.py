@@ -24,6 +24,7 @@ from app.main import create_app
 from app.services.social_service import SocialService
 from tests.conftest import grow, make_farmer
 
+SCARECROW, DOG, FENCE = (balance.DEFENSES[c][1] for c in ("scarecrow", "guard_dog", "fence"))
 ALL = [("scarecrow", 0.25), ("guard_dog", 0.30), ("fence", 0.20)]
 
 
@@ -120,7 +121,7 @@ def test_purchase_limits_and_gold(service, world):
     service.buy_defense(owner, "圍欄")
     with pytest.raises(AlreadyExistsError):
         service.buy_defense(owner, "fence")
-    assert service.get_farm_status(owner).gold == 10_000 - 500 * 2 - 1500 - 1000
+    assert service.get_farm_status(owner).gold == 10_000 - SCARECROW * 2 - DOG - FENCE
     with pytest.raises(NotFoundError):
         service.buy_defense(owner, "機關槍")
     with pytest.raises(InsufficientGoldError):
@@ -148,7 +149,7 @@ def test_concurrent_purchases_respect_limit_and_charge_once(service, world, sess
         t.join()
     assert service.defense_status(owner)["owned"] == {"scarecrow": 2, "guard_dog": 1, "fence": 0}
     assert len(errors) == 3
-    assert service.get_farm_status(owner).gold == 10_000 - 1000 - 1500
+    assert service.get_farm_status(owner).gold == 10_000 - SCARECROW * 2 - DOG
     with session_factory() as s:
         assert s.scalar(select(func.count()).where(GameTransaction.event_type == "buy_item")) == 3
 
@@ -232,10 +233,10 @@ def test_unrelated_plots_are_not_affected(service, world, clock, session_factory
     g, thief, owner = world["g"], world["thief"], world["owner"]
     service.buy_defense(owner, "稻草人")  # 守護第 1–3 格
     ripe(service, clock, owner, [1, 4])
+    # 第 1 格被稻草人守住（被阻止不算進每日 1 格的上限）
+    assert not with_dice(session_factory, clock, Dice(0.1)).steal_crop(g, thief, owner, 1, 2).success
     # 第 4 格不在任何設施範圍：完全不擲骰，照常偷菜
     assert with_dice(session_factory, clock, no_roll).steal_crop(g, thief, owner, 4, 2).success
-    # 第 1 格被稻草人守住，第 4 格的結果不影響第 1 格
-    assert not with_dice(session_factory, clock, Dice(0.1)).steal_crop(g, thief, owner, 1, 2).success
     assert remaining(service, owner, 1) == 5 and remaining(service, owner, 4) == 3
     assert qty(service, thief, "strawberry") == 2
 
@@ -317,7 +318,7 @@ def test_restart_keeps_devices_and_outcomes(service, world, clock, session_facto
         assert [(d["code"], d["start_plot"]) for d in st["devices"]] == [("scarecrow", 2)]
         with pytest.raises(AlreadyStolenError):  # 重啟後也不會重新判定
             restarted.steal_crop(g, thief, owner, 2, 1)
-        assert restarted.get_farm_status(owner).gold == 10_000 - 500 - 60
+        assert restarted.get_farm_status(owner).gold == 10_000 - SCARECROW - 60
     finally:
         engine.dispose()
 
@@ -387,7 +388,7 @@ def test_monitor_defense_api_read_only(service, world, clock, session_factory):
         summary = c.get("/api/monitor/summary").json()
         assert summary["steals_today"] == 1 and summary["blocks_today"] == 1
         assert c.post("/api/monitor/defenses", json={}).status_code == 405
-    assert service.get_farm_status(owner).gold == 10_000 - 2000 - 60
+    assert service.get_farm_status(owner).gold == 10_000 - DOG - SCARECROW - 60
 
 
 def test_cli_defense_commands(service, world, clock, session_factory):
@@ -396,7 +397,7 @@ def test_cli_defense_commands(service, world, clock, session_factory):
     assert "請先選擇玩家" in cli.handle("defense")
     cli.handle(f"player use {owner}")
     shop = cli.handle("defense shop")
-    assert "稻草人" in shop and "1500" in shop and "60%" in shop and "巡查券" in shop
+    assert "稻草人" in shop and str(DOG) in shop and "60%" in shop and "巡查券" in shop
     assert "已購買稻草人" in cli.handle("defense buy 稻草人")
     assert "一次只能購買 1 個" in cli.handle("defense buy 警戒犬 2")
     assert "已購買 2 個巡查券" in cli.handle("defense buy 巡查券 2")

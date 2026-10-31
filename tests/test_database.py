@@ -15,7 +15,8 @@ def test_insert_and_query(session_factory, service):
         assert row.display_name == "資料庫測試"
         assert row.created_at.tzinfo is not None
         crops = {c.code: c for c in s.scalars(select(CropType))}
-        assert set(crops) == {"wheat", "carrot", "tomato", "strawberry"}
+        assert set(crops) == {"wheat", "carrot", "tomato", "strawberry", "amber_melon", "moonflower"}
+        assert [c for c, crop in crops.items() if not crop.shop_buyable] == ["amber_melon", "moonflower"]
         assert (crops["strawberry"].seed_price, crops["strawberry"].grow_seconds) == (60, 600)
 
 

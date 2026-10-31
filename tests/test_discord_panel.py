@@ -17,7 +17,7 @@ from app.services.admin_service import AdminService
 from tests.test_discord_bot import ALICE, BOB, GUILD_A, GUILD_B, FakeInteraction, embed_text
 
 PAGES = ("main", "plots", "backpack", "shop", "prices", "genetics", "sell", "animals", "craft", "build", "casino",
-         "defense", "steal",
+         "cave", "cave_area", "cave_log", "machines", "defense", "steal",
          "board", "rewards", "quests", "history", "group", "log", "help")
 
 
@@ -361,7 +361,8 @@ def test_shop_luxury_confirm_and_warehouse(cmds, admin):
     p.go("shop")
     assert "收成 ×2 🌾小麥" in p.text and "🎒 持有 **0**" in p.text and "🔒 未擁有" in p.text
     p.choose("選擇要買的商品", "item:auto_seller")
-    assert [c.label for c in p.panel.children if isinstance(c, discord.ui.Button)][0] == "確認購買（1,000,000 金）"
+    price = balance.ITEMS[balance.TOOL_AUTO_SELLER][1]
+    assert [c.label for c in p.panel.children if isinstance(c, discord.ui.Button)][0] == f"確認購買（{price:,} 金）"
     p.click("確認購買")
     assert "已購買 1 個自動販售機" in p.text
     assert "item:auto_seller" not in p.options("選擇要買的商品")  # 已擁有的工具不再出現在選單
@@ -433,7 +434,7 @@ def attachment_names(kw):
 def test_pages_attach_images(cmds):
     p = make_player(cmds, ALICE)
     for page, expected in (("main", 1), ("plots", 1), ("shop", 1), ("animals", 1), ("craft", 1), ("build", 1),
-                           ("backpack", 0), ("board", 0), ("help", 0)):
+                           ("casino", 1), ("cave_area", 1), ("cave", 0), ("backpack", 0), ("board", 0), ("help", 0)):
         interaction = p.go(page)
         kw = last_edit(interaction)
         assert attachment_names(kw) == ["farm.png"] * expected, page
@@ -469,3 +470,171 @@ def test_upgrade_button_disabled_at_max_plots(cmds, admin):
     admin.add_plots("root", p.panel.player_id, balance.MAX_PLOTS - balance.INITIAL_PLOTS)
     p.go("plots")
     assert p.button("已達上限").disabled
+
+
+def test_upgrade_adds_one_plot_and_plant_select_is_registered_before_edit(cmds, admin, session_factory):
+    p = make_player(cmds, ALICE)
+    with session_factory.begin() as s:
+        s.execute(Farm.__table__.update().values(gold=10_000))
+    p.go("plots")
+    p.choose("選擇作物", "wheat")
+    assert p.options("選擇作物") == []  # 種滿後沒有種植選單
+    assert p.button(f"擴建（{balance.UPGRADE_PRICES[0]} 金）")
+    p.click("擴建")
+    p.click("確認擴建")
+    assert "農田（5 格）" in p.text and "新增第 5 格" in p.text
+    assert p.button(f"擴建（{balance.UPGRADE_PRICES[1]:,} 金）")
+
+    # 擴建後才出現的種植選單，必須在編輯訊息之前就登記到 View store，否則玩家太快點會「此交互失敗」
+    order = []
+
+    class State:
+        def store_view(self, view, message_id):
+            order.append(("store", message_id, [c.custom_id for c in view.children]))
+
+    interaction = p._interaction()
+    interaction._state, interaction.message = State(), type("Msg", (), {"id": 42})()
+    real_edit = interaction.edit_original_response
+
+    async def edit(**kw):
+        order.append(("edit",))
+        await real_edit(**kw)
+
+    interaction.edit_original_response = edit
+    run(p.panel.refresh(interaction))
+    select = next(c for c in p.panel.children if isinstance(c, discord.ui.Select))
+    assert order[0][:2] == ("store", 42) and select.custom_id in order[0][2]
+    assert order[1] == ("edit",)
+    p._update(interaction)
+    p.choose("選擇作物", "wheat")
+    assert "在 1 格種下小麥" in p.text
+
+
+# ---------- 山洞冒險 ----------
+
+
+def cave_texts(p):
+    return [c.label for c in p.panel.children if isinstance(c, discord.ui.Button)]
+
+
+def test_cave_entry_areas_and_explore(cmds, admin, session_factory, clock):
+    admin._explore_rng = lambda: 0.0  # 每份獎勵都是木材 ×2
+    p = make_player(cmds, ALICE)
+    assert "山洞" in p.labels()
+    assert not {"青青草原", "古老森林", "神秘礦坑"} & set(p.labels())  # 主選單不直接顯示探索區域
+    p.click("山洞")
+    assert "山洞冒險" in p.text and "Lv 1" in p.text and "一次只能去一個區域" in p.text
+    assert {"青青草原", "古老森林", "神秘礦坑", "探索紀錄", "返回主選單"} <= set(p.labels())
+    assert "🔒 農場 Lv.5 解鎖" in p.text and "🔒 農場 Lv.10 解鎖" in p.text and "探險 8 小時" in p.text
+    p.click("古老森林")
+    assert "古老森林" in p.text and p.button("尚未解鎖").disabled
+    p.click("返回冒險介面")
+    p.click("青青草原")
+    assert "✅ 可以出發" in p.text and "琥珀瓜種子" in p.text
+    started = p.click("出發探險")
+    assert "出發前往青青草原" in p.text and "🧭 探險中" in p.text and "領取探險獎勵" not in p.labels()
+    assert attachment_names(last_edit(started)) == ["farm.png"]  # 探險中顯示所在區域的圖
+    p.click("青青草原")
+    assert p.button("探險中").disabled
+    # 直接再呼叫一次出發（模擬重送的互動）會被擋下，也不會先發獎
+    run(p.panel.act(p._interaction(), lambda: p.panel._explore("grassland")))
+    p.go("backpack")
+    assert "木材" not in p.text
+    clock.advance(8 * 3600)
+    p.go("cave")
+    assert "探險回來了" in p.text
+    claimed = p.click("領取探險獎勵")
+    assert attachment_names(last_edit(claimed)) == ["farm.png"]
+    assert "從青青草原探險回來了" in p.text and "探索結果" in p.text and "木材" in p.text and "×**6**" in p.text
+    assert {"返回冒險介面", "返回主選單"} <= set(p.labels())
+    p.click("返回冒險介面")
+    assert "✅ 可以出發" in p.text and "領取探險獎勵" not in p.labels()
+    p.go("backpack")
+    assert "木材　×**6**" in p.text
+    p.go("cave_log")
+    assert "青青草原" in p.text and "木材 ×6" in p.text
+    p.click("返回冒險介面")
+    p.click("返回主選單")
+    assert "農田" in p.text and "山洞" in p.labels()
+
+
+def test_cave_other_area_blocked_while_exploring(cmds, admin, session_factory, clock):
+    admin._explore_rng = lambda: 0.0
+    p = make_player(cmds, ALICE)
+    with session_factory.begin() as s:
+        s.scalar(select(Farm)).level = 5
+    p.go("cave")
+    p.click("青青草原")
+    p.click("出發探險")
+    p.click("古老森林")
+    assert "正在青青草原探險" in p.text and p.button("正在其他區域探險").disabled
+    clock.advance(8 * 3600)
+    p.click("返回冒險介面")
+    p.click("青青草原")
+    p.click("領取探險獎勵")  # 區域頁也可以直接領取
+    assert "探索結果" in p.text
+    p.click("返回冒險介面")
+    p.click("古老森林")
+    p.click("出發探險")
+    assert "出發前往古老森林" in p.text and "探險 16 小時" in p.text
+
+
+def test_cave_double_click_starts_once(cmds, admin, session_factory):
+    admin._explore_rng = lambda: 0.0
+    p = make_player(cmds, ALICE)
+    p.go("cave")
+    p.click("青青草原")
+    button = p.button("出發探險")
+
+    async def both():
+        import asyncio
+        await asyncio.gather(button.callback(p._interaction()), button.callback(p._interaction()))
+
+    run(both())
+    with session_factory() as s:
+        from app.db.models import ExplorationLog
+        assert s.scalar(select(func.count()).select_from(ExplorationLog)) == 1
+
+
+def test_cave_players_are_independent(cmds, admin):
+    admin._explore_rng = lambda: 0.0
+    alice, bob = make_player(cmds, ALICE), make_player(cmds, BOB, name="小明")
+    alice.go("cave")
+    alice.click("青青草原")
+    alice.click("出發探險")
+    bob.go("cave")
+    assert "✅ 可以出發" in bob.text  # Alice 的探險不影響 Bob
+    other = FakeInteraction(BOB, GUILD_A)
+    run(alice.panel.interaction_check(other))  # 別人不能操作 Alice 的面板
+    assert "別人的農場面板" in other.text
+
+
+def test_machines_page_build_and_fake_coin_exchange(cmds, admin, session_factory):
+    from app.db.models import Farm
+    from app.repositories import inventory as inventory_repo
+    p = make_player(cmds, ALICE)
+    with session_factory.begin() as s:
+        farm = s.scalar(select(Farm))
+        farm.level = 3
+        for item, n in {"wood": 10, "stone": 10, "copper_ore": 5, "gear": 2, "fake_coin": 3, "wheat": 2}.items():
+            inventory_repo.add(s, farm.id, item, n)
+    p.go("craft")
+    p.click("機器")
+    assert "種子製造機" in p.text and "❌齒輪 2/3" in p.text
+    p.choose("製作機器", "seed_maker")
+    assert "材料不足，還缺：齒輪 ×1" in p.text
+    with session_factory.begin() as s:
+        inventory_repo.add(s, s.scalar(select(Farm.id)), "gear", 1)
+    p.click("返回")
+    p.choose("製作機器", "seed_maker")
+    assert "種子製造機製作完成" in p.text and "停用種子製造機" in p.labels()
+    p.choose("使用機器", "seed:wheat")
+    p.click("用 1")
+    assert "做出 2 顆小麥種子" in p.text
+    p.go("backpack")
+    assert "假幣　×**3**" in p.text
+    p.click("兌換假幣")
+    p.click("換 1")
+    assert "獲得 100 金幣" in p.text
+    with session_factory() as s:
+        assert s.scalar(select(Farm.gold)) == 600

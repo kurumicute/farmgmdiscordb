@@ -53,6 +53,10 @@ class EventType(StrEnum):
     RANKING_REWARD = "ranking_reward"
     TRANSFER_GROUP = "transfer_group"
     GAMBLE = "gamble"
+    EXPLORE = "explore"
+    BUILD_MACHINE = "build_machine"
+    EXCHANGE = "exchange"
+    MAKE_SEED = "make_seed"
 
 
 EVENT_TYPE_LABELS = {
@@ -84,6 +88,10 @@ EVENT_TYPE_LABELS = {
     EventType.RANKING_REWARD: "排名獎勵",
     EventType.TRANSFER_GROUP: "轉移所屬群組",
     EventType.GAMBLE: "賭場",
+    EventType.EXPLORE: "山洞探索",
+    EventType.BUILD_MACHINE: "製作機器",
+    EventType.EXCHANGE: "假幣兌換",
+    EventType.MAKE_SEED: "製造種子",
 }
 
 

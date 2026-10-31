@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>油祥農場 ✦ Discord 農場與音樂機器人</title>
-  <meta name="description" content="在 Discord 種田、養動物、偷菜、加工、賭場與排行榜，還能一起聽音樂的機器人。">
+  <meta name="description" content="在 Discord 種田、養動物、偷菜、加工、山洞冒險、賭場與排行榜，還能一起聽音樂的機器人。">
   <meta name="theme-color" content="#0b1026">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -124,6 +124,16 @@
           <p>自動播種機、自動販售機、自動澆水器與倉庫擴大卷，讓農場越來越省事。</p>
         </article>
         <article class="card">
+          <span class="card-icon" aria-hidden="true">⛰️</span>
+          <h3>山洞冒險</h3>
+          <p>探索青青草原、古老森林、神秘礦坑，收集木材、礦石、水晶等素材，還有機會撿到假幣與稀有種子（琥珀瓜、月光花）。</p>
+        </article>
+        <article class="card">
+          <span class="card-icon" aria-hidden="true">🔧</span>
+          <h3>自動化機器</h3>
+          <p>用探索素材打造種子製造機、自動收割機、自動加工機與稀有作物培育器，農場等級越高解鎖越多。</p>
+        </article>
+        <article class="card">
           <span class="card-icon" aria-hidden="true">👥</span>
           <h3>群組任務與競賽</h3>
           <p>伺服器一起完成任務、和其他伺服器比賽；農場每 7 天可以轉移到另一個伺服器一次。</p>
@@ -165,6 +175,9 @@
                   <tr><td>加工</td><td>「🏭 加工」→「🏗️ 建造設施」→ 回加工頁選配方 →「📥 領取完成品」</td></tr>
                   <tr><td>偷朋友的菜</td><td>「🥷 偷菜」→ 從選單選一株已成熟的作物（可翻頁、🔄 重新整理）</td></tr>
                   <tr><td>防止被偷、查誰來偷</td><td>「🛡️ 防守」→ 購買設施 →「📍 調整守護範圍」；「🔦 巡查」查看偷菜者</td></tr>
+                  <tr><td>探索山洞</td><td>「⛰️ 山洞」→ 選區域 →「🧭 出發探險」→ 時間到回來後「📦 領取探險獎勵」；「📖 探索紀錄」看最近 10 次</td></tr>
+                  <tr><td>製作或使用機器</td><td>「⛰️ 山洞」或「🏭 加工」→「🔧 機器」→ 選要製作的機器（消耗素材）／「⚙️ 使用機器」</td></tr>
+                  <tr><td>把假幣換成金幣</td><td>「🎒 背包」→「💱 兌換假幣」→ 選數量</td></tr>
                   <tr><td>賭一把</td><td>「🎰 賭場」→ 選作物與玩法；贏得的獎品可到「🏆 賣獎品」</td></tr>
                   <tr><td>看排行與獎勵</td><td>「🏆 排行榜」→ 切換範圍與期間；「🎁 排名獎勵」看發獎規則</td></tr>
                   <tr><td>任務與競賽</td><td>「📜 任務競賽」→ 看進度、領獎；「📚 已結算的競賽」看結果</td></tr>
@@ -199,19 +212,22 @@
               <li>按「💧 全部澆水」，作物<b>澆水後才開始生長</b>（免澆水活動或自動澆水器會自動澆）。</li>
               <li>成熟後按「🧺 全部收成」，作物進入倉庫；倉庫放不下的格子會留在農田，不會遺失。</li>
               <li>成熟後 <b id="g-wither">16 小時</b>沒收成就會乾枯，按「🥀 清除乾枯」清掉才能再種。</li>
-              <li>「⬆️ 擴建」：<span id="g-upgrade">500 金幣，農田 +2 格（最多 16 格）</span>、農場等級 +1（等級越高，好品質機率越高）。需要再按一次確認。</li>
+              <li>「⬆️ 擴建」：<span id="g-upgrade">每次農田 +1 格：500 → 1,000 → 2,000 → 4,000 → 8,000 → 20,000 → 40,000 → 80,000 → 120,000 → 160,000 → 170,000 → 180,000 金幣（最多 16 格）</span>、農場等級 +1（等級越高，好品質機率越高）。需要再按一次確認。</li>
             </ol>
             <div class="table-scroll">
               <table class="guide-table">
                 <thead><tr><th>作物</th><th>種子</th><th>生長時間</th><th>收成</th><th>售價（普通）</th><th>珍稀變種</th></tr></thead>
                 <tbody id="g-crops">
-                  <tr><td>🌾 小麥</td><td>10</td><td>1 小時</td><td>×2</td><td>15</td><td>琥珀小麥</td></tr>
-                  <tr><td>🥕 胡蘿蔔</td><td>20</td><td>2 小時</td><td>×3</td><td>25</td><td>紫晶胡蘿蔔</td></tr>
-                  <tr><td>🍅 番茄</td><td>35</td><td>4 小時</td><td>×4</td><td>20</td><td>黑鑽番茄</td></tr>
-                  <tr><td>🍓 草莓</td><td>60</td><td>8 小時</td><td>×5</td><td>25</td><td>白雪草莓</td></tr>
+                  <tr><td>🌾 小麥</td><td>5</td><td>1 小時</td><td>×2</td><td>11</td><td>琥珀小麥</td></tr>
+                  <tr><td>🥕 胡蘿蔔</td><td>12</td><td>2 小時</td><td>×3</td><td>15</td><td>紫晶胡蘿蔔</td></tr>
+                  <tr><td>🍅 番茄</td><td>25</td><td>4 小時</td><td>×4</td><td>22</td><td>黑鑽番茄</td></tr>
+                  <tr><td>🍓 草莓</td><td>60</td><td>8 小時</td><td>×5</td><td>34</td><td>白雪草莓</td></tr>
+                  <tr><td>🍈 琥珀瓜</td><td>不販售（探索／培育）</td><td>12 小時</td><td>×3</td><td>120</td><td>黃金琥珀瓜</td></tr>
+                  <tr><td>🌙 月光花</td><td>不販售（探索／培育）</td><td>24 小時</td><td>×2</td><td>450</td><td>星辰花</td></tr>
                 </tbody>
               </table>
             </div>
+            <p class="note">標示「不販售」的是稀有作物：商店買不到種子，只能從「⛰️ 山洞」探索或用「🧬 稀有作物培育器」取得；一鍵種植也不會自動購買。</p>
           </div>
         </details>
 
@@ -253,12 +269,12 @@
               <table class="guide-table">
                 <thead><tr><th>道具</th><th>價格</th><th>效果</th></tr></thead>
                 <tbody id="g-items">
-                  <tr><td>🧪 化肥</td><td>40</td><td>生長中的農田剩餘時間減少 25%（每次種植限用一次）</td></tr>
-                  <tr><td>🪱 人工養殖蚯蚓</td><td>150</td><td>3 天內澆水的作物生長時間 ×0.75；效果期間再用延長 3 天</td></tr>
-                  <tr><td>🔦 巡查券</td><td>100</td><td>查看自己農場近 7 天所有偷菜嘗試（含偷菜者）</td></tr>
-                  <tr><td>🚿 自動澆水器</td><td>800</td><td>永久：種下立即澆水</td></tr>
-                  <tr><td>🤖 自動播種機</td><td>100,000</td><td>奢侈品：收成、清除、擴建或買種子後，用背包裡的種子把空地種滿</td></tr>
-                  <tr><td>🏧 自動販售機</td><td>1,000,000</td><td>奢侈品：收成的作物依價目表立即賣出，不佔倉庫</td></tr>
+                  <tr><td>🧪 化肥</td><td>30</td><td>生長中的農田剩餘時間減少 25%（每次種植限用一次）</td></tr>
+                  <tr><td>🪱 人工養殖蚯蚓</td><td>300</td><td>3 天內澆水的作物生長時間 ×0.75；效果期間再用延長 3 天</td></tr>
+                  <tr><td>🔦 巡查券</td><td>60</td><td>查看自己農場近 7 天所有偷菜嘗試（含偷菜者）</td></tr>
+                  <tr><td>🚿 自動澆水器</td><td>3,500</td><td>永久：種下立即澆水</td></tr>
+                  <tr><td>🤖 自動播種機</td><td>60,000</td><td>奢侈品：收成、清除、擴建或買種子後，用背包裡的種子把空地種滿</td></tr>
+                  <tr><td>🏧 自動販售機</td><td>300,000</td><td>奢侈品：收成的作物依價目表立即賣出，不佔倉庫</td></tr>
                 </tbody>
                 <tbody>
                   <tr><td>📦 倉庫擴大卷</td><td id="g-wh-price">4,000 起</td><td id="g-wh-desc">每次 +50 格：4,000 → 20,000 → 50,000 → 100,000 → 200,000，最大 300 格</td></tr>
@@ -312,9 +328,131 @@
               <table class="guide-table">
                 <thead><tr><th>配方</th><th>設施（價格）</th><th>材料</th><th>時間／份</th><th>售價</th></tr></thead>
                 <tbody id="g-recipes">
-                  <tr><td>麵粉</td><td>磨坊（2,000）</td><td>小麥 ×3</td><td>30 分鐘</td><td>60</td></tr>
-                  <tr><td>麵包</td><td>烘焙坊（3,500）</td><td>麵粉 ×2</td><td>1 小時</td><td>160</td></tr>
-                  <tr><td>草莓果醬</td><td>果醬工坊（2,500）</td><td>草莓 ×3</td><td>1 小時</td><td>110</td></tr>
+                  <tr><td>麵粉</td><td>磨坊（2,000）</td><td>小麥 ×3</td><td>30 分鐘</td><td>45</td></tr>
+                  <tr><td>麵包</td><td>烘焙坊（3,500）</td><td>麵粉 ×2</td><td>1 小時</td><td>130</td></tr>
+                  <tr><td>草莓果醬</td><td>果醬工坊（2,500）</td><td>草莓 ×3</td><td>1 小時</td><td>140</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+
+        <details class="guide" id="cave">
+          <summary>⛰️ 山洞冒險</summary>
+          <div class="guide-body">
+            <ol>
+              <li>在總覽按「⛰️ 山洞」，選一個區域查看可能的獎勵，再按「🧭 出發探險」。</li>
+              <li><b>一次只能去一個區域</b>：出發後要等該區域的<b>探險時間</b>結束才會回來（例如草原 8 小時、森林 16 小時），探險期間不能去其他區域。</li>
+              <li>回來後按「📦 領取探險獎勵」，物品才會放進背包，領取後才能再出發。</li>
+              <li>素材與假幣放進獨立的<b>素材背包</b>（<span id="g-material-bag">上限 500 個</span>），<b>不佔倉庫空間</b>；稀有種子仍放在倉庫。放不下時先清出空間再領取。</li>
+              <li>素材不能在商店購買或販售，用來製作「🔧 機器」；<b>假幣</b>可以在「🎒 背包」兌換金幣（<span id="g-fake-coin">1 個 = 100 金幣</span>）。</li>
+              <li>農場等級達到區域的「高級探索」門檻後，稀有素材、稀有種子與特殊事件的機率會提高。</li>
+            </ol>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>區域</th><th>解鎖</th><th>探險時間</th><th>每次抽獎</th><th>高級探索</th><th>可能取得</th></tr></thead>
+                <tbody id="g-areas">
+                  <tr><td>🌿 青青草原</td><td>Lv.1</td><td>8 小時</td><td>3 次</td><td>Lv.16</td><td>木材、石塊、藥草、銅礦（Lv.2）；稀有：鐵礦（Lv.4）；種子：琥珀瓜種子</td></tr>
+                  <tr><td>🌲 古老森林</td><td>Lv.5</td><td>16 小時</td><td>4 次</td><td>Lv.9</td><td>木材、樹脂、藥草、鐵礦（Lv.6）；稀有：齒輪、古木核心（Lv.7）；種子：月光花種子</td></tr>
+                  <tr><td>⛏️ 神秘礦坑</td><td>Lv.10</td><td>24 小時</td><td>5 次</td><td>Lv.16</td><td>石塊、銅礦、鐵礦（Lv.11）；稀有：鐵礦、齒輪、水晶、機械核心</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>每次抽獎的類型</th><th>普通探索</th><th>高級探索</th></tr></thead>
+                <tbody id="g-reward-types">
+                  <tr><td>普通素材</td><td>65%</td><td>45%</td></tr>
+                  <tr><td>稀有素材</td><td>20%</td><td>30%</td></tr>
+                  <tr><td>稀有種子</td><td>8%</td><td>12%</td></tr>
+                  <tr><td>假幣</td><td>5%</td><td>8%</td></tr>
+                  <tr><td>特殊事件</td><td>2%</td><td>5%</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="note">抽到的類型在該區域沒有可掉落的物品時（例如礦坑沒有種子），會改給其他類型的獎勵，不會落空。</p>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>區域</th><th>特殊事件（需要的等級）</th></tr></thead>
+                <tbody id="g-area-events">
+                  <tr><td>🌿 青青草原</td><td>🎁 特殊寶箱（Lv.1）、🔍 草原稀有發現（Lv.4）、🏛️ 古代遺跡（Lv.15）</td></tr>
+                  <tr><td>🌲 古老森林</td><td>🎁 特殊寶箱（Lv.5）、🔍 森林稀有發現（Lv.7）、🏛️ 森林古代遺跡（Lv.15）</td></tr>
+                  <tr><td>⛏️ 神秘礦坑</td><td>🎁 特殊寶箱（Lv.10）、🔍 礦坑稀有發現（Lv.13）、🏛️ 地底遺跡（Lv.15）</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="note">特殊事件會給假幣，並額外再抽稀有素材或稀有種子。</p>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>素材</th><th>稀有度</th><th>用途</th></tr></thead>
+                <tbody id="g-materials">
+                  <tr><td>木材</td><td>普通</td><td>機器製作</td></tr>
+                  <tr><td>石塊</td><td>普通</td><td>機器製作</td></tr>
+                  <tr><td>銅礦</td><td>普通</td><td>機器製作</td></tr>
+                  <tr><td>鐵礦</td><td>稀有</td><td>機器製作</td></tr>
+                  <tr><td>樹脂</td><td>普通</td><td>機器製作</td></tr>
+                  <tr><td>藥草</td><td>普通</td><td>作物培育</td></tr>
+                  <tr><td>齒輪</td><td>稀有</td><td>自動化機器</td></tr>
+                  <tr><td>水晶</td><td>稀有</td><td>稀有作物培育</td></tr>
+                  <tr><td>古木核心</td><td>極稀有</td><td>高級機器製作</td></tr>
+                  <tr><td>機械核心</td><td>極稀有</td><td>高級機器製作</td></tr>
+                  <tr><td>假幣</td><td>特殊</td><td>兌換金幣</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </details>
+
+        <details class="guide" id="machines">
+          <summary>🔧 機器與等級解鎖</summary>
+          <div class="guide-body">
+            <ul>
+              <li>到「⛰️ 山洞」或「🏭 加工」→「🔧 機器」，選擇要製作的機器；製作一次<b>永久持有</b>，可在背包啟用／停用。</li>
+              <li><b>種子製造機</b>：從「⚙️ 使用機器」選作物，<span id="g-seed-ratio">1 個普通作物 = 2 顆種子</span>。</li>
+              <li><b>自動收割機</b>、<b>自動加工機</b>在你打開 <code>/farm</code> 面板時自動運作。</li>
+              <li><b>稀有作物培育器</b>和加工設施一樣下訂單，時間到再領取，一次最多 <span id="g-incubator-max">5</span> 份。</li>
+            </ul>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>機器</th><th>解鎖等級</th><th>素材</th><th>效果</th></tr></thead>
+                <tbody id="g-machines">
+                  <tr><td>🌱 種子製造機</td><td>Lv.3</td><td>木材 ×10、石塊 ×10、銅礦 ×5、齒輪 ×3</td><td>把收成的作物做成種子：1 個作物 = 2 顆對應種子</td></tr>
+                  <tr><td>🚜 自動收割機</td><td>Lv.5</td><td>木材 ×20、鐵礦 ×10、齒輪 ×5</td><td>開啟面板時自動收成成熟的作物（含成熟後才乾枯的作物）</td></tr>
+                  <tr><td>🏭 自動加工機</td><td>Lv.8</td><td>石塊 ×15、銅礦 ×15、鐵礦 ×10、機械核心 ×1</td><td>開啟面板時自動領取完成的加工品，並用背包原料開始設定的加工項目</td></tr>
+                  <tr><td>🧬 稀有作物培育器</td><td>Lv.12</td><td>木材 ×20、藥草 ×15、水晶 ×5、古木核心 ×1</td><td>用普通作物與探索素材培育稀有作物種子</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>培育配方</th><th>材料／份</th><th>成品</th><th>時間／份</th></tr></thead>
+                <tbody id="g-incubator">
+                  <tr><td>琥珀瓜種子培育</td><td>小麥 ×10、藥草 ×3</td><td>琥珀瓜種子 ×1</td><td>4 小時</td></tr>
+                  <tr><td>月光花種子培育</td><td>草莓 ×5、藥草 ×5、水晶 ×1</td><td>月光花種子 ×1</td><td>8 小時</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="note" id="g-level-max">農場等級靠「⬆️ 擴建」提升，每擴建 1 次 +1 級，目前最高 Lv.13。</p>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>等級</th><th>解鎖內容</th></tr></thead>
+                <tbody id="g-level-unlocks">
+                  <tr><td>Lv.1</td><td>青青草原</td></tr>
+                  <tr><td>Lv.2</td><td>草原進階素材</td></tr>
+                  <tr><td>Lv.3</td><td>種子製造機</td></tr>
+                  <tr><td>Lv.4</td><td>草原稀有發現</td></tr>
+                  <tr><td>Lv.5</td><td>古老森林、自動收割機</td></tr>
+                  <tr><td>Lv.6</td><td>森林進階素材</td></tr>
+                  <tr><td>Lv.7</td><td>森林稀有發現</td></tr>
+                  <tr><td>Lv.8</td><td>自動加工機</td></tr>
+                  <tr><td>Lv.9</td><td>森林高級探索獎勵</td></tr>
+                  <tr><td>Lv.10</td><td>神秘礦坑</td></tr>
+                  <tr><td>Lv.11</td><td>礦坑進階素材</td></tr>
+                  <tr><td>Lv.12</td><td>稀有作物培育器</td></tr>
+                  <tr><td>Lv.13</td><td>礦坑稀有發現</td></tr>
+                  <tr><td>Lv.14</td><td>高級機器素材（尚未開放）</td></tr>
+                  <tr><td>Lv.15</td><td>極稀有探索事件（尚未開放）</td></tr>
+                  <tr><td>Lv.16</td><td>三個區域完整探索獎勵池（尚未開放）</td></tr>
                 </tbody>
               </table>
             </div>
@@ -325,16 +463,16 @@
           <summary>🥷 偷菜與 🛡️ 防守</summary>
           <div class="guide-body">
             <ul>
-              <li>「🥷 偷菜」列出同一個伺服器成員已成熟的作物，選一株就偷；每次最多 <span id="g-steal-max">2</span> 個，每株每人只能偷一次。</li>
+              <li>「🥷 偷菜」列出同一個伺服器成員已成熟的作物，選一株就偷；每次最多 <span id="g-steal-max">2</span> 個，每株每人只能偷一次；每天只能偷同一位玩家 1 格田（被防守設施擋下的不算）。</li>
               <li>只能偷同一伺服器的成員；對方的防守設施可能會擋下你。</li>
             </ul>
             <div class="table-scroll">
               <table class="guide-table">
                 <thead><tr><th>防守設施</th><th>價格</th><th>上限</th><th>阻止機率</th><th>守護範圍</th></tr></thead>
                 <tbody id="g-defenses">
-                  <tr><td>稻草人</td><td>500</td><td>2</td><td>25%</td><td>連續 3 格（可調整）</td></tr>
-                  <tr><td>警戒犬</td><td>1,500</td><td>1</td><td>30%</td><td>全部農田</td></tr>
-                  <tr><td>防盜圍欄</td><td>1,000</td><td>1</td><td>20%</td><td>連續 4 格（可調整）</td></tr>
+                  <tr><td>稻草人</td><td>400</td><td>2</td><td>25%</td><td>連續 3 格（可調整）</td></tr>
+                  <tr><td>警戒犬</td><td>1,200</td><td>1</td><td>30%</td><td>全部農田</td></tr>
+                  <tr><td>防盜圍欄</td><td>800</td><td>1</td><td>20%</td><td>連續 4 格（可調整）</td></tr>
                 </tbody>
               </table>
             </div>
@@ -383,7 +521,7 @@
               <li>每個 Discord 伺服器就是一個群組。「👥 群組」可以看成員與你的所屬群組。</li>
               <li>想把農場搬到目前的伺服器：「把農場轉移到這個伺服器」→ 再按一次確認。金幣、物品、農田都不變；
                 之後每次轉移需間隔 <b id="g-transfer">7 天</b>。</li>
-              <li>「🧾 紀錄」顯示最近 15 筆操作（買賣、收成、偷菜、賭場結果等）。</li>
+              <li>「🧾 紀錄」顯示最近 15 筆操作（買賣、收成、偷菜、賭場、山洞探索結果等）。</li>
             </ul>
           </div>
         </details>
@@ -494,7 +632,7 @@
       <ol class="steps">
         <li><span>1</span><div><strong>邀請機器人</strong><p>按上方「邀請機器人」，選擇你的伺服器。</p></div></li>
         <li><span>2</span><div><strong>輸入 <code>/farm</code></strong><p>按「建立農場」，農場就屬於這個伺服器。</p></div></li>
-        <li><span>3</span><div><strong>種下第一批作物</strong><p>到「🌱 農田」選作物 →「💧 全部澆水」→ 成熟後「🧺 全部收成」→「💰 販售」。</p></div></li>
+        <li><span>3</span><div><strong>種下第一批作物</strong><p>到「🌱 農田」選作物 →「💧 全部澆水」→ 成熟後「🧺 全部收成」→「💰 販售」；有空就去「⛰️ 山洞」探索收集素材。</p></div></li>
         <li><span>4</span><div><strong>想聽歌就 <code>/play</code></strong><p>先進語音頻道，再輸入歌名或貼上連結。</p></div></li>
       </ol>
       <div class="commands">

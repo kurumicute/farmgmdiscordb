@@ -23,6 +23,7 @@ class CropInfo:
     grow_seconds: int
     harvest_quantity: int
     sell_price: int
+    shop_buyable: bool = True  # false：稀有作物，商店不販售種子
 
 
 @dataclass(frozen=True)
@@ -156,11 +157,14 @@ class Backpack:
     now: datetime
     goods: list[BackpackLine] = field(default_factory=list)  # 動物產品與加工品
     prizes: list[dict] = field(default_factory=list)  # 賭場獎品（價值倍率 ×2／×5）
+    materials: list[BackpackLine] = field(default_factory=list)  # 山洞探索素材與假幣（price 為假幣兌換價，素材為 0）
+    material_used: int = 0  # 素材背包（不佔倉庫）
+    material_capacity: int = 0
 
     @property
     def is_empty(self) -> bool:
         return (
-            not (self.seeds or self.produce or self.consumables or self.goods or self.prizes)
+            not (self.seeds or self.produce or self.consumables or self.goods or self.prizes or self.materials)
             and not any(t.owned for t in self.tools)
             and all(e.status == "inactive" for e in self.effects)
         )
