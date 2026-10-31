@@ -7,6 +7,7 @@
 
 import copy
 import random
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -76,6 +77,15 @@ def _crop_info(crop: CropType) -> CropInfo:
         shop_buyable=crop.shop_buyable,
     )
 
+# 同一執行緒中進行中的共用交易（run_batch），以 session_factory 區分；服務副本（in_group_context）共用同一筆
+_batches = threading.local()
+
+
+class _Batch:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+        self.failed = False
+
 
 class GameService:
     def __init__(
@@ -109,8 +119,45 @@ class GameService:
 
     @contextmanager
     def _transaction(self) -> Iterator[Session]:
+        batch = self._current_batch()
+        if batch is None:
+            with self._session_factory.begin() as session:
+                yield session
+            return
+        # 在 run_batch 中：沿用共用交易，由 run_batch 統一提交或回滾
+        if batch.failed:
+            raise RuntimeError("共用交易中先前的操作已失敗，不能繼續使用。")
+        try:
+            yield batch.session
+        except BaseException:
+            batch.failed = True  # 這次操作的部分寫入無法單獨回滾，整筆交易作廢
+            raise
+
+    def _current_batch(self) -> "_Batch | None":
+        return getattr(_batches, "by_factory", {}).get(id(self._session_factory))
+
+    def in_batch(self) -> bool:
+        return self._current_batch() is not None
+
+    def run_batch(self, fn: Callable[[], object]):
+        """在同一筆交易中執行 fn 裡的多個服務呼叫（例如面板一次讀取整頁資料），減少連線與提交的往返。
+
+        fn 中任何例外都會回滾整筆交易；已在共用交易中時直接執行。死結重試由外層（RetryingService）對整個 fn 進行。"""
+        if self.in_batch():
+            return fn()
+        registry = getattr(_batches, "by_factory", None)
+        if registry is None:
+            registry = _batches.by_factory = {}
+        key = id(self._session_factory)
         with self._session_factory.begin() as session:
-            yield session
+            registry[key] = batch = _Batch(session)
+            try:
+                result = fn()
+                if batch.failed:  # fn 自己吃掉了例外：交易狀態不可靠，不提交
+                    raise RuntimeError("共用交易中的操作失敗，已回滾。")
+                return result
+            finally:
+                del registry[key]
 
     # ---------- 共用的內部方法 ----------
 

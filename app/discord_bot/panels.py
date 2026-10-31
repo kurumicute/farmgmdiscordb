@@ -236,7 +236,8 @@ class FarmPanel(discord.ui.View):
         if self.page != "welcome":
             notice = await self._run_machines(notice)
         try:
-            data = await self.run(getattr(self, f"_load_{self.page}"))
+            # 整頁資料在同一筆交易中讀取（原本每個服務呼叫各開一筆）
+            data = await self.run(self.svc.run_batch, getattr(self, f"_load_{self.page}"))
             embed = getattr(self, f"_build_{self.page}")(data)
         except Exception as exc:
             if not isinstance(exc, GameError):

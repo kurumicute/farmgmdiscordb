@@ -63,6 +63,9 @@ class RetryingService:
 
         @functools.wraps(attr)
         def call(*args, **kwargs):
+            in_batch = getattr(self._service, "in_batch", None)
+            if in_batch is not None and in_batch():  # 共用交易中失敗代表整筆已回滾，只能由外層的 run_batch 整批重試
+                return attr(*args, **kwargs)
             for attempt in range(1, self._attempts + 1):
                 try:
                     return attr(*args, **kwargs)
