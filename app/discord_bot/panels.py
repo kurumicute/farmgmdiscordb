@@ -116,7 +116,8 @@ def clean_message(text: str) -> str:
     return _CLI_HINT.sub("", text)
 
 
-def plot_line(p) -> str:
+def plot_line(p, *, owner: bool = True) -> str:
+    """一格土地的說明；owner=False 是查看別人的農田（偷菜），不顯示給主人的操作提示。"""
     emoji = PLOT_EMOJI[p.state]
     if p.state == PlotState.EMPTY:
         return f"{emoji} `#{p.plot_number:>2}` 空地"
@@ -129,7 +130,7 @@ def plot_line(p) -> str:
     elif p.state == PlotState.READY:
         tail = f"可收成 ×{p.remaining_quantity}（{ts(rules.wither_time(p.ready_at))}乾枯）"
     else:
-        tail = "已乾枯，請清除"
+        tail = "已乾枯，請清除" if owner else "已乾枯"
     return f"{emoji} `#{p.plot_number:>2}` {name} · {tail}"
 
 
@@ -188,6 +189,9 @@ class FarmPanel(discord.ui.View):
         self.picker: dict | None = None
         self.board = {"scope": "global", "kind": "money", "period": "all"}
         self.steal_page = 0
+        # 偷菜：玩家選單的頁數、正在查看農田的玩家
+        self.steal_player_page = 0
+        self.steal_victim: int | None = None
         self.confirm: str | None = None
         self.detail: dict | None = None
         self.bet: dict | None = None  # 賭場：已選的作物與下注數量
@@ -1432,10 +1436,18 @@ class FarmPanel(discord.ui.View):
     # 偷菜
     # ======================================================================
 
-    def _load_steal(self):
+    def _require_guild_for_steal(self) -> None:
         if self.group_id is None:
             raise ValidationError("偷菜需要在 Discord 伺服器中使用（只能偷同一伺服器成員的作物）。")
-        return {"targets": self.svc.steal_targets(self.group_id, self.player_id)}
+
+    def _load_steal(self):
+        self._require_guild_for_steal()
+        return {"targets": self.svc.steal_targets(self.group_id, self.player_id),
+                "players": self.svc.steal_players(self.group_id, self.player_id)}
+
+    def _steal_action(self, victim: int, value: str):
+        plot, qty = (int(x) for x in value.split("|"))
+        return lambda: self.svc.steal_crop(self.group_id, self.player_id, victim, plot, qty).message
 
     def _build_steal(self, d):
         targets = d["targets"]
@@ -1445,30 +1457,102 @@ class FarmPanel(discord.ui.View):
         lines = [f"🥷 **{t.player_name}**　農田 `#{t.plot_number}`　{t.crop_name}\n"
                  f"　🧺 剩 ×{t.remaining_quantity}　👜 這次最多偷 ×{t.max_steal}" for t in shown]
         e = discord.Embed(title=f"🥷 ✦ 偷菜｜{self.group_name} ✦", color=RED, description=sections(
+            "👀 用第一個選單選一位玩家，可以打開他的農田畫面，再選要偷哪一格。",
             ("可以偷的成熟作物", lines, "\n\n") if lines else "目前沒有可以偷的成熟作物。"
         ))
         e.set_footer(text=f"每株作物每人只能偷一次，每次最多 {balance.STEAL_MAX_PER_ACTION} 個；"
                           f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田；對方可能有防守設施。"
                           + (f"第 {self.steal_page + 1}/{pages} 頁" if pages > 1 else ""))
 
-        async def steal(interaction, value):
-            victim, plot, qty = (int(x) for x in value.split("|"))
-            await self.act(interaction, lambda: self.svc.steal_crop(self.group_id, self.player_id, victim, plot,
-                                                                    qty).message)
+        # 玩家選單：選一位玩家打開他的農田
+        players = d["players"]
+        player_pages = max(1, -(-len(players) // 25))
+        self.steal_player_page = min(self.steal_player_page, player_pages - 1)
+        shown_players = players[self.steal_player_page * 25:(self.steal_player_page + 1) * 25]
 
-        self.select("🥷 選擇要偷的作物…", [(f"{t.player_name} #{t.plot_number} {t.crop_name}",
-                                          f"{t.player_id}|{t.plot_number}|{t.max_steal}",
-                                          f"剩 {t.remaining_quantity}，偷 {t.max_steal} 個", "🥷") for t in shown],
-                    steal, row=0)
+        def player_option(r):
+            if r["limit_reached"]:
+                return f"今天已經偷過了｜{r['farm_name']}", "✅"
+            if r["stealable"]:
+                return f"可以偷 {r['stealable']} 格｜{r['farm_name']}", "🥷"
+            return f"目前沒有可偷的作物｜{r['farm_name']}", "🌱"
+
+        async def view_farm(interaction, value):
+            self.steal_victim = int(value)
+            await self.goto(interaction, "steal_farm")
+
+        self.select("👀 選擇玩家，查看他的農田…",
+                    [(r["player_name"], str(r["player_id"]), *player_option(r)) for r in shown_players],
+                    view_farm, row=0)
+
+        async def steal(interaction, value):
+            victim, rest = value.split("|", 1)
+            await self.act(interaction, self._steal_action(int(victim), rest))
+
+        self.select("🥷 直接選擇要偷的作物…", [(f"{t.player_name} #{t.plot_number} {t.crop_name}",
+                                              f"{t.player_id}|{t.plot_number}|{t.max_steal}",
+                                              f"剩 {t.remaining_quantity}，偷 {t.max_steal} 個", "🥷")
+                                             for t in shown], steal, row=1)
         if pages > 1:
             async def move(interaction, delta):
                 self.steal_page = (self.steal_page + delta) % pages
                 await self.goto(interaction, "steal")
 
-            self.button("上一頁", lambda i: move(i, -1), emoji="◀️", row=1)
-            self.button("下一頁", lambda i: move(i, 1), emoji="▶️", row=1)
-        self.nav("重新整理", "steal", emoji="🔄", row=1)
+            self.button("作物上一頁", lambda i: move(i, -1), emoji="◀️", row=2)
+            self.button("作物下一頁", lambda i: move(i, 1), emoji="▶️", row=2)
+        self.nav("重新整理", "steal", emoji="🔄", row=2)
+        if player_pages > 1:
+            async def move_players(interaction, delta):
+                self.steal_player_page = (self.steal_player_page + delta) % player_pages
+                await self.goto(interaction, "steal")
+
+            self.button(f"玩家上一頁（{self.steal_player_page + 1}/{player_pages}）", lambda i: move_players(i, -1),
+                        emoji="◀️", row=3)
+            self.button("玩家下一頁", lambda i: move_players(i, 1), emoji="▶️", row=3)
         self._nav_back()
+        return e
+
+    def _load_steal_farm(self):
+        self._require_guild_for_steal()
+        if self.steal_victim is None:
+            raise ValidationError("請先在偷菜頁選擇一位玩家。")
+        view = self.svc.steal_farm_view(self.group_id, self.player_id, self.steal_victim)
+        return {"view": view, "image": self._farm_image(view)}
+
+    def _build_steal_farm(self, d):
+        v = d["view"]
+        stealable = {t.plot_number: t for t in v.targets}
+        lines = [plot_line(p, owner=False)
+                 + (f"　🥷 **可偷 ×{stealable[p.plot_number].max_steal}**" if p.plot_number in stealable else "")
+                 for p in v.plots]
+        if v.limit_reached:
+            status = (f"✅ 你今天已經偷過 {v.player_name} 的田了"
+                      f"（每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格），明天再來。")
+        elif v.warehouse_full:
+            status = "📦 你的倉庫已滿，先清出空間才能偷菜。"
+        elif v.targets:
+            status = (f"🥷 有 **{len(v.targets)}** 格可以偷，用下方選單選一格；"
+                      f"今天只能偷他 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格，選好再下手。")
+        else:
+            status = "🌱 目前沒有可以偷的成熟作物（偷過的作物不能再偷）。"
+        e = discord.Embed(title=f"🥷 ✦ {v.player_name} 的農田 ✦", color=RED, description=sections(
+            f"🏡 **{v.farm_name}**　{summary_counts(v.plots)}",
+            status,
+            ("農田", lines),
+        ))
+        e.set_footer(text=f"每株作物每人只能偷一次，每次最多 {balance.STEAL_MAX_PER_ACTION} 個；"
+                          f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田；對方可能有防守設施。")
+
+        async def steal(interaction, value):
+            await self.act(interaction, self._steal_action(v.player_id, value))
+
+        self.select("🥷 選擇要偷哪一格…", [(f"#{t.plot_number} {t.crop_name}", f"{t.plot_number}|{t.max_steal}",
+                                          f"剩 {t.remaining_quantity}，這次偷 {t.max_steal} 個", "🥷")
+                                         for t in v.targets], steal, row=0)
+        self.nav("重新整理", "steal_farm", emoji="🔄", row=1)
+        self.nav("換一位玩家", "steal", emoji="👀", row=1)
+        self._nav_back(row=1)
+        self.attach_image(e, d["image"])
         return e
 
     # ======================================================================
@@ -1956,7 +2040,8 @@ def help_embed() -> discord.Embed:
     e.add_field(name="🐔 養殖與加工", inline=False, value=(
         "先建造畜舍再買動物，餵食後等待生產再收集。磨坊、烘焙坊、果醬工坊可以把作物加工成更值錢的商品。"))
     e.add_field(name="🥷 偷菜與防守", inline=False, value=(
-        "可以偷同一伺服器成員已成熟的作物；稻草人、警戒犬、防盜圍欄能阻止別人偷你的菜，巡查券可以查是誰來偷。"))
+        "可以偷同一伺服器成員已成熟的作物：在「🥷 偷菜」選一位玩家打開他的農田，再選要偷哪一格；"
+        "每天只能偷同一位玩家 1 格田。稻草人、警戒犬、防盜圍欄能阻止別人偷你的菜，巡查券可以查是誰來偷。"))
     e.add_field(name="⛰️ 山洞冒險", inline=False, value=(
         "總覽「⛰️ 山洞」探索青青草原（Lv.1）、古老森林（Lv.5）、神秘礦坑（Lv.10），分別探險 8／16／24 小時，"
         "一次只能去一個區域，回來後領取獎勵才能再出發；可取得素材、稀有種子與假幣（背包兌換，1 個 = 100 金）。"

@@ -38,7 +38,7 @@ from app.repositories import inventory as inventory_repo
 from app.repositories import leaderboard as leaderboard_repo
 from app.repositories import players as players_repo
 from app.repositories import steals as steals_repo
-from app.services.dto import ActionResult, ExternalContext, FarmStatus, GroupInfo, StealTarget
+from app.services.dto import ActionResult, ExternalContext, FarmStatus, GroupInfo, StealFarmView, StealTarget
 from app.services.exploration_service import ExplorationService
 from app.services.game_service import genetics_label
 
@@ -205,31 +205,85 @@ class SocialService(ExplorationService):
         local = now.astimezone(TAIPEI_TZ)
         return local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
 
+    def _steal_candidates(self, session: Session, group_id: int, player_id: int, now) -> tuple[list[StealTarget], int]:
+        """（可偷的土地, 偷菜者倉庫剩餘空間）；倉庫已滿時沒有可偷的土地。"""
+        farm = farms_repo.get_by_player(session, player_id)
+        if farm is None:
+            self._locked_farm(session, player_id)
+        free = farm.warehouse_capacity - inventory_repo.total_quantity(session, farm.id)
+        if free <= 0:
+            return [], free
+        rows = steals_repo.candidate_plots(
+            session,
+            group_id,
+            player_id,
+            now,
+            self._wither_cutoff(now),
+            self._taipei_day_start(now),
+            balance.STEAL_PLOTS_PER_VICTIM_PER_DAY,
+        )
+        targets = [
+            StealTarget(pid, pname, fname, plot_no, crop_name, remaining,
+                        min(balance.STEAL_MAX_PER_ACTION, remaining, free))
+            for pid, pname, fname, plot_no, crop_name, remaining in rows
+        ]
+        return targets, free
+
     def steal_targets(self, group_id: int, player_id: int) -> list[StealTarget]:
         now = self._clock.now()
         with self._transaction() as session:
             self._require_member(session, group_id, player_id)
-            farm = farms_repo.get_by_player(session, player_id)
-            if farm is None:
-                self._locked_farm(session, player_id)
-            free = farm.warehouse_capacity - inventory_repo.total_quantity(session, farm.id)
-            if free <= 0:
-                return []
-            rows = steals_repo.candidate_plots(
-                session,
-                group_id,
-                player_id,
-                now,
-                self._wither_cutoff(now),
-                self._taipei_day_start(now),
-                balance.STEAL_PLOTS_PER_VICTIM_PER_DAY,
-            )
-            return [
-                StealTarget(
-                    pid, pname, fname, plot_no, crop_name, remaining, min(balance.STEAL_MAX_PER_ACTION, remaining, free)
-                )
-                for pid, pname, fname, plot_no, crop_name, remaining in rows
+            return self._steal_candidates(session, group_id, player_id, now)[0]
+
+    def steal_players(self, group_id: int, player_id: int) -> list[dict]:
+        """目前群組中其他有農場的成員，附上這次可偷的土地數與今天是否已偷過（可偷的排前面）。"""
+        now = self._clock.now()
+        with self._transaction() as session:
+            self._require_member(session, group_id, player_id)
+            targets, _free = self._steal_candidates(session, group_id, player_id, now)
+            counts: dict[int, int] = {}
+            for t in targets:
+                counts[t.player_id] = counts.get(t.player_id, 0) + 1
+            limited = set(session.scalars(steals_repo.victims_at_limit(
+                session, player_id, self._taipei_day_start(now), balance.STEAL_PLOTS_PER_VICTIM_PER_DAY
+            )))
+            rows = [
+                {"player_id": m["player_id"], "player_name": m["player_name"], "farm_name": m["farm"]["farm_name"],
+                 "stealable": counts.get(m["player_id"], 0), "limit_reached": m["player_id"] in limited}
+                for m in groups_repo.members_with_farms(session, group_id, now, self._wither_cutoff(now))
+                if m["farm"] is not None and m["player_id"] != player_id
             ]
+        rows.sort(key=lambda r: (-r["stealable"], r["limit_reached"], r["player_name"], r["player_id"]))
+        return rows
+
+    def steal_farm_view(self, group_id: int, thief_player_id: int, victim_player_id: int) -> StealFarmView:
+        """查看同群組成員的農田與這次可以偷的土地；只能看目前群組的成員，不能看自己。"""
+        if thief_player_id == victim_player_id:
+            raise ValidationError("不能偷自己的菜。")
+        now = self._clock.now()
+        with self._transaction() as session:
+            self._require_member(session, group_id, thief_player_id)
+            # 不透露目標在其他群組的任何資訊
+            if not groups_repo.is_member(session, group_id, victim_player_id):
+                raise NotGroupMemberError("目標玩家不在目前群組。")
+            victim_farm = farms_repo.get_by_player(session, victim_player_id)
+            if victim_farm is None:
+                raise NotFoundError("目標玩家還沒有農場。")
+            status = self._status(session, victim_farm, victim_farm.player.display_name)
+            targets, free = self._steal_candidates(session, group_id, thief_player_id, now)
+            stolen = steals_repo.plots_stolen_since(
+                session, thief_player_id, victim_player_id, self._taipei_day_start(now)
+            )
+            return StealFarmView(
+                player_id=victim_player_id,
+                player_name=status.player_name,
+                farm_name=status.name,
+                plots=status.plots,
+                now=status.now,
+                targets=[t for t in targets if t.player_id == victim_player_id],
+                limit_reached=stolen >= balance.STEAL_PLOTS_PER_VICTIM_PER_DAY,
+                warehouse_full=free <= 0,
+            )
 
     def steal_crop(
         self, group_id: int, thief_player_id: int, victim_player_id: int, plot_number: int, quantity: int

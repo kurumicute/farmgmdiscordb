@@ -14,7 +14,7 @@ from app.discord_bot.runner import ServiceRunner
 from app.game import balance
 from app.repositories import farms as farms_repo
 from app.services.admin_service import AdminService
-from tests.test_discord_bot import ALICE, BOB, GUILD_A, GUILD_B, FakeInteraction, embed_text
+from tests.test_discord_bot import ALICE, BOB, CAROL, GUILD_A, GUILD_B, FakeInteraction, embed_text
 
 PAGES = ("main", "plots", "backpack", "shop", "prices", "genetics", "sell", "animals", "craft", "build", "casino",
          "cave", "cave_area", "cave_log", "machines", "defense", "steal",
@@ -227,6 +227,28 @@ def test_steal_from_panel_only_same_guild(cmds, clock, admin):
     other = Player(cmds, ALICE, GUILD_B)  # 在 Bob 不在的伺服器：看不到 Bob 的作物
     other.go("steal")
     assert other.options("選擇要偷的作物") == []
+
+
+def test_steal_by_choosing_player_and_plot(cmds, clock, admin):
+    alice = make_player(cmds, ALICE, name="Alice")
+    bob = make_player(cmds, BOB, name="Bob")
+    make_player(cmds, CAROL, GUILD_B, name="Carol")  # 不同伺服器：不會出現在選單
+    bob.go("plots")
+    bob.choose("選擇作物", "wheat")
+    bob.click("全部澆水")
+    clock.advance(61)
+    alice.go("steal")
+    assert alice.options("選擇玩家") == [str(bob.panel.player_id)]
+    opened = alice.choose("選擇玩家", str(bob.panel.player_id))
+    assert "Bob 的農田" in alice.text and "有 **4** 格可以偷" in alice.text and "可偷 ×2" in alice.text
+    assert attachment_names(last_edit(opened)) == ["farm.png"]  # 顯示對方的農田圖
+    assert alice.options("選擇要偷哪一格") == ["1|2", "2|2", "3|2", "4|2"]
+    alice.choose("選擇要偷哪一格", "3|2")
+    assert "偷走" in alice.text and "Bob 的農田" in alice.text  # 偷完留在對方的農田畫面
+    assert "今天已經偷過 Bob 的田了" in alice.text and alice.options("選擇要偷哪一格") == []
+    alice.click("換一位玩家")
+    alice_players = [o for o in alice.panel.children if isinstance(o, discord.ui.Select)][0].options
+    assert alice_players[0].description.startswith("今天已經偷過了")
 
 
 def test_leaderboard_switches(cmds):

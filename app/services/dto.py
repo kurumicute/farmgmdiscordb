@@ -195,6 +195,20 @@ class StealTarget:
 
 
 @dataclass(frozen=True)
+class StealFarmView:
+    """偷菜時查看同群組成員的農田：只有土地狀態，不含金幣、倉庫等資訊。"""
+
+    player_id: int
+    player_name: str
+    farm_name: str
+    plots: list[PlotInfo]
+    now: datetime
+    targets: list[StealTarget]  # 這次可以偷的土地
+    limit_reached: bool  # 今天已經偷過這位玩家（每日土地上限）
+    warehouse_full: bool  # 偷菜者的倉庫已滿
+
+
+@dataclass(frozen=True)
 class ExternalContext:
     """外部平台（Discord）一次互動對應的群組與玩家；ID 皆由平台互動來源取得，不接受玩家輸入。"""
 

@@ -237,6 +237,29 @@ def test_steal_one_plot_per_victim_per_day(service, world, clock):
     assert service.steal_crop(g1, a, b, 3, 1).success
 
 
+def test_steal_players_and_farm_view(service, world, clock):
+    g1, a, b, c, d = world["g1"], world["a"], world["b"], world["c"], world["d"]
+    grow(service, b, 1, "wheat")
+    grow(service, b, 2, "wheat")
+    clock.advance(60)
+    rows = service.steal_players(g1, a)
+    assert [(r["player_id"], r["stealable"], r["limit_reached"]) for r in rows] == [(b, 2, False), (c, 0, False)]
+    view = service.steal_farm_view(g1, a, b)
+    assert [t.plot_number for t in view.targets] == [1, 2] and len(view.plots) == 4
+    assert not view.limit_reached and not hasattr(view, "gold")  # 不透露對方的金幣等資訊
+    service.steal_crop(g1, a, b, 1, 1)
+    view = service.steal_farm_view(g1, a, b)
+    assert view.limit_reached and view.targets == []
+    assert next(r for r in service.steal_players(g1, a) if r["player_id"] == b)["limit_reached"] is True
+    # 只能看目前群組的成員，也不能看自己
+    with pytest.raises(NotGroupMemberError):
+        service.steal_farm_view(g1, a, d)
+    with pytest.raises(NotGroupMemberError):
+        service.steal_farm_view(world["g3"], a, b)
+    with pytest.raises(ValidationError):
+        service.steal_farm_view(g1, a, a)
+
+
 def test_steal_more_than_remaining(service, world, clock):
     grow(service, world["b"], 1, "wheat")
     clock.advance(60)
