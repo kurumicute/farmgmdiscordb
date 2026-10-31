@@ -17,7 +17,6 @@ from app.game.errors import (
 )
 from app.game.rules import CraftState, EventType, PlotState
 from app.repositories import catalog as catalog_repo
-from app.repositories import crops as crops_repo
 from app.repositories import exploration as exploration_repo
 from app.repositories import farms as farms_repo
 from app.repositories import inventory as inventory_repo
@@ -374,17 +373,17 @@ class ExplorationService(RanchService):
         """收成成熟的作物；擁有收割機時才成熟的作物，即使已過乾枯時間也照樣收成（收割機會在成熟時處理）。"""
         now = self._clock.now()
         targets = []
-        for p in farms_repo.list_plots(session, farm.id):
+        # 一次查詢並鎖定所有土地（原本每格各查一次）
+        for p in farms_repo.list_plots(session, farm.id, for_update=True):
             state = rules.plot_state(p.crop_type_id, p.watered_at, p.ready_at, now)
             if state == PlotState.READY or (state == PlotState.WITHERED and p.ready_at >= tool.acquired_at):
-                targets.append(p.plot_number)
+                targets.append(p)
         if not targets:
             return ""
         done, total, stopped = 0, 0, ""
-        for number in targets:
-            plot = farms_repo.get_plot(session, farm.id, number, for_update=True)
+        for plot in targets:
             try:
-                _msg, qty, _item = self._harvest_locked(session, farm, plot, crops_repo.get(session, plot.crop_type_id))
+                _msg, qty, _item = self._harvest_locked(session, farm, plot, plot.crop_type)
             except WarehouseFullError:
                 stopped = f"倉庫已滿，還有 {len(targets) - done} 格沒收。"
                 break

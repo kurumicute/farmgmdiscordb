@@ -36,13 +36,15 @@ def get_by_player(session: Session, player_id: int, *, for_update: bool = False)
     return session.scalars(stmt).first()
 
 
-def list_plots(session: Session, farm_id: int) -> list[FarmPlot]:
+def list_plots(session: Session, farm_id: int, *, for_update: bool = False) -> list[FarmPlot]:
     stmt = (
         select(FarmPlot)
         .options(joinedload(FarmPlot.crop_type))
         .where(FarmPlot.farm_id == farm_id)
         .order_by(FarmPlot.plot_number)
     )
+    if for_update:  # 只鎖土地列（作物種類是外部連接，不能鎖）
+        stmt = stmt.with_for_update(of=FarmPlot)
     return list(session.scalars(stmt))
 
 

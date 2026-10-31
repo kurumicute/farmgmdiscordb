@@ -577,3 +577,25 @@ def test_backpack_lists_materials(explorer, player_id, session_factory):
     bp = explorer.get_backpack(player_id)
     assert [(x.name, x.quantity, x.price) for x in bp.materials] == [("齒輪", 2, 0), ("假幣", 1, 100)]
     assert bp.used == 0 and bp.material_used == 3 and not bp.is_empty  # 素材不佔倉庫
+
+
+def test_auto_harvester_queries_plots_once(explorer, player_id, session_factory, clock, engine):
+    """自動收割機一次查詢並鎖定所有土地，不會每格各查一次。"""
+    from sqlalchemy import event
+
+    explorer.plant_all(player_id, "wheat")
+    explorer.water_all(player_id)
+    owned(explorer, session_factory, player_id, "auto_harvester")
+    clock.advance(60)
+    selects = []
+
+    def count(_conn, _cursor, statement, *_args):
+        if statement.lstrip().upper().startswith("SELECT") and "FROM farm_plots" in statement:
+            selects.append(statement)
+
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        assert "收成 4 格" in explorer.run_machines(player_id)
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
+    assert len(selects) == 1
