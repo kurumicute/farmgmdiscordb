@@ -692,19 +692,22 @@ class FarmPanel(discord.ui.View):
 
     def _build_backpack(self, d):
         bp = d["backpack"]
+        rare_seeds = exploration.rare_seed_codes()  # 稀有種子放素材背包，不佔倉庫
         tools = [f"{'✅' if t.enabled else '⏸️'} {t.name}（{'啟用中' if t.enabled else '已停用'}）" if t.owned
                  else f"🔒 {t.name}（未購買）" for t in bp.tools]
         effects = [f"🪱 {x.name}：{ts(x.expires_at)}結束" for x in bp.effects if x.status == "active"]
         e = discord.Embed(title="🎒 ✦ 背包 ✦", color=BLUE, description=sections(
             f"📦 倉庫 **{bp.used}/{bp.capacity}**\n{bar(bp.used, bp.capacity, 16)}",
-            ("🌰 種子", [f"{crop_emoji(x.code)} {x.name}　×**{x.quantity}**" for x in bp.seeds]),
+            ("🌰 種子", [f"{crop_emoji(x.code)} {x.name}　×**{x.quantity}**"
+                        + ("　（⛰️ 素材背包）" if rules.seed_item_code(x.code) in rare_seeds else "")
+                        for x in bp.seeds]),
             ("🧺 農產品", [f"{crop_emoji(x.code)} {x.name}{genetics_label(x.quality, x.mutation)}　×**{x.quantity}**"
                           f"　（{x.price} 金／個）" for x in bp.produce]),
             ("🥚 動物產品與加工品", [f"🥚 {x.name}　×**{x.quantity}**　（{x.price} 金／個）" for x in bp.goods]),
             ("🧪 道具", [f"{ITEM_EMOJI.get(x.code, '🎁')} {x.name}　×**{x.quantity}**" for x in bp.consumables]),
             ("🏆 賭場獎品", [f"🏆 {p['name']}　×**{p['quantity']}**"
                            f"　（價值 ×{p['multiplier']}，{p['unit_price']} 金／個）" for p in bp.prizes]),
-            (f"⛰️ 素材背包 {bp.material_used}/{bp.material_capacity}（不佔倉庫）",
+            (f"⛰️ 素材背包 {bp.material_used}/{bp.material_capacity}（不佔倉庫，稀有種子也算在內）",
              [f"{MATERIAL_EMOJI.get(x.code, '🪨')} {x.name}　×**{x.quantity}**　（{x.description}）"
               for x in bp.materials]),
             ("🔧 工具", tools),
@@ -1669,7 +1672,7 @@ class FarmPanel(discord.ui.View):
             f"👨‍🌾 **{d['player_name']}**　⭐ 農場 **Lv {d['level']}**",
             "探索三個區域收集素材、稀有種子與假幣，素材可以製作自動化機器（「🏭 加工」→「🔧 機器」）。\n"
             "一次只能去一個區域；出發後要等探險時間結束才會回來，回來後領取獎勵才能再出發。\n"
-            "素材與假幣放進獨立的素材背包，不佔倉庫。",
+            "素材、假幣與稀有種子放進獨立的素材背包，不佔倉庫。",
             self._trip_text(trip),
         ))
         for a in d["areas"]:

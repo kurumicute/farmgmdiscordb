@@ -427,12 +427,10 @@ class CommunityService(SocialService):
                 farm.gold += amount
                 tx_kw = {"gold_delta": amount}
             else:
-                used = inventory_repo.total_quantity(session, farm.id)
-                if used + amount > farm.warehouse_capacity:
-                    raise WarehouseFullError(
-                        f"背包空間不足：目前 {used}/{farm.warehouse_capacity}，需要 {amount} 格。"
-                        "獎勵會保留，清出空間後再領取。"
-                    )
+                try:
+                    self._ensure_item_space(session, farm, quest.reward_type, amount)
+                except WarehouseFullError as exc:
+                    raise WarehouseFullError(f"{exc}獎勵會保留，清出空間後再領取。") from None
                 inventory_repo.add(session, farm.id, quest.reward_type, amount)
                 tx_kw = {"item_code": quest.reward_type, "quantity": amount}
             session.add(

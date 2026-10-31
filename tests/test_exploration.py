@@ -489,8 +489,27 @@ def test_incubator_creates_rare_seed_order(explorer, player_id, session_factory,
     order = explorer.craft_orders(player_id)[0]
     assert order["building_name"] == "稀有作物培育器" and order["recipe_name"] == "琥珀瓜種子培育"
     clock.advance(4 * HOUR)
+    set_farm(session_factory, player_id, warehouse_capacity=1)
+    give(session_factory, player_id, "wheat", 1)  # 倉庫全滿：稀有種子放素材背包，照樣可以領
     explorer.collect_craft(player_id, order["order_id"])
-    assert next(x.quantity for x in explorer.get_backpack(player_id).seeds if x.code == "amber_melon") == 1
+    bp = explorer.get_backpack(player_id)
+    assert next(x.quantity for x in bp.seeds if x.code == "amber_melon") == 1
+    assert bp.used == 1 and bp.material_used == 1
+
+
+def test_rare_seeds_use_material_bag(explorer, player_id, session_factory, clock, monkeypatch):
+    explorer._explore_rng = lambda: 0.0
+    monkeypatch.setattr(exploration, "MATERIAL_BAG_CAPACITY", 2)
+    give(session_factory, player_id, "seed_moonflower", 2)  # 素材背包已滿
+    bp = explorer.get_backpack(player_id)
+    assert (bp.used, bp.material_used) == (0, 2)
+    with pytest.raises(WarehouseFullError, match="素材背包空間不足"):
+        with explorer._transaction() as session:
+            farm = explorer._locked_farm(session, player_id)
+            explorer._ensure_item_space(session, farm, "seed_amber_melon", 1)
+    with explorer._transaction() as session:  # 一般種子仍放倉庫
+        farm = explorer._locked_farm(session, player_id)
+        explorer._ensure_item_space(session, farm, "seed_wheat", 1)
 
 
 # ---------- 自動收割機與自動加工機 ----------

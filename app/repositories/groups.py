@@ -4,7 +4,7 @@ from sqlalchemy import case, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.db.models import Farm, FarmPlot, Group, GroupMember, InventoryItem, Player
+from app.db.models import Farm, FarmPlot, Group, GroupMember, Player
 from app.repositories import inventory as inventory_repo
 
 
@@ -79,12 +79,7 @@ def members_with_farms(session: Session, group_id: int, now: datetime, wither_cu
         .group_by(FarmPlot.farm_id)
         .subquery()
     )
-    inv = (
-        select(InventoryItem.farm_id, func.sum(InventoryItem.quantity).label("used"))
-        .where(inventory_repo.in_warehouse())  # 素材背包不佔倉庫
-        .group_by(InventoryItem.farm_id)
-        .subquery()
-    )
+    inv = inventory_repo.warehouse_used_by_farm()  # 與遊戲內相同：含賭場獎品、不含素材背包
     stmt = (
         select(
             Player.id,

@@ -520,12 +520,10 @@ class RanchService(GameService):
         if state == CraftState.IN_PROGRESS:
             left = rules.format_duration(rules.remaining_seconds(order.ready_at, now))
             raise ValidationError(f"訂單 #{order_id} 還在加工中，還需要 {left}。")
-        used = inventory_repo.total_quantity(session, farm.id)
-        if used + order.output_quantity > farm.warehouse_capacity:
-            raise WarehouseFullError(
-                f"背包空間不足：目前 {used}/{farm.warehouse_capacity}，需要 {order.output_quantity} 格。"
-                f"成品會保留在訂單 #{order_id}（待領取），清出空間後再領取。"
-            )
+        try:  # 培育器的稀有種子放素材背包，其餘成品放倉庫
+            self._ensure_item_space(session, farm, order.output_code, order.output_quantity)
+        except WarehouseFullError as exc:
+            raise WarehouseFullError(f"{exc}成品會保留在訂單 #{order_id}（待領取），清出空間後再領取。") from None
         inventory_repo.add(session, farm.id, order.output_code, order.output_quantity)
         order.status = "collected"
         order.collected_at = now

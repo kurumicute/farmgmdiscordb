@@ -66,12 +66,7 @@ def farms(
         .group_by(FarmPlot.farm_id)
         .subquery()
     )
-    inv = (
-        select(InventoryItem.farm_id, func.sum(InventoryItem.quantity).label("used"))
-        .where(inventory_repo.in_warehouse())  # 素材背包不佔倉庫
-        .group_by(InventoryItem.farm_id)
-        .subquery()
-    )
+    inv = inventory_repo.warehouse_used_by_farm()  # 與遊戲內相同：含賭場獎品、不含素材背包
     base = select(Farm, Player.display_name).join(Player, Player.id == Farm.player_id)
     if q:
         pattern = f"%{_escape_like(q)}%"

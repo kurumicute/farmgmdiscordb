@@ -195,6 +195,21 @@ class GameService:
         if used + incoming > farm.warehouse_capacity:
             raise WarehouseFullError(f"倉庫空間不足：目前 {used}/{farm.warehouse_capacity}，需要再放入 {incoming} 個。")
 
+    @staticmethod
+    def _ensure_material_space(session: Session, farm: Farm, incoming: int) -> None:
+        """素材背包（山洞素材、假幣與稀有種子，不佔倉庫）是否放得下。"""
+        used = inventory_repo.material_quantity(session, farm.id)
+        cap = exploration.MATERIAL_BAG_CAPACITY
+        if incoming > 0 and used + incoming > cap:
+            raise WarehouseFullError(f"素材背包空間不足：目前 {used}/{cap}，需要再放入 {incoming} 個。")
+
+    def _ensure_item_space(self, session: Session, farm: Farm, item_code: str, incoming: int) -> None:
+        """依物品放的位置檢查倉庫或素材背包。"""
+        if inventory_repo.is_material(item_code):
+            self._ensure_material_space(session, farm, incoming)
+        else:
+            self._ensure_space(session, farm, incoming)
+
     def _record(self, session: Session, farm: Farm, event: EventType, description: str, **kw) -> None:
         now = self._clock.now()
         farm.updated_at = now
@@ -1519,10 +1534,10 @@ def build_backpack(session: Session, farm: Farm, now: datetime) -> Backpack:
         consumables=consumables,
         tools=tools,
         effects=effects,
-        # 賭場獎品也佔倉庫空間；山洞素材放在素材背包，不佔倉庫
+        # 賭場獎品也佔倉庫空間；山洞素材、假幣與稀有種子放在素材背包，不佔倉庫
         used=sum(i.quantity for i in stacks if not inventory_repo.is_material(i.item_code))
         + sum(p["quantity"] for p in prizes),
-        material_used=sum(x.quantity for x in materials),
+        material_used=sum(i.quantity for i in stacks if inventory_repo.is_material(i.item_code)),
         material_capacity=exploration.MATERIAL_BAG_CAPACITY,
         capacity=farm.warehouse_capacity,
         now=now,

@@ -7,6 +7,7 @@ from app.auth import AdminAuth, hash_password
 from app.db.models import Farm, GameTransaction
 from app.db.session import make_engine, make_session_factory
 from app.main import create_app
+from app.repositories import inventory as inventory_repo
 
 # 測試專用的管理員帳密（執行時產生雜湊，與正式 .env 無關）
 TEST_ADMIN_USER = "admin"
@@ -53,7 +54,7 @@ def test_summary_matches_database(client, service, clock, player_id, session_fac
     assert data["inventory_items"] == 1  # 剩 1 顆小麥種子
 
 
-def test_farm_list_and_detail(client, service, clock, player_id, home_group):
+def test_farm_list_and_detail(client, service, clock, player_id, home_group, session_factory):
     _setup(service, clock, player_id)
     service.create_farm(service.create_player("Bob").id, "藍莓園", home_group_id=home_group)
     farms = client.get("/api/monitor/farms").json()
@@ -61,6 +62,20 @@ def test_farm_list_and_detail(client, service, clock, player_id, home_group):
     row = next(f for f in farms["items"] if f["player_name"] == "阿明")
     assert (row["plots"], row["empty"], row["growing"], row["ready"]) == (4, 1, 1, 2)
     assert row["gold"] == 450 and row["warehouse_used"] == 1
+
+    # 賭場獎品佔倉庫空間、素材背包不佔：監控網站與群組成員列表都和遊戲內的倉庫用量一致
+    farm_id = service.get_farm_status(player_id).farm_id
+    with session_factory.begin() as s:
+        inventory_repo.add_prize(s, farm_id, "strawberry", "rare", "none", 2, 3)
+        inventory_repo.add(s, farm_id, "wood", 7)
+        inventory_repo.add(s, farm_id, "seed_amber_melon", 2)
+    game_used = service.get_farm_status(player_id).warehouse_used
+    assert game_used == 1 + 3
+    row = next(f for f in client.get("/api/monitor/farms").json()["items"] if f["player_name"] == "阿明")
+    assert row["warehouse_used"] == game_used
+    assert client.get(f"/api/monitor/farms/{farm_id}").json()["warehouse_used"] == game_used
+    member = next(m for m in service.group_members(home_group) if m["player_id"] == player_id)
+    assert member["farm"]["warehouse_used"] == game_used
 
     found = client.get("/api/monitor/farms", params={"q": "藍莓"}).json()
     assert [f["farm_name"] for f in found["items"]] == ["藍莓園"]

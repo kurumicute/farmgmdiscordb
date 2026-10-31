@@ -38,6 +38,11 @@ RARE_CROPS = [
 AMBER_SEED = "seed_amber_melon"
 MOON_SEED = "seed_moonflower"
 
+
+def rare_seed_codes() -> tuple[str, ...]:
+    """稀有作物種子的物品代碼（和素材一樣放素材背包，不佔倉庫）。"""
+    return tuple(f"seed_{code}" for code, *_rest in RARE_CROPS)
+
 # ---------- 獎勵類型機率 ----------
 REWARD_TYPES = ("common", "rare", "seed", "fake_coin", "event")
 REWARD_TYPE_LABELS = {"common": "普通素材", "rare": "稀有素材", "seed": "稀有種子", "fake_coin": "假幣",

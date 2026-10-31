@@ -113,7 +113,7 @@ class MonitorService:
                 "farm_name": farm.name,
                 "level": farm.level,
                 "gold": farm.gold,
-                "warehouse_used": sum(i["quantity"] for i in items if not inventory_repo.is_material(i["item_code"])),
+                "warehouse_used": inventory_repo.total_quantity(session, farm.id),  # 含賭場獎品、不含素材背包
                 "warehouse_capacity": farm.warehouse_capacity,
                 "updated_at": farm.updated_at,
                 "plots": plots,

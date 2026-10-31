@@ -56,14 +56,6 @@ def find_incubator_recipe(key: str) -> str | None:
 
 
 class ExplorationService(RanchService):
-    @staticmethod
-    def _ensure_material_space(session, farm, incoming: int) -> None:
-        """素材背包（山洞素材與假幣，不佔倉庫）是否放得下。"""
-        used = inventory_repo.material_quantity(session, farm.id)
-        cap = exploration.MATERIAL_BAG_CAPACITY
-        if incoming > 0 and used + incoming > cap:
-            raise WarehouseFullError(f"素材背包空間不足：目前 {used}/{cap}，需要再放入 {incoming} 個。")
-
     # ---------- 冒險總覽與探險 ----------
 
     def _trip_view(self, log, now) -> dict | None:
@@ -140,7 +132,7 @@ class ExplorationService(RanchService):
                     "duration_seconds": area.duration_seconds}
 
     def claim_exploration(self, player_id: int) -> dict:
-        """領取已回來的探險獎勵：素材與假幣放進素材背包（不佔倉庫），稀有種子放進倉庫；放不下時不領取。"""
+        """領取已回來的探險獎勵：素材、假幣與稀有種子都放進素材背包（不佔倉庫）；放不下時不領取。"""
         with self._transaction() as session:
             farm = self._locked_farm(session, player_id)
             now = self._clock.now()
@@ -155,8 +147,8 @@ class ExplorationService(RanchService):
             total = sum(items.values())
             materials = sum(q for c, q in items.items() if inventory_repo.is_material(c))
             try:
-                self._ensure_space(session, farm, total - materials)  # 稀有種子放倉庫
-                self._ensure_material_space(session, farm, materials)  # 素材與假幣放素材背包
+                self._ensure_space(session, farm, total - materials)  # 一般物品放倉庫（目前掉落表沒有）
+                self._ensure_material_space(session, farm, materials)  # 素材、假幣與稀有種子放素材背包
             except WarehouseFullError as exc:
                 raise WarehouseFullError(f"{exc} 探險帶回來的物品放不下，清出空間後再領取。") from None
             for item, qty in items.items():
@@ -321,9 +313,9 @@ class ExplorationService(RanchService):
                 have = inventory_repo.get_quantity(session, farm.id, crop.code, quality, mutation)
                 raise InsufficientItemsError(f"{crop.name}不足：需要 {quantity} 個，背包只有 {have} 個。")
             seeds = quantity * exploration.SEED_MAKER_RATIO
-            # 扣作物後再檢查空間：淨增加 seeds - quantity 格
-            self._ensure_space(session, farm, seeds)
             item = rules.seed_item_code(crop.code)
+            # 扣作物後再檢查空間（稀有種子放素材背包）
+            self._ensure_item_space(session, farm, item, seeds)
             inventory_repo.add(session, farm.id, item, seeds)
             self._record(
                 session, farm, EventType.MAKE_SEED, f"種子製造機：{quantity} 個{crop.name} → {seeds} 顆{crop.name}種子",
