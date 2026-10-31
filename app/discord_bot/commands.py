@@ -259,6 +259,7 @@ class FarmCommands:
             panel.message = await interaction.followup.send(
                 embed=embed, view=panel, ephemeral=True, wait=True, **({"files": panel.files} if panel.files else {})
             )
+            panel.sent_digest = panel.image_digest
         except discord.HTTPException as exc:
             logger.warning("送出面板失敗：%s %s", type(exc).__name__, getattr(exc, "text", "")[:300])
 

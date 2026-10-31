@@ -10,6 +10,7 @@
 - 總覽、農田、動物、加工、建造與商店頁附上圖片（farm_image，在執行緒中拼圖）；產生失敗時只顯示文字。
 """
 
+import hashlib
 import io
 import logging
 import re
@@ -192,6 +193,9 @@ class FarmPanel(discord.ui.View):
         self.cave_result: dict | None = None
         self.exploring = False
         self.files: list[discord.File] = []  # 本次畫面要附上的圖片；每次 render 重建
+        # 圖片內容的雜湊：本次畫面的圖、面板訊息上目前掛著的圖；相同時沿用訊息上的附件，不重新上傳
+        self.image_digest: bytes | None = None
+        self.sent_digest: bytes | None = None
 
     @property
     def svc(self):
@@ -228,7 +232,7 @@ class FarmPanel(discord.ui.View):
     async def render(self, notice: str | None = None) -> discord.Embed:
         """讀取目前頁面的資料並重建元件；讀取失敗時顯示錯誤並提供回總覽按鈕。"""
         self.clear_items()
-        self.files = []  # 換頁時舊圖片也要移除
+        self.files, self.image_digest = [], None  # 換頁時舊圖片也要移除
         if self.page != "welcome":
             notice = await self._run_machines(notice)
         try:
@@ -238,7 +242,7 @@ class FarmPanel(discord.ui.View):
             if not isinstance(exc, GameError):
                 logger.exception("面板讀取失敗（頁面 %s）", self.page)
             self.clear_items()
-            self.files = []
+            self.files, self.image_digest = [], None
             embed = discord.Embed(title="⚠️ 無法顯示", color=RED,
                                   description=f"### {clean_message(player_message(exc))}")
             self._nav_back(row=0)
@@ -276,10 +280,21 @@ class FarmPanel(discord.ui.View):
         embed = await self.render(notice)
         self._register_items(interaction)
         try:
-            # attachments：傳新檔案會取代舊圖，傳 [] 會移除
-            await interaction.edit_original_response(embed=embed, view=self, attachments=self.files)
+            # attachments：傳新檔案會取代舊圖，傳 [] 會移除，傳訊息上既有的附件則保留不重傳
+            await interaction.edit_original_response(embed=embed, view=self, attachments=self._attachments(interaction))
+            self.sent_digest = self.image_digest
         except discord.HTTPException as exc:
+            self.sent_digest = None  # 不確定訊息上現在是哪張圖，下次重新上傳
             logger.warning("更新面板失敗：%s", type(exc).__name__)
+
+    def _attachments(self, interaction: discord.Interaction) -> list:
+        """圖片和面板訊息上現有的一樣時沿用既有附件（例如賭場連續下注），否則上傳新檔案。"""
+        if self.files and self.image_digest == self.sent_digest:
+            message = getattr(interaction, "message", None)
+            kept = [a for a in getattr(message, "attachments", None) or [] if a.filename == FARM_IMAGE]
+            if kept:
+                return kept
+        return self.files
 
     async def goto(self, interaction: discord.Interaction, page: str, notice: str | None = None) -> None:
         await interaction.response.defer()
@@ -321,7 +336,9 @@ class FarmPanel(discord.ui.View):
         self._register_items(interaction)
         try:
             await interaction.edit_original_response(embed=embed, view=self, attachments=[])
+            self.sent_digest = None
         except discord.HTTPException as exc:
+            self.sent_digest = None
             logger.warning("更新面板失敗：%s", type(exc).__name__)
 
     # ---------- 圖片 ----------
@@ -329,6 +346,7 @@ class FarmPanel(discord.ui.View):
     def attach_image(self, embed: discord.Embed, png: bytes | None) -> None:
         if png:  # discord.File 只能送出一次，每次都建新的
             self.files = [discord.File(io.BytesIO(png), filename=FARM_IMAGE)]
+            self.image_digest = hashlib.blake2b(png, digest_size=16).digest()
             embed.set_image(url=f"attachment://{FARM_IMAGE}")
 
     def _image(self, what: str, make: Callable[[], bytes]) -> bytes | None:

@@ -441,6 +441,29 @@ def test_pages_attach_images(cmds):
         assert (kw["embed"].image.url == "attachment://farm.png") == bool(expected), page
 
 
+def test_unchanged_image_reuses_existing_attachment(cmds):
+    """同一張圖（例如賭場連續操作）沿用訊息上已有的附件，不重新上傳；圖換了或換到沒圖的頁面才更新。"""
+    from types import SimpleNamespace
+
+    p = make_player(cmds, ALICE)
+    existing = SimpleNamespace(filename="farm.png")
+
+    def go(page):
+        interaction = p._interaction()
+        interaction.message = SimpleNamespace(attachments=[existing])
+        p.panel.page = page
+        run(p.panel.goto(interaction, page))
+        return last_edit(interaction)["attachments"]
+
+    first = go("casino")
+    assert [f.filename for f in first] == ["farm.png"] and first[0] is not existing  # 換頁：上傳新圖
+    assert go("casino") == [existing]  # 圖片相同：沿用
+    assert go("backpack") == []  # 沒有圖的頁面：移除
+    assert go("casino")[0] is not existing  # 訊息上已經沒有賭場圖：重新上傳
+    shop = go("shop")
+    assert shop[0] is not existing  # 不同的圖：重新上傳
+
+
 def test_open_panel_sends_farm_image(cmds):
     make_player(cmds, ALICE)
     first = FakeInteraction(ALICE, GUILD_A)
