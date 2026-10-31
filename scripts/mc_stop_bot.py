@@ -37,7 +37,8 @@ logger = logging.getLogger("mc_stop_bot")
 
 ALLOWED_CHANNEL_ID = 1012751500759543808
 JAVA_EXES = {"java.exe", "javaw.exe"}
-WINDOW_TITLE_PREFIX = "Minecraft"
+# 原版標題是「Minecraft …」；DeceasedCraft 整合包把視窗標題改成「DeceasedCraft」
+WINDOW_TITLE_PREFIXES = ("Minecraft", "DeceasedCraft")
 EXIT_TIMEOUT_SECONDS = 180
 # 遊戲日誌：用來確認結束前有存檔完成（latest.log 每次啟動遊戲會重寫）
 MC_LOG = Path(
@@ -85,7 +86,7 @@ def _process_exe(pid: int) -> str | None:
 
 
 def find_minecraft_windows() -> list[tuple[int, int, str]]:
-    """回傳 (hwnd, pid, 標題)：可見、標題以 Minecraft 開頭、屬於 java／javaw 程序的頂層視窗。"""
+    """回傳 (hwnd, pid, 標題)：可見、標題以 WINDOW_TITLE_PREFIXES 開頭、屬於 java／javaw 程序的頂層視窗。"""
     found: list[tuple[int, int, str]] = []
 
     @EnumWindowsProc
@@ -97,7 +98,7 @@ def find_minecraft_windows() -> list[tuple[int, int, str]]:
             return True
         buf = ctypes.create_unicode_buffer(length + 1)
         user32.GetWindowTextW(hwnd, buf, length + 1)
-        if not buf.value.startswith(WINDOW_TITLE_PREFIX):
+        if not buf.value.startswith(WINDOW_TITLE_PREFIXES):
             return True
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
