@@ -3,6 +3,7 @@
 import asyncio
 from types import SimpleNamespace
 
+import aiohttp
 import pytest
 
 from app.config import Settings
@@ -190,6 +191,28 @@ def test_track_end_from_other_track_is_ignored(monkeypatch, tmp_path):
                                                           reason="stopped"))
         await settle()
         assert state.current.title == "song2" and not state.queue
+        state.cancel_tasks()
+
+    asyncio.run(scenario())
+
+
+def test_network_errors_do_not_stop_queue(monkeypatch, tmp_path):
+    """斷網（DNS 失敗）時傳送／編輯訊息丟出 aiohttp 例外，佇列仍要繼續播下一首。"""
+
+    async def offline(*_, **__):
+        raise aiohttp.ClientConnectionError("Name or service not known")
+
+    async def scenario():
+        guild = install_fakes(monkeypatch, tmp_path, [12])[12]
+        state = music.get_state(12)
+        state.text_channel = SimpleNamespace(send=offline)
+        state.queue.extend([song(1), song(2)])
+        await music.play_next(guild)
+        assert state.current.title == "song1" and state.np_message is None
+        state.np_message = SimpleNamespace(embeds=[], edit=offline)
+        guild.voice_client.finish()
+        await settle()
+        assert state.current.title == "song2" and guild.voice_client.played == ["song1", "song2"]
         state.cancel_tasks()
 
     asyncio.run(scenario())
@@ -400,3 +423,42 @@ def test_stats_update_logs_only_dropped_frames(caplog):
     dropped = SimpleNamespace(sent=2950, nulled=40, deficit=10)
     asyncio.run(music.on_wavelink_stats_update(SimpleNamespace(frames=dropped)))
     assert "來源不足 40" in caplog.text and "未送出 10" in caplog.text
+
+
+def test_ensure_voice_clears_stale_voice_state(monkeypatch):
+    """Discord 認為機器人還在頻道、程式卻沒有連線時，要先離開再加入，否則 Discord 不送語音伺服器資訊而逾時。"""
+    channel = SimpleNamespace(name="頻道")
+    calls = []
+
+    class Guild:
+        id = 1
+        voice_client = None
+
+        def __init__(self):
+            self.me = SimpleNamespace(voice=SimpleNamespace(channel=channel))
+
+        async def change_voice_state(self, *, channel):
+            calls.append(("leave", channel))
+            self.me = SimpleNamespace(voice=None)
+
+    guild = Guild()
+
+    async def connect(**_):
+        calls.append(("connect", guild.me.voice))
+        return "player"
+
+    channel.connect = connect
+    sent = []
+
+    async def send(**kw):
+        sent.append(kw)
+
+    ctx = SimpleNamespace(guild=guild, author=SimpleNamespace(voice=SimpleNamespace(channel=channel)), send=send)
+    monkeypatch.setattr(music.wavelink.Pool, "_Pool__nodes", {"n": object()})
+    assert asyncio.run(music.ensure_voice(ctx)) == "player"
+    assert calls == [("leave", None), ("connect", None)] and not sent
+
+    # 正常情況（不在任何頻道）不多送離開請求
+    calls.clear()
+    assert asyncio.run(music.ensure_voice(ctx)) == "player"
+    assert calls == [("connect", None)]

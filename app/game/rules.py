@@ -57,6 +57,9 @@ class EventType(StrEnum):
     BUILD_MACHINE = "build_machine"
     EXCHANGE = "exchange"
     MAKE_SEED = "make_seed"
+    FISHING_BUY = "fishing_buy"
+    FISH_SELL = "fish_sell"
+    RELEASE_ANIMAL = "release_animal"
 
 
 EVENT_TYPE_LABELS = {
@@ -92,6 +95,9 @@ EVENT_TYPE_LABELS = {
     EventType.BUILD_MACHINE: "製作機器",
     EventType.EXCHANGE: "假幣兌換",
     EventType.MAKE_SEED: "製造種子",
+    EventType.FISHING_BUY: "購買釣具",
+    EventType.FISH_SELL: "販售魚類",
+    EventType.RELEASE_ANIMAL: "放生動物",
 }
 
 

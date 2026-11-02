@@ -18,6 +18,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+import aiohttp
 import discord
 import wavelink
 from discord import app_commands
@@ -655,7 +656,7 @@ async def send(state, **kwargs):
         return None
     try:
         return await state.text_channel.send(**kwargs)
-    except discord.HTTPException as e:
+    except (discord.HTTPException, aiohttp.ClientError) as e:  # 斷網時是 aiohttp 例外，不能中斷播放流程
         logger.warning("傳送訊息失敗：%s", e)
         return None
 
@@ -670,7 +671,7 @@ async def clear_np_message(state):
                 embed.set_author(name="✔️ 已播放")
                 embed.description = None
             await msg.edit(embed=embed, view=None)
-        except discord.HTTPException:
+        except (discord.HTTPException, aiohttp.ClientError):
             pass
 
 
@@ -784,6 +785,20 @@ async def play_next(guild):
         state.idle_task = asyncio.create_task(idle_disconnect(guild, idle_timeout))
 
 
+async def clear_stale_voice(guild, wait=5.0):
+    """Discord 認為機器人還在語音頻道、程式卻沒有連線時（斷線殘留），先離開再連。
+    在已經所在的頻道再送一次加入請求，Discord 不會再送語音伺服器資訊，連線會一直等到逾時。"""
+    me = guild.me
+    if guild.voice_client is not None or not (me and me.voice and me.voice.channel):
+        return
+    logger.warning("[%s] 清除殘留的語音狀態：%s", guild.id, me.voice.channel)
+    await guild.change_voice_state(channel=None)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + wait
+    while guild.me.voice and guild.me.voice.channel and loop.time() < deadline:
+        await asyncio.sleep(0.2)
+
+
 async def ensure_voice(ctx):
     """確保機器人在使用者所在的語音頻道，回傳 wavelink.Player 或 None"""
     voice = ctx.author.voice
@@ -802,8 +817,14 @@ async def ensure_voice(ctx):
         await ctx.send(embed=error_embed("音樂伺服器（Lavalink）目前無法連線，請稍後再試。"))
         return None
     try:
+        await clear_stale_voice(ctx.guild)
         return await voice.channel.connect(cls=wavelink.Player, self_deaf=True)
     except Exception as e:
+        logger.warning("[%s] 加入語音頻道失敗：%r", ctx.guild.id, e)
+        try:
+            await clear_stale_voice(ctx.guild, wait=0)  # 逾時時 Discord 端可能已加入，不留殘留狀態
+        except Exception:
+            logger.exception("[%s] 清除殘留的語音狀態失敗", ctx.guild.id)
         await ctx.send(embed=error_embed(f"加入語音頻道失敗：{e}"))
         return None
 

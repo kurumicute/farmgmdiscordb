@@ -266,13 +266,13 @@ def test_giant_doubles_quantity_once(farmer, service, home_group, session_factor
     plant(s, farmer)
     assert plot_row(session_factory, farmer).remaining_quantity == 4
     clock.advance(60)
-    service.steal_crop(home_group, thief, farmer, 1, 2)
+    service.steal_crop(home_group, thief, farmer, 1, 1)  # 小麥每次最多偷 1 個
     result = service.harvest_crop(farmer, 1)
-    assert result.quantity == 2 and "已被偷走 2 個" in result.message
+    assert result.quantity == 3 and "已被偷走 1 個" in result.message
     with pytest.raises(PlotEmptyError):
         service.harvest_crop(farmer, 1)
-    assert stacks(session_factory, farmer) == [("wheat", "normal", "giant", 2)]
-    assert stacks(session_factory, thief) == [("wheat", "normal", "giant", 2)]
+    assert stacks(session_factory, farmer) == [("wheat", "normal", "giant", 3)]
+    assert stacks(session_factory, thief) == [("wheat", "normal", "giant", 1)]
 
 
 def test_concurrent_harvest_of_giant_only_once(farmer, service, session_factory, clock):

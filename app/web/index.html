@@ -40,6 +40,7 @@
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
     <symbol id="i-droplet" viewBox="0 0 24 24"><path d="M12 2.7 6.3 8.4a8 8 0 1 0 11.4 0z"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-fish" viewBox="0 0 24 24"><path d="M3 12c3-5 9-6 13-3l5-3v12l-5-3c-4 3-10 2-13-3z"/><path d="M14.5 10.5h.01"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></symbol>
   </svg>
 
@@ -64,6 +65,7 @@
         <button type="button" data-tab="genetics" title="品質與突變"><svg class="icon"><use href="#i-sparkles"/></svg><span>品質與突變</span></button>
         <button type="button" data-tab="animals" title="動物種類"><svg class="icon"><use href="#i-paw"/></svg><span>動物種類</span></button>
         <button type="button" data-tab="ranch" title="養殖與加工"><svg class="icon"><use href="#i-factory"/></svg><span>養殖與加工</span></button>
+        <button type="button" data-tab="fishing" title="釣魚管理"><svg class="icon"><use href="#i-fish"/></svg><span>釣魚管理</span></button>
 
         <p class="nav-group">活動管理</p>
         <button type="button" data-tab="events" title="限時活動"><svg class="icon"><use href="#i-calendar"/></svg><span>限時活動</span></button>
@@ -365,6 +367,173 @@
         </div>
 
         <!-- ===== 養殖與加工 ===== -->
+        <!-- ===== 釣魚 ===== -->
+        <div class="tab-panel" data-tab-panel="fishing" hidden>
+          <p class="guest-hint guest-only"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>目前為檢視模式。登入管理員後可新增、修改、停用魚類與釣具，以及調整釣魚機率設定。</p>
+          <section class="kpi-grid" aria-label="釣魚數據總覽">
+            <article class="kpi card">
+              <div class="kpi-head"><span class="kpi-icon tone-info" aria-hidden="true"><svg class="icon"><use href="#i-fish"/></svg></span><span class="label">🎣 總釣魚次數</span></div>
+              <span class="value" id="fs-sessions">—</span>
+              <span class="kpi-sub" id="fs-sessions-sub">—</span>
+            </article>
+            <article class="kpi card">
+              <div class="kpi-head"><span class="kpi-icon tone-green" aria-hidden="true"><svg class="icon"><use href="#i-check"/></svg></span><span class="label">🐟 總捕獲魚數</span></div>
+              <span class="value" id="fs-landed">—</span>
+              <span class="kpi-sub" id="fs-landed-sub">—</span>
+            </article>
+            <article class="kpi card">
+              <div class="kpi-head"><span class="kpi-icon tone-soil" aria-hidden="true"><svg class="icon"><use href="#i-alert"/></svg></span><span class="label">❌ 釣魚失敗次數</span></div>
+              <span class="value" id="fs-failed">—</span>
+              <span class="kpi-sub" id="fs-failed-sub">—</span>
+            </article>
+            <article class="kpi card">
+              <div class="kpi-head"><span class="kpi-icon tone-gold" aria-hidden="true"><svg class="icon"><use href="#i-coins"/></svg></span><span class="label">💰 魚類總交易金額</span></div>
+              <span class="value" id="fs-gold">—</span>
+              <span class="kpi-sub" id="fs-gold-sub">—</span>
+            </article>
+            <article class="kpi card">
+              <div class="kpi-head"><span class="kpi-icon tone-gold" aria-hidden="true"><svg class="icon"><use href="#i-trophy"/></svg></span><span class="label">🟡 傳說魚捕獲數量</span></div>
+              <span class="value" id="fs-legendary">—</span>
+              <span class="kpi-sub" id="fs-legendary-sub">—</span>
+            </article>
+            <article class="kpi card">
+              <div class="kpi-head"><span class="kpi-icon tone-green" aria-hidden="true"><svg class="icon"><use href="#i-users"/></svg></span><span class="label">👥 參與釣魚玩家數量</span></div>
+              <span class="value" id="fs-players">—</span>
+              <span class="kpi-sub" id="fs-players-sub">—</span>
+            </article>
+          </section>
+
+          <section class="panel" aria-labelledby="fish-rarity-title">
+            <h2 id="fish-rarity-title">各稀有度的實際成功率</h2>
+            <p class="muted small">以已結束的釣魚計算（不含進行中）。稀有度只影響拉扯難度，基礎成功率與稀有度無關；設定值見下方「釣魚機率設定」。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>稀有度</th><th class="num">設定出現機率</th><th class="num">實際出現次數</th><th class="num">成功</th><th class="num">實際成功率</th></tr></thead>
+                <tbody id="fish-rarity-rows"><tr><td colspan="5" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="fish-players-title">
+            <div class="panel-head">
+              <h2 id="fish-players-title">玩家釣魚紀錄</h2>
+              <input id="fish-player-search" type="search" maxlength="40" placeholder="搜尋玩家名稱、#ID 或 Discord ID" aria-label="搜尋玩家名稱、ID 或 Discord ID">
+            </div>
+            <p class="muted small">點選一列查看該玩家的捕獲、販售、分享紀錄與釣具。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="num">玩家 ID</th><th>玩家（Discord 名稱）</th><th>Discord ID</th><th class="num">釣魚次數</th><th class="num">成功</th><th class="num">失敗</th>
+                  <th class="num">傳說魚</th><th class="num">已販售（金幣）</th><th class="num">魚簍</th><th class="num">分享</th><th>目前裝備</th><th>最近釣魚</th></tr></thead>
+                <tbody id="fish-player-rows"><tr><td colspan="12" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <div class="table-tools">
+              <span class="spacer"></span>
+              <span id="fish-player-info" class="pager-info muted small"></span>
+              <button id="fish-player-prev" type="button" class="pager-btn">‹ 上一頁</button>
+              <button id="fish-player-next" type="button" class="pager-btn">下一頁 ›</button>
+            </div>
+            <div id="fish-player-detail" hidden>
+              <div class="panel-head">
+                <h3 id="fish-player-detail-title">玩家釣魚明細</h3>
+                <button id="fish-player-close" type="button">關閉明細</button>
+              </div>
+              <div id="fish-player-detail-body"></div>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="fish-admin-title">
+            <h2 id="fish-admin-title">魚類管理</h2>
+            <p class="muted small">代碼建立後不可修改。售價可自由設定，不受稀有度限制（最低不可高於最高），實際售價依重量在最低～最高售價之間換算。掙扎難度 1–5 影響魚的體力。停用後不會再被釣到，已釣到的魚仍可販售；修改不影響已釣到的魚與進行中的釣魚。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>代碼</th><th>魚類</th><th>稀有度</th><th class="num">售價</th><th class="num">重量範圍</th><th class="num">掙扎難度</th><th class="num">已捕獲</th><th>狀態</th><th class="admin-only" hidden></th></tr></thead>
+                <tbody id="fish-admin-rows" data-page-size="20" data-filter="篩選魚類"><tr><td colspan="9" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <details id="fish-form-box" class="admin-only form-box" hidden>
+              <summary id="ftf-title">新增魚類</summary>
+              <p class="form-hint">重量以公克輸入。</p>
+              <div class="form-grid">
+                <label class="req">代碼（英文小寫） <input id="ftf-code" type="text" maxlength="32" placeholder="tuna" required pattern="[a-z][a-z0-9_]{1,31}" data-pattern-hint="小寫英文字母開頭，只能包含小寫字母、數字與底線，2–32 字"></label>
+                <label class="req">名稱 <input id="ftf-name" type="text" maxlength="32" required></label>
+                <label class="req">圖示（Emoji） <input id="ftf-emoji" type="text" maxlength="16" value="🐟" required></label>
+                <label class="req">稀有度 <select id="ftf-rarity"><option value="common">⚪ 普通</option><option value="rare">🔵 稀有</option><option value="epic">🟣 史詩</option><option value="legendary">🟡 傳說</option></select></label>
+                <label class="req">最低售價 <input id="ftf-pmin" type="number" min="0" max="1000000000" step="1" value="1" required></label>
+                <label class="req">最高售價 <input id="ftf-pmax" type="number" min="0" max="1000000000" step="1" value="20" required></label>
+                <label class="req">最小重量（公克） <input id="ftf-wmin" type="number" min="10" max="500000" step="1" value="100" required></label>
+                <label class="req">最大重量（公克） <input id="ftf-wmax" type="number" min="10" max="500000" step="1" value="1000" required></label>
+                <label class="req">掙扎難度（1–5） <input id="ftf-diff" type="number" min="1" max="5" step="1" value="3" required></label>
+                <label>排序 <input id="ftf-sort" type="number" min="0" max="100000" step="1" value="0"></label>
+                <label>說明 <input id="ftf-desc" type="text" maxlength="200"></label>
+              </div>
+              <div class="form-actions">
+                <button id="ftf-submit" type="button" class="primary">新增魚類</button>
+                <button id="ftf-reset" type="button">清除表單（改為新增）</button>
+              </div>
+              <p id="ftf-note" class="form-note" role="status" aria-live="polite"></p>
+            </details>
+          </section>
+
+          <section class="panel" aria-labelledby="gear-admin-title">
+            <h2 id="gear-admin-title">釣具管理</h2>
+            <p class="muted small">魚竿：收線力、穩定度（減少魚衝擊造成的張力 %）、拉竿反應時間加成；魚線：最大張力；魚餌：稀有／史詩／傳說出現機率加成（萬分比，從普通扣除）與上鉤速度。效果與價格修改後，下一次拋竿起生效。庫存留空 = 不限量。停用後商店不再販售，玩家已持有的仍可使用。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>代碼</th><th>類型</th><th>名稱</th><th class="num">價格</th><th class="num">需要等級</th><th class="num">庫存</th><th>效果</th><th class="num">持有農場</th><th>狀態</th><th class="admin-only" hidden></th></tr></thead>
+                <tbody id="gear-admin-rows" data-page-size="20" data-filter="篩選釣具"><tr><td colspan="10" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <details id="gear-form-box" class="admin-only form-box" hidden>
+              <summary id="gtf-title">新增釣具</summary>
+              <div class="form-grid">
+                <label class="req">代碼（英文小寫） <input id="gtf-code" type="text" maxlength="32" placeholder="golden_rod" required pattern="[a-z][a-z0-9_]{1,31}" data-pattern-hint="小寫英文字母開頭，只能包含小寫字母、數字與底線，2–32 字"></label>
+                <label class="req">類型 <select id="gtf-kind"><option value="rod">🎋 魚竿</option><option value="line">🪢 魚線</option><option value="bait">🪱 魚餌</option></select></label>
+                <label class="req">名稱 <input id="gtf-name" type="text" maxlength="32" required></label>
+                <label class="req">圖示（Emoji） <input id="gtf-emoji" type="text" maxlength="16" value="🎣" required></label>
+                <label class="req">價格 <input id="gtf-price" type="number" min="1" max="1000000" step="1" value="100" required></label>
+                <label class="req">需要農場等級 <input id="gtf-level" type="number" min="1" max="100" step="1" value="1" required></label>
+                <label>庫存（留空 = 不限量） <input id="gtf-stock" type="number" min="0" max="1000000" step="1"></label>
+                <label>排序 <input id="gtf-sort" type="number" min="0" max="100000" step="1" value="0"></label>
+                <label>說明 <input id="gtf-desc" type="text" maxlength="200"></label>
+              </div>
+              <div id="gtf-effects" class="form-grid"></div>
+              <div class="form-actions">
+                <button id="gtf-submit" type="button" class="primary">新增釣具</button>
+                <button id="gtf-reset" type="button">清除表單（改為新增）</button>
+              </div>
+              <p id="gtf-note" class="form-note" role="status" aria-live="polite"></p>
+            </details>
+          </section>
+
+          <section class="panel" aria-labelledby="fish-settings-title">
+            <h2 id="fish-settings-title">釣魚機率設定</h2>
+            <p class="muted small">稀有度出現機率與基礎釣魚成功率是兩個獨立設定：稀有度只決定出現哪種魚與拉扯難度；基礎成功率對所有稀有度相同。各稀有度出現機率合計必須是 100%。修改後只影響之後開始的釣魚，進行中的釣魚仍使用開始時的設定。</p>
+            <p class="muted small" id="fset-version">目前版本：—</p>
+            <details id="fish-settings-box" class="form-box" open>
+              <summary>調整設定</summary>
+              <h3>稀有度出現機率（%）</h3>
+              <div class="form-grid" id="fset-rarity"></div>
+              <p id="fset-sum" class="form-note" role="status" aria-live="polite"></p>
+              <h3>基本設定</h3>
+              <div class="form-grid" id="fset-basic"></div>
+              <h3>各稀有度的拉扯難度與掙扎機率</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead id="fset-diff-head"></thead>
+                  <tbody id="fset-diff-rows"></tbody>
+                </table>
+              </div>
+              <div class="form-actions admin-only" hidden>
+                <button id="fset-submit" type="button" class="primary">儲存設定（新增版本）</button>
+                <button id="fset-reset" type="button">還原為目前設定</button>
+                <button id="fset-defaults" type="button">填入預設值</button>
+              </div>
+              <p id="fset-note" class="form-note" role="status" aria-live="polite"></p>
+            </details>
+          </section>
+        </div>
+
         <div class="tab-panel" data-tab-panel="ranch" hidden>
           <section class="panel" aria-labelledby="ranch-title">
             <h2 id="ranch-title">農場養殖概況</h2>

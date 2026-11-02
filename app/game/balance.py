@@ -64,8 +64,18 @@ WITHER_SECONDS = 16 * 3600
 
 # ---------- 偷菜 ----------
 STEAL_MAX_PER_ACTION = 2
+# 個別作物每次最多偷幾個（沒列出的用 STEAL_MAX_PER_ACTION）
+STEAL_MAX_PER_CROP = {"wheat": 1}
+
+
+def steal_max(crop_code: str) -> int:
+    return STEAL_MAX_PER_CROP.get(crop_code, STEAL_MAX_PER_ACTION)
+
+
 # 每位偷菜者每天（台灣時間）對同一位玩家只能成功偷 1 格土地；被防守設施阻止的不算
 STEAL_PLOTS_PER_VICTIM_PER_DAY = 1
+# 每位玩家每天（台灣時間）最多被幾位不同的人成功偷到；被防守設施阻止的不算
+STEAL_THIEVES_PER_VICTIM_PER_DAY = 3
 GROUP_NAME_MAX_LEN = 40
 # 農場轉移所屬群組的冷卻時間（首次建立農場後的第一次轉移不需等待）
 GROUP_TRANSFER_COOLDOWN_SECONDS = 7 * 24 * 3600
@@ -81,6 +91,8 @@ ITEM_EARTHWORM = "earthworm"
 TOOL_AUTO_WATERER = "auto_waterer"
 TOOL_AUTO_PLANTER = "auto_planter"
 TOOL_AUTO_SELLER = "auto_seller"
+TOOL_THIEF_GLOVE = "thief_glove"
+LUXURY_TOOLS = (TOOL_AUTO_PLANTER, TOOL_AUTO_SELLER, TOOL_THIEF_GLOVE)
 EFFECT_EARTHWORM = "earthworm"
 
 # code: (名稱, 價格, 種類, 說明, 別名)
@@ -98,17 +110,25 @@ ITEMS = {
     TOOL_AUTO_WATERER: ("自動澆水器", 3500, "tool", "永久工具：啟用時種植後自動澆水", ("澆水器", "自動澆水器")),
     TOOL_AUTO_PLANTER: (
         "自動播種機",
-        60_000,
+        30_000,
         "tool",
         "奢侈品：啟用時，收成、清除乾枯、擴建或購買種子後，自動從背包隨機挑選種子把空著的農田種滿",
         ("播種機", "自動播種機"),
     ),
     TOOL_AUTO_SELLER: (
         "自動販售機",
-        300_000,
+        150_000,
         "tool",
         "奢侈品：啟用時，收成的農作物依當下價目表自動賣出（不佔倉庫）",
         ("販售機", "自動販售機"),
+    ),
+    TOOL_THIEF_GLOVE: (
+        "傳說扒手手套",
+        500_000,
+        "tool",
+        "奢侈品：啟用時偷菜不受每日限制，可以偷同群組所有人的所有成熟農田，不限人數與次數"
+        "（每株作物仍只能偷一次、每次最多 2 個，小麥 1 個；防守設施照常判定）",
+        ("手套", "扒手手套", "傳說扒手手套"),
     ),
     "patrol_ticket": (
         "巡查券",
@@ -186,8 +206,8 @@ CRAFT_MAX_QUANTITY = 10  # 單張訂單最多份數；每座設施同時只能�
 # code: (名稱, 單位售價, 別名)
 GOODS = {
     "flour": ("麵粉", 45, ("麵粉",)),
-    "bread": ("麵包", 130, ("麵包",)),
-    "strawberry_jam": ("草莓果醬", 140, ("草莓果醬", "果醬", "jam")),
+    "bread": ("麵包", 200, ("麵包",)),
+    "strawberry_jam": ("草莓果醬", 300, ("草莓果醬", "果醬", "jam")),
 }
 
 # ---------- 群組共同任務 ----------

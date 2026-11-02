@@ -91,6 +91,7 @@ if (typeof document !== "undefined") {
     craft_start: "開始加工", craft_collect: "領取加工品", quest_reward: "任務獎勵", competition_reward: "競賽獎勵", admin_adjust: "管理員調整", ranking_reward: "排名獎勵",
     transfer_group: "轉移所屬群組", gamble: "賭場",
     explore: "山洞探索", build_machine: "製作機器", exchange: "假幣兌換", make_seed: "製造種子",
+    fishing_buy: "購買釣具", fish_sell: "販售魚類", release_animal: "放生動物",
   };
 
   const state = {
@@ -230,6 +231,7 @@ if (typeof document !== "undefined") {
     genetics: ["品質與突變", "作物品質機率、突變效果與實際統計"],
     animals: ["動物種類", "動物價格、生產週期、飼料與產品設定"],
     ranch: ["養殖與加工", "玩家飼養的動物、生產狀態與加工訂單"],
+    fishing: ["釣魚管理", "釣魚數據、玩家釣魚紀錄、魚類與釣具管理、釣魚機率設定"],
     events: ["限時活動", "加成活動的效果、排程與啟用狀態"],
     community: ["任務與競賽", "群組任務進度、群組競賽排名與結算"],
     leaderboard: ["排行榜", "總排行榜、群組內排行與群組總排行（名次以後端排序為準）"],
@@ -1148,6 +1150,9 @@ if (typeof document !== "undefined") {
     delete_animal: "刪除玩家動物", set_farm_values: "調整金幣與等級",
     create_ranking_rule: "新增排名獎勵", update_ranking_rule: "修改排名獎勵", enable_ranking_rule: "啟用排名獎勵",
     disable_ranking_rule: "停用排名獎勵", delete_ranking_rule: "刪除排名獎勵", settle_ranking: "結算排名獎勵",
+    create_fish_type: "新增魚類", update_fish_type: "修改魚類", enable_fish_type: "啟用魚類", disable_fish_type: "停用魚類",
+    create_fishing_gear: "新增釣具", update_fishing_gear: "修改釣具", enable_fishing_gear: "啟用釣具",
+    disable_fishing_gear: "停用釣具", update_fishing_settings: "調整釣魚設定",
   };
 
   // datetime-local 預設值：現在與 7 天後（本機時間）
@@ -2631,6 +2636,499 @@ if (typeof document !== "undefined") {
     resetRuleForm();
   }
 
+  // ---------- 釣魚管理：數據總覽、玩家紀錄（伺服器端搜尋與分頁）、魚類／釣具管理、機率設定 ----------
+  // 表格每次自動更新都會重建；表單（魚類、釣具、機率設定）不會被自動更新覆蓋。
+  const fish = {
+    catalog: null, q: "", offset: 0, limit: 20, total: 0, playerId: null, editFish: null, editGear: null,
+    settingsFilled: false,
+  };
+  const RARITY_KEYS = ["common", "rare", "epic", "legendary"];
+  const fishWeight = (g) => (g >= 1000 ? `${(g / 1000).toFixed(2)} kg` : `${g} g`);
+  const fishRarity = (c, r) => `${c.labels.rarity_emoji[r] || ""} ${c.labels.rarities[r] || r}`;
+
+  async function loadFishing() {
+    await Promise.all([loadFishSummary(), loadFishPlayers(), loadFishCatalog(), loadFishPlayerDetail()]);
+  }
+
+  async function loadFishSummary() {
+    try {
+      const s = await fetchJson("/api/monitor/fishing/summary");
+      const set = (id, v, sub) => { setNumber($(id), v); $(`${id}-sub`).textContent = sub; };
+      set("fs-sessions", s.sessions, `進行中 ${fmtNum(s.active)}・設定版本 v${s.settings_version}`);
+      set("fs-landed", s.landed, s.success_rate === null ? "尚無結束的釣魚" : `整體成功率 ${s.success_rate}%（基礎 ${s.base_success_pct}%）`);
+      set("fs-failed", s.failed, Object.entries(s.by_status).filter(([k]) => !["landed", "casting", "fighting"].includes(k))
+        .map(([k, n]) => `${(fish.catalog && fish.catalog.labels.statuses[k]) || k} ${n}`).join("・") || "沒有失敗紀錄");
+      set("fs-gold", s.sell_gold, `售出 ${fmtNum(s.fish_sold)} 隻・購買釣具花費 ${fmtNum(s.gear_spent)}`);
+      set("fs-legendary", s.legendary_caught, `魚簍中 ${fmtNum(s.in_baskets)} 隻・分享 ${fmtNum(s.shares)} 次`);
+      set("fs-players", s.players, "有釣魚紀錄的農場數");
+      const rows = RARITY_KEYS.map((r) => {
+        const st = s.by_rarity[r] || { sessions: 0, landed: 0 };
+        const rate = st.sessions ? `${((st.landed * 100) / st.sessions).toFixed(1)}%` : "—";
+        const label = fish.catalog ? fishRarity(fish.catalog, r) : r;
+        return el("tr", {}, [td(label), td(`${(s.rarity_bp[r] / 100).toFixed(2)}%`, "num"), td(fmtNum(st.sessions), "num"),
+          td(fmtNum(st.landed), "num"), td(rate, "num")]);
+      });
+      replaceRows($("fish-rarity-rows"), rows, "尚無釣魚紀錄", 5);
+    } catch (err) {
+      replaceRows($("fish-rarity-rows"), [], `釣魚統計載入失敗：${err.message}`, 5);
+    }
+  }
+
+  async function loadFishPlayers() {
+    const params = new URLSearchParams({ limit: String(fish.limit), offset: String(fish.offset) });
+    if (fish.q) params.set("q", fish.q);
+    try {
+      const data = await fetchJson(`/api/monitor/fishing/players?${params}`);
+      fish.total = data.total;
+      const rows = data.items.map((p) => {
+        const eq = p.equipped || {};
+        const tr = el("tr", { className: fish.playerId === p.player_id ? "clickable selected" : "clickable" }, [
+          td(`#${p.player_id}`, "num"), td(p.player_name), td(p.discord_user_id || "—"), td(fmtNum(p.sessions), "num"),
+          td(fmtNum(p.landed), "num"), td(fmtNum(p.failed), "num"), td(fmtNum(p.legendary), "num"),
+          td(`${fmtNum(p.sold)}（${fmtNum(p.sold_gold)}）`, "num"), td(fmtNum(p.basket), "num"), td(fmtNum(p.shares), "num"),
+          td([eq.rod, eq.line, eq.bait].filter(Boolean).join("／") || "未裝備", "wrap"), td(fmtTime(p.last_at)),
+        ]);
+        tr.addEventListener("click", () => { fish.playerId = p.player_id; loadFishPlayerDetail(); loadFishPlayers(); });
+        return tr;
+      });
+      replaceRows($("fish-player-rows"), rows, fish.q ? "沒有符合搜尋的玩家" : "還沒有玩家釣魚", 12);
+      const pages = Math.max(1, Math.ceil(data.total / fish.limit));
+      const page = Math.floor(fish.offset / fish.limit) + 1;
+      $("fish-player-info").textContent = data.total ? `第 ${page} / ${pages} 頁・共 ${fmtNum(data.total)} 位玩家` : "";
+      $("fish-player-prev").disabled = fish.offset <= 0;
+      $("fish-player-next").disabled = fish.offset + fish.limit >= data.total;
+    } catch (err) {
+      replaceRows($("fish-player-rows"), [], `玩家釣魚紀錄載入失敗：${err.message}`, 12);
+    }
+  }
+
+  async function loadFishPlayerDetail() {
+    const box = $("fish-player-detail");
+    if (!fish.playerId) { box.hidden = true; return; }
+    try {
+      const d = await fetchJson(`/api/monitor/fishing/players/${encodeURIComponent(fish.playerId)}`);
+      renderFishPlayerDetail(d);
+      box.hidden = false;
+    } catch (err) {
+      $("fish-player-detail-body").replaceChildren(el("p", { className: "muted", text: `玩家明細載入失敗：${err.message}` }));
+      box.hidden = false;
+    }
+  }
+
+  function renderFishPlayerDetail(d) {
+    const c = fish.catalog;
+    const rarity = (r) => (c ? fishRarity(c, r) : r);
+    const status = (s) => (c ? c.labels.statuses[s] || s : s);
+    const name = d.summary ? d.summary.player_name : `#${d.player_id}`;
+    $("fish-player-detail-title").textContent = `玩家釣魚明細：${name}（#${d.player_id}）`;
+    const table = (heads, rows, emptyText) => el("div", { className: "table-wrap" }, [el("table", {}, [
+      el("thead", {}, [el("tr", {}, heads.map((h) => el("th", { text: h })))]),
+      el("tbody", {}, rows.length ? rows : [emptyRow(emptyText, heads.length)]),
+    ])]);
+    const catches = d.catches.map((f) => el("tr", {}, [
+      td(`#${f.id}`, "num"), td(`${f.emoji} ${f.name}`), td(rarity(f.rarity)), td(fishWeight(f.weight_g), "num"),
+      td(fmtNum(f.price), "num"), td(fmtTime(f.caught_at)),
+      td(f.sold_at ? `已售 ${fmtNum(f.sold_price)}（${fmtTime(f.sold_at)}）` : "在魚簍"),
+    ]));
+    const sessions = d.sessions.map((s) => el("tr", {}, [
+      td(`#${s.id}`, "num"), td(fmtTime(s.started_at)), statusTd(status(s.status), s.status === "landed" ? "good"
+        : ["casting", "fighting"].includes(s.status) ? "info" : "bad"),
+      td(rarity(s.rarity)), td(s.turns, "num"), td([s.rod, s.line, s.bait].filter(Boolean).join("／"), "wrap"),
+      td(`v${s.settings_version}`),
+    ]));
+    const txs = d.transactions.map((t) => el("tr", {}, [
+      td(fmtTime(t.created_at)), td(EVENT_LABELS[t.event_type] || t.event_type), goldCell(t.gold_delta), td(t.description, "wrap"),
+    ]));
+    const shares = d.shares.map((s) => el("tr", {}, [
+      td(fmtTime(s.shared_at)), td(s.fish_name), td(rarity(s.rarity)), td(fishWeight(s.weight_g), "num"),
+      td(s.group_name || (s.group_id ? `#${s.group_id}` : "—")),
+    ]));
+    const gear = d.gear.map((g) => el("tr", {}, [
+      td(c ? c.labels.kinds[g.kind] : g.kind), td(g.name), td(g.kind === "bait" ? fmtNum(g.quantity) : "—", "num"),
+      el("td", {}, [g.equipped ? badge("裝備中", "good") : badge("未裝備", "muted")]),
+    ]));
+    $("fish-player-detail-body").replaceChildren(
+      el("h3", { text: "目前釣具" }), table(["類型", "名稱", "數量", "狀態"], gear, "沒有釣具"),
+      el("h3", { text: "魚類捕獲紀錄（最近 30 筆）" }),
+      table(["編號", "魚類", "稀有度", "重量", "價值", "捕獲時間", "狀態"], catches, "沒有捕獲紀錄"),
+      el("h3", { text: "釣魚紀錄（最近 30 次）" }),
+      table(["編號", "開始時間", "結果", "稀有度", "操作次數", "裝備", "設定"], sessions, "沒有釣魚紀錄"),
+      el("h3", { text: "魚類販售與釣具購買" }), table(["時間", "類型", "金幣", "說明"], txs, "沒有交易"),
+      el("h3", { text: "分享紀錄" }), table(["時間", "魚類", "稀有度", "重量", "群組"], shares, "沒有分享紀錄"),
+    );
+  }
+
+  async function loadFishCatalog() {
+    try {
+      const c = await fetchJson("/api/monitor/fishing/catalog");
+      fish.catalog = c;
+      renderFishAdmin(c);
+      renderGearAdmin(c);
+      $("fset-version").textContent = `目前版本：v${c.settings_version}` + (c.history.length
+        ? `（${c.history[0].created_by}・${fmtTime(c.history[0].created_at)}）` : "（尚未調整，使用預設值）");
+      if (!fish.settingsFilled && !$("fish-settings-box").classList.contains("dirty")) {
+        fillFishSettings(c.settings);
+        fish.settingsFilled = true;
+      }
+      setFishSettingsEnabled(extra.admin.loggedIn);
+      if (!fish.editGear && !$("gtf-effects").children.length) renderGearEffects($("gtf-kind").value, null);
+    } catch (err) {
+      for (const id of ["fish-admin-rows", "gear-admin-rows"]) replaceRows($(id), [], `釣魚目錄載入失敗：${err.message}`, 10);
+    }
+  }
+
+  async function fishAction(noteId, method, url, body, okText) {
+    try {
+      const res = await adminRequest(method, url, body);
+      setNote(noteId, okText, "good");
+      toast(okText, "good");
+      await loadFishCatalog();
+      return res;
+    } catch (err) {
+      setNote(noteId, `失敗：${err.message}`, "bad");
+      toast(err.message, "bad");
+      return null;
+    }
+  }
+
+  // ----- 魚類 -----
+  function renderFishAdmin(c) {
+    const admin = extra.admin.loggedIn;
+    const rows = c.fish.map((f) => {
+      const cells = [
+        td(f.code), td(`${f.emoji} ${f.name}`), td(fishRarity(c, f.rarity)), td(`${f.min_price}–${f.max_price}`, "num"),
+        td(`${fishWeight(f.min_weight_g)}–${fishWeight(f.max_weight_g)}`, "num"), td(f.difficulty, "num"),
+        td(fmtNum(f.caught), "num"), el("td", {}, [f.active ? badge("啟用", "good") : badge("已停用", "muted")]),
+      ];
+      if (admin) {
+        cells.push(actionsTd([
+          smallButton("編輯", () => fillFishForm(f)),
+          smallButton(f.active ? "停用" : "啟用", async () => {
+            if (!await confirmToggle("魚類", f.name, f.active, "這種魚不會再被釣到；已釣到的魚仍可販售。")) return;
+            fishAction("ftf-note", "PUT", `/api/admin/fish-types/${encodeURIComponent(f.code)}/active`, { active: !f.active },
+              `${f.name}已${f.active ? "停用" : "啟用"}。`);
+          }),
+        ]));
+      }
+      return el("tr", {}, cells);
+    });
+    replaceRows($("fish-admin-rows"), rows, "目前沒有魚類", 9);
+  }
+
+  const FISH_FIELDS = [
+    ["ftf-name", "name"], ["ftf-emoji", "emoji"], ["ftf-rarity", "rarity"], ["ftf-pmin", "min_price"],
+    ["ftf-pmax", "max_price"], ["ftf-wmin", "min_weight_g"], ["ftf-wmax", "max_weight_g"], ["ftf-diff", "difficulty"],
+    ["ftf-desc", "description"], ["ftf-sort", "sort_order"],
+  ];
+  const FISH_TEXT = new Set(["name", "emoji", "rarity", "description"]);
+  const FISH_LABELS = {
+    name: "名稱", emoji: "圖示", rarity: "稀有度", min_price: "最低售價", max_price: "最高售價", min_weight_g: "最小重量（g）",
+    max_weight_g: "最大重量（g）", difficulty: "掙扎難度", description: "說明", sort_order: "排序",
+  };
+
+  function resetFishForm() {
+    fish.editFish = null;
+    $("ftf-title").textContent = "新增魚類";
+    $("ftf-submit").textContent = "新增魚類";
+    for (const id of ["ftf-code", "ftf-name", "ftf-desc"]) $(id).value = "";
+    $("ftf-code").disabled = false;
+  }
+
+  function fillFishForm(f) {
+    fish.editFish = f.code;
+    $("fish-form-box").open = true;
+    $("ftf-title").textContent = `編輯魚類 ${f.name}（${f.code}）`;
+    $("ftf-submit").textContent = "儲存變更";
+    $("ftf-code").value = f.code;
+    $("ftf-code").disabled = true;
+    for (const [id, key] of FISH_FIELDS) $(id).value = String(f[key]);
+    $("ftf-note").textContent = "";
+    $("fish-form-box").scrollIntoView({ block: "nearest" });
+  }
+
+  async function submitFish() {
+    if (!validateForm($("fish-form-box"))) return;
+    const body = {};
+    for (const [id, key] of FISH_FIELDS) body[key] = FISH_TEXT.has(key) ? $(id).value.trim() : Number($(id).value);
+    if (body.min_price > body.max_price) {
+      setNote("ftf-note", "失敗：最低售價不可高於最高售價。", "bad");
+      return;
+    }
+    const code = fish.editFish;
+    let res;
+    if (code === null) {
+      body.code = $("ftf-code").value.trim();
+      res = await fishAction("ftf-note", "POST", "/api/admin/fish-types", body, `已新增魚類 ${body.name}。`);
+    } else {
+      const before = fish.catalog.fish.find((x) => x.code === code);
+      const diff = before ? changedFields(FISH_FIELDS, FISH_LABELS, before, body) : [];
+      if (before && !diff.length) { setNote("ftf-note", "沒有任何變更。", "bad"); return; }
+      const answer = await confirmDialog({
+        title: `儲存魚類「${before ? before.name : code}」的變更`,
+        message: "下一次拋竿起生效；已釣到的魚保留捕獲當下的稀有度與價值。",
+        diff: diff.length ? diff : null, confirmText: "儲存變更",
+      });
+      if (!answer.ok) return;
+      res = await fishAction("ftf-note", "PUT", `/api/admin/fish-types/${encodeURIComponent(code)}`, body, `${body.name}已更新。`);
+    }
+    if (res) {
+      const note = $("ftf-note").textContent;
+      resetFishForm();
+      clearDirty("fish-form-box");
+      setNote("ftf-note", note, "good");
+    }
+  }
+
+  // ----- 釣具 -----
+  function renderGearAdmin(c) {
+    const admin = extra.admin.loggedIn;
+    const rows = c.gear.map((g) => {
+      const cells = [
+        td(g.code), td(c.labels.kinds[g.kind]), td(`${g.emoji} ${g.name}`), td(fmtNum(g.price), "num"), td(g.required_level, "num"),
+        td(g.stock === null ? "不限量" : fmtNum(g.stock), "num"), td(g.effects_text, "wrap"), td(fmtNum(g.owners), "num"),
+        el("td", {}, [g.active ? badge("販售中", "good") : badge("已停用", "muted")]),
+      ];
+      if (admin) {
+        cells.push(actionsTd([
+          smallButton("編輯", () => fillGearForm(g)),
+          smallButton(g.active ? "停用" : "啟用", async () => {
+            if (!await confirmToggle("釣具", g.name, g.active, "商店不再販售；玩家已持有的仍可裝備使用。")) return;
+            fishAction("gtf-note", "PUT", `/api/admin/fishing-gear/${encodeURIComponent(g.code)}/active`, { active: !g.active },
+              `${g.name}已${g.active ? "停用" : "啟用"}。`);
+          }),
+        ]));
+      }
+      return el("tr", {}, cells);
+    });
+    replaceRows($("gear-admin-rows"), rows, "目前沒有釣具", 10);
+  }
+
+  function renderGearEffects(kind, effects) {
+    const c = fish.catalog;
+    if (!c) return;
+    const limits = c.ranges.effects[kind];
+    $("gtf-effects").replaceChildren(...Object.entries(limits).map(([key, [min, max]]) => {
+      const input = el("input");
+      input.type = "number";
+      input.id = `gtf-eff-${key}`;
+      input.min = String(min);
+      input.max = String(max);
+      input.step = "1";
+      input.required = true;
+      input.dataset.effect = key;
+      input.value = String(effects && effects[key] !== undefined ? effects[key] : min);
+      const label = el("label", { className: "req" }, []);
+      label.append(`${c.labels.effects[key] || key}（${min}–${max}） `, input);
+      return label;
+    }));
+  }
+
+  const GEAR_FIELDS = [
+    ["gtf-name", "name"], ["gtf-emoji", "emoji"], ["gtf-price", "price"], ["gtf-level", "required_level"],
+    ["gtf-stock", "stock"], ["gtf-sort", "sort_order"], ["gtf-desc", "description"],
+  ];
+  const GEAR_TEXT = new Set(["name", "emoji", "description"]);
+  const GEAR_LABELS = {
+    name: "名稱", emoji: "圖示", price: "價格", required_level: "需要等級", stock: "庫存", sort_order: "排序", description: "說明",
+    effects: "效果",
+  };
+
+  function resetGearForm() {
+    fish.editGear = null;
+    $("gtf-title").textContent = "新增釣具";
+    $("gtf-submit").textContent = "新增釣具";
+    for (const id of ["gtf-code", "gtf-name", "gtf-desc", "gtf-stock"]) $(id).value = "";
+    $("gtf-code").disabled = $("gtf-kind").disabled = false;
+    renderGearEffects($("gtf-kind").value, null);
+  }
+
+  function fillGearForm(g) {
+    fish.editGear = g.code;
+    $("gear-form-box").open = true;
+    $("gtf-title").textContent = `編輯釣具 ${g.name}（${g.code}）`;
+    $("gtf-submit").textContent = "儲存變更";
+    $("gtf-code").value = g.code;
+    $("gtf-kind").value = g.kind;
+    $("gtf-code").disabled = $("gtf-kind").disabled = true;
+    for (const [id, key] of GEAR_FIELDS) $(id).value = g[key] === null ? "" : String(g[key]);
+    renderGearEffects(g.kind, g.effects);
+    $("gtf-note").textContent = "";
+    $("gear-form-box").scrollIntoView({ block: "nearest" });
+  }
+
+  async function submitGear() {
+    if (!validateForm($("gear-form-box"))) return;
+    const body = { effects: {} };
+    for (const [id, key] of GEAR_FIELDS) {
+      const v = $(id).value.trim();
+      body[key] = GEAR_TEXT.has(key) ? v : key === "stock" && v === "" ? null : Number(v);
+    }
+    $("gtf-effects").querySelectorAll("input[data-effect]").forEach((i) => { body.effects[i.dataset.effect] = Number(i.value); });
+    const code = fish.editGear;
+    let res;
+    if (code === null) {
+      Object.assign(body, { code: $("gtf-code").value.trim(), kind: $("gtf-kind").value });
+      res = await fishAction("gtf-note", "POST", "/api/admin/fishing-gear", body, `已新增釣具 ${body.name}。`);
+    } else {
+      const before = fish.catalog.gear.find((x) => x.code === code);
+      const diff = before ? changedFields(GEAR_FIELDS, GEAR_LABELS, before, body) : [];
+      if (before) {
+        for (const [k, v] of Object.entries(body.effects)) {
+          if (before.effects[k] !== v) diff.push([fish.catalog.labels.effects[k] || k, String(before.effects[k]), String(v)]);
+        }
+      }
+      if (before && !diff.length) { setNote("gtf-note", "沒有任何變更。", "bad"); return; }
+      const answer = await confirmDialog({
+        title: `儲存釣具「${before ? before.name : code}」的變更`,
+        message: "價格與庫存立即生效；效果從下一次拋竿起生效（進行中的釣魚不受影響）。",
+        diff: diff.length ? diff : null, confirmText: "儲存變更",
+      });
+      if (!answer.ok) return;
+      res = await fishAction("gtf-note", "PUT", `/api/admin/fishing-gear/${encodeURIComponent(code)}`, body, `${body.name}已更新。`);
+    }
+    if (res) {
+      const note = $("gtf-note").textContent;
+      resetGearForm();
+      clearDirty("gear-form-box");
+      setNote("gtf-note", note, "good");
+    }
+  }
+
+  // ----- 機率設定 -----
+  function settingInput(id, value, min, max, step = "1") {
+    const input = el("input");
+    input.type = "number";
+    input.id = id;
+    input.min = String(min);
+    input.max = String(max);
+    input.step = step;
+    input.required = true;
+    input.value = String(value);
+    return input;
+  }
+
+  function fillFishSettings(s) {
+    const c = fish.catalog;
+    $("fset-rarity").replaceChildren(...RARITY_KEYS.map((r) => {
+      const input = settingInput(`fset-bp-${r}`, (s.rarity_bp[r] / 100).toFixed(2), 0, 100, "0.01");
+      input.addEventListener("input", updateFishSum);
+      const label = el("label", { className: "req" }, []);
+      label.append(`${fishRarity(c, r)} `, input);
+      return label;
+    }));
+    $("fset-basic").replaceChildren(...Object.entries(c.ranges.settings).map(([key, [min, max]]) => {
+      const label = el("label", { className: "req" }, []);
+      label.append(`${c.labels.settings[key]}（${min}–${max}） `, settingInput(`fset-${key}`, s[key], min, max));
+      return label;
+    }));
+    const keys = Object.keys(c.ranges.difficulty);
+    $("fset-diff-head").replaceChildren(el("tr", {}, [el("th", { text: "稀有度" }),
+      ...keys.map((k) => el("th", { text: `${c.labels.difficulty[k]}（${c.ranges.difficulty[k].join("–")}）` }))]));
+    $("fset-diff-rows").replaceChildren(...RARITY_KEYS.map((r) => el("tr", {}, [td(fishRarity(c, r)),
+      ...keys.map((k) => {
+        const [min, max] = c.ranges.difficulty[k];
+        const input = settingInput(`fset-d-${r}-${k}`, s.difficulty[r][k], min, max);
+        input.className = "qty";
+        input.setAttribute("aria-label", `${c.labels.rarities[r]}${c.labels.difficulty[k]}`);
+        return el("td", {}, [input]);
+      })])));
+    updateFishSum();
+    setFishSettingsEnabled(extra.admin.loggedIn);
+  }
+
+  function setFishSettingsEnabled(on) {
+    $("fish-settings-box").querySelectorAll("input").forEach((i) => { i.disabled = !on; });
+  }
+
+  function updateFishSum() {
+    const sum = RARITY_KEYS.reduce((acc, r) => acc + Math.round(Number($(`fset-bp-${r}`).value) * 100), 0);
+    setNote("fset-sum", sum === 10000 ? "✓ 合計 100%" : `✕ 合計 ${(sum / 100).toFixed(2)}%，必須剛好是 100%`, sum === 10000 ? "good" : "bad");
+    return sum;
+  }
+
+  function readFishSettings() {
+    const c = fish.catalog;
+    const body = { rarity_bp: {}, difficulty: {} };
+    for (const r of RARITY_KEYS) body.rarity_bp[r] = Math.round(Number($(`fset-bp-${r}`).value) * 100);
+    for (const key of Object.keys(c.ranges.settings)) body[key] = Number($(`fset-${key}`).value);
+    for (const r of RARITY_KEYS) {
+      body.difficulty[r] = {};
+      for (const k of Object.keys(c.ranges.difficulty)) body.difficulty[r][k] = Number($(`fset-d-${r}-${k}`).value);
+    }
+    return body;
+  }
+
+  async function submitFishSettings() {
+    if (!validateForm($("fish-settings-box"))) return;
+    if (updateFishSum() !== 10000) { setNote("fset-note", "失敗：稀有度出現機率合計必須是 100%。", "bad"); return; }
+    const c = fish.catalog;
+    const body = readFishSettings();
+    const before = c.settings;
+    const diff = [];
+    for (const r of RARITY_KEYS) {
+      if (before.rarity_bp[r] !== body.rarity_bp[r]) {
+        diff.push([`${c.labels.rarities[r]}出現機率`, `${before.rarity_bp[r] / 100}%`, `${body.rarity_bp[r] / 100}%`]);
+      }
+    }
+    for (const key of Object.keys(c.ranges.settings)) {
+      if (before[key] !== body[key]) diff.push([c.labels.settings[key], String(before[key]), String(body[key])]);
+    }
+    for (const r of RARITY_KEYS) {
+      for (const k of Object.keys(c.ranges.difficulty)) {
+        if (before.difficulty[r][k] !== body.difficulty[r][k]) {
+          diff.push([`${c.labels.rarities[r]}${c.labels.difficulty[k]}`, String(before.difficulty[r][k]), String(body.difficulty[r][k])]);
+        }
+      }
+    }
+    if (!diff.length) { setNote("fset-note", "沒有任何變更。", "bad"); return; }
+    const answer = await confirmDialog({
+      title: "儲存釣魚設定（新增版本）",
+      message: "只影響之後開始的釣魚；進行中的釣魚仍使用開始時的設定。稀有度機率與基礎成功率互相獨立。",
+      diff, confirmText: "儲存設定",
+    });
+    if (!answer.ok) return;
+    try {
+      const res = await adminRequest("PUT", "/api/admin/fishing-settings", body);
+      setNote("fset-note", `已儲存為版本 v${res.version}。`, "good");
+      toast(`釣魚設定已更新為 v${res.version}。`, "good");
+      clearDirty("fish-settings-box");
+      fish.settingsFilled = false;
+      await loadFishCatalog();
+      loadFishSummary();
+    } catch (err) {
+      setNote("fset-note", `失敗：${err.message}`, "bad");
+      toast(err.message, "bad");
+    }
+  }
+
+  function initFishing() {
+    let debounce = null;
+    $("fish-player-search").addEventListener("input", (e) => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => { fish.q = e.target.value.trim().slice(0, 40); fish.offset = 0; loadFishPlayers(); }, 300);
+    });
+    $("fish-player-prev").addEventListener("click", () => { fish.offset = Math.max(0, fish.offset - fish.limit); loadFishPlayers(); });
+    $("fish-player-next").addEventListener("click", () => { fish.offset += fish.limit; loadFishPlayers(); });
+    $("fish-player-close").addEventListener("click", () => { fish.playerId = null; loadFishPlayerDetail(); loadFishPlayers(); });
+    $("ftf-submit").addEventListener("click", submitFish);
+    $("ftf-reset").addEventListener("click", () => { resetFishForm(); clearDirty("fish-form-box"); setNote("ftf-note", ""); });
+    $("gtf-submit").addEventListener("click", submitGear);
+    $("gtf-reset").addEventListener("click", () => { resetGearForm(); clearDirty("gear-form-box"); setNote("gtf-note", ""); });
+    $("gtf-kind").addEventListener("change", (e) => renderGearEffects(e.target.value, null));
+    $("fset-submit").addEventListener("click", submitFishSettings);
+    $("fset-reset").addEventListener("click", () => {
+      if (!fish.catalog) return;
+      fillFishSettings(fish.catalog.settings);
+      clearDirty("fish-settings-box");
+      setNote("fset-note", "已還原為目前設定。");
+    });
+    $("fset-defaults").addEventListener("click", () => {
+      if (!fish.catalog) return;
+      fillFishSettings(fish.catalog.defaults);
+      setNote("fset-note", "已填入預設值，按「儲存設定」才會生效。");
+    });
+  }
+
   // ---------- 自動更新：只更新目前分頁；使用者操作中暫停，避免下拉選單、輸入與按鈕被重建 ----------
   const EDIT_PAUSE_MS = 20000;
   let lastInteraction = 0;
@@ -2640,6 +3138,7 @@ if (typeof document !== "undefined") {
     leaderboard: [loadLeaderboard],
     steals: [loadSteals, loadDefenses],
     ranch: [loadRanch],
+    fishing: [loadFishing],
     community: [loadCommunity, loadCatalog],  // 目錄提供任務表單的動物產品選項
     genetics: [loadGenetics],
     backpack: [loadBackpack],
@@ -2688,6 +3187,7 @@ if (typeof document !== "undefined") {
     initGenetics();
     initManage();
     initRankingRewards();
+    initFishing();
     loadAuth();
     $("admin-login-btn").addEventListener("click", adminLogin);
     $("admin-pass").addEventListener("keydown", (e) => { if (e.key === "Enter") adminLogin(); });

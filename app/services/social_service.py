@@ -35,11 +35,12 @@ from app.repositories import defenses as defenses_repo
 from app.repositories import farms as farms_repo
 from app.repositories import groups as groups_repo
 from app.repositories import inventory as inventory_repo
+from app.repositories import items as items_repo
 from app.repositories import leaderboard as leaderboard_repo
 from app.repositories import players as players_repo
 from app.repositories import steals as steals_repo
 from app.services.dto import ActionResult, ExternalContext, FarmStatus, GroupInfo, StealFarmView, StealTarget
-from app.services.exploration_service import ExplorationService
+from app.services.fishing_service import FishingService
 from app.services.game_service import genetics_label
 
 GUILD_ID_RE = re.compile(r"^[0-9]{1,20}$")
@@ -56,7 +57,7 @@ def external_name(raw: str | None, max_len: int, fallback: str) -> str:
     return name or fallback
 
 
-class SocialService(ExplorationService):
+class SocialService(FishingService):
     # ---------- 外部平台（Discord）對應 ----------
 
     def _ensure_guild_group(self, session: Session, guild_id: str, guild_name: str | None) -> Group:
@@ -213,6 +214,7 @@ class SocialService(ExplorationService):
         free = farm.warehouse_capacity - inventory_repo.total_quantity(session, farm.id)
         if free <= 0:
             return [], free
+        glove = self._has_glove(session, farm.id)
         rows = steals_repo.candidate_plots(
             session,
             group_id,
@@ -220,14 +222,25 @@ class SocialService(ExplorationService):
             now,
             self._wither_cutoff(now),
             self._taipei_day_start(now),
-            balance.STEAL_PLOTS_PER_VICTIM_PER_DAY,
+            None if glove else balance.STEAL_PLOTS_PER_VICTIM_PER_DAY,
+            None if glove else balance.STEAL_THIEVES_PER_VICTIM_PER_DAY,
         )
         targets = [
             StealTarget(pid, pname, fname, plot_no, crop_name, remaining,
-                        min(balance.STEAL_MAX_PER_ACTION, remaining, free))
-            for pid, pname, fname, plot_no, crop_name, remaining in rows
+                        min(balance.steal_max(crop_code), remaining, free))
+            for pid, pname, fname, plot_no, crop_name, remaining, crop_code in rows
         ]
         return targets, free
+
+    @staticmethod
+    def _has_glove(session: Session, farm_id: int) -> bool:
+        """傳說扒手手套（啟用中）：偷菜不受每日土地與被偷人數上限。"""
+        return items_repo.tool_enabled(session, farm_id, balance.TOOL_THIEF_GLOVE)
+
+    def thief_glove_enabled(self, player_id: int) -> bool:
+        with self._transaction() as session:
+            farm = farms_repo.get_by_player(session, player_id)
+            return farm is not None and self._has_glove(session, farm.id)
 
     def steal_targets(self, group_id: int, player_id: int) -> list[StealTarget]:
         now = self._clock.now()
@@ -244,16 +257,26 @@ class SocialService(ExplorationService):
             counts: dict[int, int] = {}
             for t in targets:
                 counts[t.player_id] = counts.get(t.player_id, 0) + 1
-            limited = set(session.scalars(steals_repo.victims_at_limit(
-                session, player_id, self._taipei_day_start(now), balance.STEAL_PLOTS_PER_VICTIM_PER_DAY
-            )))
+            day_start = self._taipei_day_start(now)
+            farm = farms_repo.get_by_player(session, player_id)
+            if self._has_glove(session, farm.id):
+                limited, full = set(), set()
+            else:
+                limited = set(session.scalars(steals_repo.victims_at_limit(
+                    session, player_id, day_start, balance.STEAL_PLOTS_PER_VICTIM_PER_DAY
+                )))
+                full = set(session.scalars(steals_repo.victims_full(
+                    session, player_id, day_start, balance.STEAL_THIEVES_PER_VICTIM_PER_DAY
+                )))
             rows = [
                 {"player_id": m["player_id"], "player_name": m["player_name"], "farm_name": m["farm"]["farm_name"],
-                 "stealable": counts.get(m["player_id"], 0), "limit_reached": m["player_id"] in limited}
+                 "stealable": counts.get(m["player_id"], 0), "limit_reached": m["player_id"] in limited,
+                 "victim_full": m["player_id"] in full and m["player_id"] not in limited}
                 for m in groups_repo.members_with_farms(session, group_id, now, self._wither_cutoff(now))
                 if m["farm"] is not None and m["player_id"] != player_id
             ]
-        rows.sort(key=lambda r: (-r["stealable"], r["limit_reached"], r["player_name"], r["player_id"]))
+        rows.sort(key=lambda r: (-r["stealable"], r["limit_reached"] or r["victim_full"], r["player_name"],
+                                 r["player_id"]))
         return rows
 
     def steal_farm_view(self, group_id: int, thief_player_id: int, victim_player_id: int) -> StealFarmView:
@@ -271,9 +294,13 @@ class SocialService(ExplorationService):
                 raise NotFoundError("目標玩家還沒有農場。")
             status = self._status(session, victim_farm, victim_farm.player.display_name)
             targets, free = self._steal_candidates(session, group_id, thief_player_id, now)
-            stolen = steals_repo.plots_stolen_since(
-                session, thief_player_id, victim_player_id, self._taipei_day_start(now)
-            )
+            day_start = self._taipei_day_start(now)
+            stolen = steals_repo.plots_stolen_since(session, thief_player_id, victim_player_id, day_start)
+            others = steals_repo.thieves_since(session, victim_player_id, day_start, exclude_thief=thief_player_id)
+            thief_farm = farms_repo.get_by_player(session, thief_player_id)
+            glove = thief_farm is not None and self._has_glove(session, thief_farm.id)
+            if glove:
+                stolen, others = 0, 0
             return StealFarmView(
                 player_id=victim_player_id,
                 player_name=status.player_name,
@@ -283,6 +310,9 @@ class SocialService(ExplorationService):
                 targets=[t for t in targets if t.player_id == victim_player_id],
                 limit_reached=stolen >= balance.STEAL_PLOTS_PER_VICTIM_PER_DAY,
                 warehouse_full=free <= 0,
+                victim_full=stolen < balance.STEAL_PLOTS_PER_VICTIM_PER_DAY
+                and others >= balance.STEAL_THIEVES_PER_VICTIM_PER_DAY,
+                glove=glove,
             )
 
     def steal_crop(
@@ -327,8 +357,14 @@ class SocialService(ExplorationService):
                 raise PlotWitheredError("這塊土地的作物已經乾枯，不能偷。")
             if steals_repo.already_stolen(session, plot.id, plot.planting_no, thief_player_id):
                 raise AlreadyStolenError("你已經偷過這株作物了，每株作物每人只能偷一次。")
+            crop = crops_repo.get(session, plot.crop_type_id)
+            if quantity > balance.steal_max(crop.code):
+                raise ValidationError(f"{crop.name}每次最多只能偷 {balance.steal_max(crop.code)} 個。")
+            # 傳說扒手手套：不受每日土地與被偷人數上限（每株仍只能偷一次）
+            glove = self._has_glove(session, thief_farm.id)
             if (
-                steals_repo.plots_stolen_since(
+                not glove
+                and steals_repo.plots_stolen_since(
                     session, thief_player_id, victim_player_id, self._taipei_day_start(now)
                 )
                 >= balance.STEAL_PLOTS_PER_VICTIM_PER_DAY
@@ -336,6 +372,19 @@ class SocialService(ExplorationService):
                 raise AlreadyStolenError(
                     f"你今天已經偷過這位玩家的 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格土地了，"
                     f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田，明天（台灣時間 0 點後）再來。"
+                )
+            # 雙方農場列已鎖定，同一位被偷者的偷菜依序執行，人數上限不會被同時偷菜突破
+            if (
+                not glove
+                and steals_repo.thieves_since(
+                    session, victim_player_id, self._taipei_day_start(now), exclude_thief=thief_player_id
+                )
+                >= balance.STEAL_THIEVES_PER_VICTIM_PER_DAY
+            ):
+                limit = balance.STEAL_THIEVES_PER_VICTIM_PER_DAY
+                raise AlreadyStolenError(
+                    f"{victim_farm.player.display_name} 今天已經被 {limit} 個人偷過了，"
+                    f"每位玩家每天最多被 {limit} 人偷，明天（台灣時間 0 點後）再來。"
                 )
             if plot.remaining_quantity < quantity:
                 raise InsufficientItemsError(f"剩餘數量不足：只剩 {plot.remaining_quantity} 個。")
@@ -345,7 +394,6 @@ class SocialService(ExplorationService):
                     f"背包空間不足：目前 {used}/{thief_farm.warehouse_capacity}，需要再放入 {quantity} 個。"
                 )
 
-            crop = crops_repo.get(session, plot.crop_type_id)
             # 偷到的作物保留原本的品質與突變（播種時已決定，不重新抽取）
             quality, mutation = plot.quality, plot.mutation
             item = genetics.produce_code(crop, mutation)

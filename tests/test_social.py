@@ -91,17 +91,17 @@ def test_steal_targets_only_valid_plots_in_current_group(service, world, clock):
     grow(service, b, 1, "wheat")  # 成熟
     grow(service, a, 1, "wheat")  # 自己的
     grow(service, d, 1, "wheat")  # 其他群組
-    grow(service, c, 2, "wheat")  # 之後被偷光
+    grow(service, c, 2, "wheat")  # 之後收成 → 空地
     clock.advance(60)
     grow(service, b, 2, "carrot")  # 生長中
     service.buy_seeds(b, "tomato", 1)
     service.plant_crop(b, 3, "tomato")  # 等待澆水
-    service.steal_crop(world["g1"], b, c, 2, 2)  # c 第 2 格被偷光 → 空地
+    service.harvest_crop(c, 2)  # c 第 2 格收成 → 空地
 
     assert plot_of(service, c, 1).state == PlotState.WITHERED
     targets = service.steal_targets(world["g1"], a)
     assert [(t.player_id, t.plot_number, t.crop_name, t.remaining_quantity, t.max_steal) for t in targets] == [
-        (b, 1, "小麥", 2, 2)
+        (b, 1, "小麥", 2, 1)  # 小麥每次最多偷 1 個
     ]
     assert targets[0].farm_name == "b的農場"
     # 另一個群組只看得到該群組成員
@@ -162,8 +162,9 @@ def test_steal_success_updates_both_sides(service, world, clock, session_factory
 
 
 def test_steal_until_empty_resets_plot(service, world, clock):
-    grow(service, world["b"], 1, "wheat")
-    clock.advance(60)
+    grow(service, world["b"], 1, "carrot")  # 剩餘 3
+    clock.advance(180)
+    service.steal_crop(world["g1"], world["c"], world["b"], 1, 1)
     result = service.steal_crop(world["g1"], world["a"], world["b"], 1, 2)
     assert "恢復為空地" in result.message
     assert plot_of(service, world["b"], 1).state == PlotState.EMPTY
@@ -237,6 +238,32 @@ def test_steal_one_plot_per_victim_per_day(service, world, clock):
     assert service.steal_crop(g1, a, b, 3, 1).success
 
 
+def test_victim_stolen_by_at_most_three_people_per_day(service, world, clock):
+    g1, victim = world["g1"], world["b"]
+    thieves = [world["a"], world["c"]] + [make_farmer(service, name, g1) for name in ("t3", "t4")]
+    assert balance.STEAL_THIEVES_PER_VICTIM_PER_DAY == 3
+    for plot in (1, 2, 3, 4):
+        grow(service, victim, plot, "wheat")
+    clock.advance(60)
+    for plot, thief in zip((1, 2, 3), thieves[:3], strict=True):
+        assert service.steal_crop(g1, thief, victim, plot, 1).success
+    fourth = thieves[3]
+    # 第 4 個人：清單不列出、玩家選單標示已滿、農田畫面顯示已滿，直接偷也會被拒絕
+    assert all(t.player_id != victim for t in service.steal_targets(g1, fourth))
+    row = next(r for r in service.steal_players(g1, fourth) if r["player_id"] == victim)
+    assert row["victim_full"] is True and row["limit_reached"] is False and row["stealable"] == 0
+    view = service.steal_farm_view(g1, fourth, victim)
+    assert view.victim_full and not view.limit_reached and view.targets == []
+    with pytest.raises(AlreadyStolenError) as info:
+        service.steal_crop(g1, fourth, victim, 4, 1)
+    assert "最多被 3 人偷" in str(info.value)
+    # 已經偷過的人看到的是自己的每日上限，不是人數已滿
+    assert not service.steal_farm_view(g1, thieves[0], victim).victim_full
+    # 台灣時間隔天 0 點後重新計算（測試起點為台灣 08:00）
+    clock.advance(16 * 3600 - 60)
+    assert service.steal_crop(g1, fourth, victim, 4, 1).success
+
+
 def test_steal_players_and_farm_view(service, world, clock):
     g1, a, b, c, d = world["g1"], world["a"], world["b"], world["c"], world["d"]
     grow(service, b, 1, "wheat")
@@ -261,12 +288,64 @@ def test_steal_players_and_farm_view(service, world, clock):
 
 
 def test_steal_more_than_remaining(service, world, clock):
-    grow(service, world["b"], 1, "wheat")
-    clock.advance(60)
-    service.steal_crop(world["g1"], world["c"], world["b"], 1, 1)
+    grow(service, world["b"], 1, "carrot")
+    clock.advance(180)
+    service.steal_crop(world["g1"], world["c"], world["b"], 1, 2)
     with pytest.raises(InsufficientItemsError):
         service.steal_crop(world["g1"], world["a"], world["b"], 1, 2)
     assert plot_of(service, world["b"], 1).remaining_quantity == 1
+
+
+def test_wheat_can_only_be_stolen_one_at_a_time(service, world, clock):
+    g1, a, b = world["g1"], world["a"], world["b"]
+    grow(service, b, 1, "wheat")
+    grow(service, b, 2, "carrot")
+    clock.advance(180)
+    caps = {t.plot_number: t.max_steal for t in service.steal_targets(g1, a)}
+    assert caps == {1: 1, 2: 2}
+    with pytest.raises(ValidationError, match="小麥每次最多只能偷 1 個"):
+        service.steal_crop(g1, a, b, 1, 2)
+    assert service.steal_crop(g1, a, b, 1, 1).quantity == 1
+
+
+def _give_glove(service, pid):
+    with service._session_factory.begin() as session:
+        session.execute(update(Farm).where(Farm.player_id == pid).values(gold=Farm.gold + 500_000))
+    assert service.buy_item(pid, balance.TOOL_THIEF_GLOVE, 1).gold_delta == -500_000
+
+
+def test_thief_glove_removes_daily_limits(service, world, clock):
+    g1, a, b, c = world["g1"], world["a"], world["b"], world["c"]
+    assert balance.ITEMS[balance.TOOL_THIEF_GLOVE][1] == 500_000
+    assert balance.ITEMS[balance.TOOL_AUTO_PLANTER][1] == 30_000
+    assert balance.ITEMS[balance.TOOL_AUTO_SELLER][1] == 150_000
+    extra = [make_farmer(service, name, g1) for name in ("t3", "t4")]
+    for plot in (1, 2, 3, 4):
+        grow(service, b, plot, "carrot")
+    grow(service, c, 1, "carrot")
+    clock.advance(180)
+    # b 先被 3 個人偷滿
+    for plot, thief in zip((1, 2, 3), [c, *extra], strict=True):
+        assert service.steal_crop(g1, thief, b, plot, 1).success
+    _give_glove(service, a)
+    # 有手套：不受人數上限，同一位玩家的每一格都能偷（每格 2 個）
+    view = service.steal_farm_view(g1, a, b)
+    assert view.glove and not view.victim_full and [t.plot_number for t in view.targets] == [1, 2, 3, 4]
+    row = next(r for r in service.steal_players(g1, a) if r["player_id"] == b)
+    assert row["stealable"] == 4 and not row["limit_reached"] and not row["victim_full"]
+    for plot in (1, 2, 3, 4):
+        assert service.steal_crop(g1, a, b, plot, 2 if plot == 4 else 1).success
+    assert service.steal_crop(g1, a, c, 1, 2).success
+    # 每株作物仍只能偷一次
+    with pytest.raises(AlreadyStolenError, match="每株作物每人只能偷一次"):
+        service.steal_crop(g1, a, b, 4, 1)
+    assert service.steal_farm_view(g1, a, b).targets == []
+    # 停用手套後恢復每日限制
+    service.set_tool_enabled(a, "扒手手套", False)
+    grow(service, c, 2, "carrot")
+    clock.advance(180)
+    with pytest.raises(AlreadyStolenError, match="每天只能偷同一位玩家"):
+        service.steal_crop(g1, a, c, 2, 1)
 
 
 def _concurrently(fns):
@@ -290,12 +369,13 @@ def _concurrently(fns):
 
 def test_concurrent_steals_never_duplicate(service, world, clock, session_factory):
     a, b, c, g1 = world["a"], world["b"], world["c"], world["g1"]
-    grow(service, b, 1, "wheat")  # 剩餘 2
-    clock.advance(60)
+    grow(service, b, 1, "carrot")  # 剩餘 3
+    clock.advance(180)
+    service.steal_crop(g1, make_farmer(service, "t3", g1), b, 1, 1)  # 剩餘 2
     results = _concurrently([lambda: service.steal_crop(g1, a, b, 1, 2), lambda: service.steal_crop(g1, c, b, 1, 2)])
     assert sorted(r[0] for r in results) == ["err", "ok"]
     assert all(isinstance(r[1], PlotEmptyError) for r in results if r[0] == "err")
-    assert qty(service, a, "wheat") + qty(service, c, "wheat") == 2
+    assert qty(service, a, "carrot") + qty(service, c, "carrot") == 2
     assert plot_of(service, b, 1).state == PlotState.EMPTY
 
 

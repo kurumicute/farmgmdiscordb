@@ -236,6 +236,92 @@ async def delete_animal_type(request: Request, animal_code: CatalogCode, actor: 
     return await _call(_social(request).delete_animal_type, actor, animal_code)
 
 
+# ---------- 釣魚：魚種、釣具與設定 ----------
+# 稀有度售價區間、效果欄位、機率合計 100% 等完整檢查在服務層（app.game.fishing）統一處理
+
+Rarity = Literal["common", "rare", "epic", "legendary"]
+
+
+class FishUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=32)
+    emoji: str = Field(min_length=1, max_length=16)
+    rarity: Rarity
+    min_price: int
+    max_price: int
+    min_weight_g: int
+    max_weight_g: int
+    difficulty: int
+    description: str = Field(default="", max_length=200)
+    sort_order: int = 0
+
+
+class FishCreate(FishUpdate):
+    code: str = Field(pattern=CODE_PATTERN)
+
+
+class GearUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=32)
+    emoji: str = Field(min_length=1, max_length=16)
+    description: str = Field(default="", max_length=200)
+    price: int
+    required_level: int
+    stock: int | None = None  # None = 不限量
+    effects: dict[str, int]
+    sort_order: int = 0
+
+
+class GearCreate(GearUpdate):
+    code: str = Field(pattern=CODE_PATTERN)
+    kind: Literal["rod", "line", "bait"]
+
+
+class FishingSettingsBody(BaseModel):
+    rarity_bp: dict[str, int]
+    base_success_pct: int
+    bite_wait_min_seconds: int
+    bite_wait_max_seconds: int
+    reaction_seconds: int
+    action_timeout_seconds: int
+    basket_capacity: int
+    difficulty: dict[str, dict[str, int]]
+
+
+@router.post("/fish-types", status_code=201)
+async def create_fish_type(request: Request, body: FishCreate, actor: Actor) -> dict:
+    return await _call(_social(request).create_fish_type, actor, body.model_dump())
+
+
+@router.put("/fish-types/{fish_code}")
+async def update_fish_type(request: Request, fish_code: CatalogCode, body: FishUpdate, actor: Actor) -> dict:
+    return await _call(_social(request).update_fish_type, actor, fish_code, body.model_dump())
+
+
+@router.put("/fish-types/{fish_code}/active")
+async def set_fish_type_active(request: Request, fish_code: CatalogCode, body: ActiveBody, actor: Actor) -> dict:
+    return await _call(_social(request).set_fish_type_active, actor, fish_code, body.active)
+
+
+@router.post("/fishing-gear", status_code=201)
+async def create_fishing_gear(request: Request, body: GearCreate, actor: Actor) -> dict:
+    return await _call(_social(request).create_fishing_gear, actor, body.model_dump())
+
+
+@router.put("/fishing-gear/{gear_code}")
+async def update_fishing_gear(request: Request, gear_code: CatalogCode, body: GearUpdate, actor: Actor) -> dict:
+    return await _call(_social(request).update_fishing_gear, actor, gear_code, body.model_dump())
+
+
+@router.put("/fishing-gear/{gear_code}/active")
+async def set_fishing_gear_active(request: Request, gear_code: CatalogCode, body: ActiveBody, actor: Actor) -> dict:
+    return await _call(_social(request).set_fishing_gear_active, actor, gear_code, body.active)
+
+
+@router.put("/fishing-settings")
+async def update_fishing_settings(request: Request, body: FishingSettingsBody, actor: Actor) -> dict:
+    version = await _call(_social(request).update_fishing_settings, actor, body.model_dump())
+    return {"version": version}
+
+
 # ---------- 限時事件 ----------
 
 TIME_PATTERN = r"^([01][0-9]|2[0-3]):[0-5][0-9]$"

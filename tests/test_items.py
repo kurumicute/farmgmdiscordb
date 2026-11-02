@@ -157,7 +157,7 @@ def test_backpack_contents(service, player_id, clock, session_factory):
     bp = service.get_backpack(player_id)
     assert bp.is_empty and bp.used == 0
     assert [(t.name, t.owned) for t in bp.tools] == [
-        ("自動澆水器", False), ("自動播種機", False), ("自動販售機", False)
+        ("自動澆水器", False), ("自動播種機", False), ("自動販售機", False), ("傳說扒手手套", False)
     ]
 
     rich(session_factory, player_id)

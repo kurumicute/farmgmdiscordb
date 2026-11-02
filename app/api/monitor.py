@@ -257,6 +257,38 @@ async def get_admin_farm(request: Request, player_id: Annotated[int, Path(ge=1, 
     return result
 
 
+# ---------- 釣魚（唯讀） ----------
+
+
+@router.get("/fishing/summary")
+async def get_fishing_summary(request: Request) -> dict:
+    return await run_in_threadpool(_service(request).fishing_summary)
+
+
+@router.get("/fishing/players")
+async def list_fishing_players(
+    request: Request,
+    q: Annotated[str | None, Query(max_length=40)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0, le=100_000)] = 0,
+) -> dict:
+    q = q.strip() if q else None
+    return await run_in_threadpool(_service(request).fishing_players, q or None, limit, offset)
+
+
+@router.get("/fishing/players/{player_id}")
+async def get_fishing_player(request: Request, player_id: Annotated[int, Path(ge=1, le=MAX_BIGINT)]) -> dict:
+    result = await run_in_threadpool(_service(request).fishing_player, player_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="找不到這位玩家的農場。")
+    return result
+
+
+@router.get("/fishing/catalog")
+async def get_fishing_catalog(request: Request) -> dict:
+    return await run_in_threadpool(_service(request).fishing_catalog)
+
+
 # ---------- 排名獎勵（唯讀） ----------
 
 

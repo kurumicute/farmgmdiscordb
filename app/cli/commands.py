@@ -53,8 +53,10 @@ HELP_TEXT = f"""\
   group members [關鍵字] [頁碼] 查看／搜尋目前群組成員
   group status                  查看目前群組基本資訊
   steal targets [頁碼]          列出目前群組可以偷的作物（每頁 10 筆）
-  steal <玩家ID> <土地編號> <數量>  偷菜（每次最多 {balance.STEAL_MAX_PER_ACTION} 個，每株限偷一次，
-                                    每天同一位玩家限 1 格田）
+  steal <玩家ID> <土地編號> <數量>  偷菜（每次最多 {balance.STEAL_MAX_PER_ACTION} 個、小麥 1 個，每株限偷一次，
+                                    每天同一位玩家限 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田，
+                                    每人每天最多被 {balance.STEAL_THIEVES_PER_VICTIM_PER_DAY} 人偷；
+                                    有傳說扒手手套則不受每日限制）
   defense | defense status      查看防守設施、守護範圍與各土地阻止機率
   defense shop                  查看防守商店
   defense buy <設施|巡查券> [數量]  購買防守設施（稻草人／警戒犬／防盜圍欄）或巡查券
@@ -66,6 +68,7 @@ HELP_TEXT = f"""\
   animal buy <動物> <數量>      購買動物（需先建造畜舍，容量不足時不扣款）
   animal feed <編號|all>        餵食（扣餵食費用）後開始生產週期
   animal collect <編號>         收集動物產品（背包不足時保留在動物身上）
+  animal release <編號>         放生動物，空出畜舍欄位（不退款；產品要先收集）
   workshop | workshop build <設施>  查看／建造畜舍、磨坊、烘焙坊、果醬工坊
   recipe list                   查看加工配方
   craft <配方> <份數> | craft status | craft collect <訂單ID>  加工、查看、領取成品
@@ -569,6 +572,8 @@ class CommandHandler:
             return f"{result.message} 剩餘金幣 {result.gold}。"
         if sub == "collect" and len(args) == 2:
             return self.service.collect_animal(self._pid(), _parse_int(args[1], "動物編號")).message
+        if sub == "release" and len(args) == 2:
+            return self.service.release_animal(self._pid(), _parse_int(args[1], "動物編號")).message
         if sub == "status" and len(args) == 1:
             st = self.service.animal_status(self._pid())
             c = st["counts"]
@@ -580,7 +585,7 @@ class CommandHandler:
             )
         raise ValidationError(
             "用法：animal shop | animal buy <動物> <數量> | animal list | animal feed <編號|all> | "
-            "animal collect <編號> | animal status"
+            "animal collect <編號> | animal release <編號> | animal status"
         )
 
     # ---------- 設施與加工 ----------

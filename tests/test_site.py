@@ -57,6 +57,19 @@ def test_music_invite_and_no_cache(session_factory):
     assert 'id="cave"' in page.text and "山洞冒險" in page.text
 
 
+def test_feature_cards_have_guide_slots(session_factory):
+    """首頁功能卡片的名稱與數字由 /api/guide 填入：頁面要有對應欄位，API 要有需要的資料。"""
+    c = client(session_factory)
+    page = c.get("/").text
+    for slot in ("c-animals", "c-defenses", "c-areas", "c-machines", "c-rare-seeds", "c-transfer", "g-steal-day",
+                 "g-area-example"):
+        assert f'id="{slot}"' in page
+    guide = c.get("/api/guide").json()
+    assert guide["start"]["steal_plots_per_day"] == 1
+    assert any(i["kind"] == "tool" for i in guide["items"])
+    assert any(not crop["shop_buyable"] for crop in guide["crops"])  # 稀有種子（琥珀瓜、月光花）
+
+
 def test_guide_follows_game_settings_without_player_data(service, session_factory, clock):
     from app.services.admin_service import AdminService
 
@@ -94,3 +107,62 @@ def test_info_exposes_music_settings_only(session_factory):
                   music_idle_timeout=600, music_volume=0.25).get("/api/info").json()
     assert info["music"] == {"prefix_commands": True, "prefix": "?", "playlist_limit": 30,
                              "idle_minutes": 10.0, "default_volume_pct": 25}
+
+
+def test_guide_has_fishing_rules_and_follows_admin_changes(session_factory, clock):
+    from app.game import fishing
+    from app.services.admin_service import AdminService
+
+    admin = AdminService(session_factory, clock)
+    c = client(session_factory)
+    page = c.get("/").text
+    assert 'id="fishing"' in page and "基礎釣魚成功率" in page and "分享到群組" in page
+    f = c.get("/api/guide").json()["fishing"]
+    assert [r["chance_pct"] for r in f["rarities"]] == [80, 15, 4, 1]
+    assert [r["price"] for r in f["rarities"]] == [  # 依啟用中魚種的實際售價
+        list(fishing.price_span([dict(zip(("rarity", "min_price", "max_price"), x[3:6], strict=True))
+                                 for x in fishing.INITIAL_FISH], r)) for r in fishing.RARITIES]
+    assert f["base_success_pct"] == 90 and len(f["gear"]) == len(fishing.INITIAL_GEAR)
+    assert len(f["fish"]) == len(fishing.INITIAL_FISH)
+    admin.set_fish_type_active("test", "golden_koi", False)
+    admin.update_fishing_settings("test", {**fishing.DEFAULT_SETTINGS, "base_success_pct": 85})
+    f2 = client(session_factory).get("/api/guide").json()["fishing"]  # 新的 app（沒有快取）
+    assert f2["base_success_pct"] == 85 and "黃金錦鯉" not in [x["name"] for x in f2["fish"]]
+
+
+def test_guide_rarity_price_follows_fish_prices(session_factory, clock):
+    """魚的售價不受稀有度限制：手冊各稀有度的售價範圍依啟用中魚種的實際售價計算。"""
+    from app.game import fishing
+    from app.services.admin_service import AdminService
+
+    admin = AdminService(session_factory, clock)
+    code, name, emoji, rarity, _pmin, _pmax, wmin, wmax, diff, desc = next(
+        x for x in fishing.INITIAL_FISH if x[3] == "common")
+    admin.update_fish_type("test", code, {
+        "name": name, "emoji": emoji, "rarity": rarity, "min_price": 0, "max_price": 123456,
+        "min_weight_g": wmin, "max_weight_g": wmax, "difficulty": diff, "description": desc, "sort_order": 0})
+    common = client(session_factory).get("/api/guide").json()["fishing"]["rarities"][0]
+    assert common["code"] == "common" and common["price"] == [0, 123456]
+
+
+def test_guide_lists_enabled_ranking_rules_only(session_factory, clock):
+    from app.services.admin_service import AdminService
+
+    admin = AdminService(session_factory, clock)
+    admin.create_ranking_rule("admin", {
+        "name": "每週群組販售王", "scope": "group", "metric": "sales", "period": "weekly",
+        "rewards": [{"reward_type": "gold", "amount": 2000}, {"reward_type": "fertilizer", "amount": 3}],
+    })
+    off = admin.create_ranking_rule("admin", {
+        "name": "停用的規則", "scope": "individual", "metric": "money", "period": "daily",
+        "rewards": [{"reward_type": "gold", "amount": 100}],
+    })
+    admin.set_ranking_rule_enabled("admin", off["id"], False)
+    r = client(session_factory).get("/api/guide").json()["rankings"]
+    assert r["settle_grace_seconds"] > 0
+    assert [x["name"] for x in r["rules"]] == ["每週群組販售王"]  # 停用的不列出
+    rule = r["rules"][0]
+    assert rule["scope"] == "group" and rule["metric"] == "農產品販售" and rule["period"] == "每週"
+    assert rule["rewards"][0] == "2000 金幣" and len(rule["rewards"]) == 2
+    page = client(session_factory).get("/").text
+    assert 'id="g-rankings"' in page and "排名獎勵" in page

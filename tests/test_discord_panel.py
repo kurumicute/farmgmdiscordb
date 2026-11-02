@@ -18,7 +18,8 @@ from tests.test_discord_bot import ALICE, BOB, CAROL, GUILD_A, GUILD_B, FakeInte
 
 PAGES = ("main", "plots", "backpack", "shop", "prices", "genetics", "sell", "animals", "craft", "build", "casino",
          "cave", "cave_area", "cave_log", "machines", "defense", "steal",
-         "board", "rewards", "quests", "history", "group", "log", "help")
+         "board", "rewards", "quests", "history", "group", "log", "help",
+         "fishing", "fish_shop", "fish_basket", "fish_codex", "fish_rank")
 
 
 def run(coro):
@@ -205,6 +206,10 @@ def test_animals_and_craft_pages(cmds, admin):
     assert "無法完成" not in p.text
     p.click("全部餵食")
     assert "餵食" in p.text and "生產中" in p.text
+    p.choose("放生動物", "2")
+    assert "確定要放生" in p.text and "餵食不會退還" in p.text
+    p.click("確認放生 #2")
+    assert "已放生" in p.text and "2" not in p.options("放生動物")
     p.go("craft")
     p.go("build")
     p.choose("選擇要建造的設施", "mill")
@@ -240,10 +245,10 @@ def test_steal_by_choosing_player_and_plot(cmds, clock, admin):
     alice.go("steal")
     assert alice.options("選擇玩家") == [str(bob.panel.player_id)]
     opened = alice.choose("選擇玩家", str(bob.panel.player_id))
-    assert "Bob 的農田" in alice.text and "有 **4** 格可以偷" in alice.text and "可偷 ×2" in alice.text
+    assert "Bob 的農田" in alice.text and "有 **4** 格可以偷" in alice.text and "可偷 ×1" in alice.text
     assert attachment_names(last_edit(opened)) == ["farm.png"]  # 顯示對方的農田圖
-    assert alice.options("選擇要偷哪一格") == ["1|2", "2|2", "3|2", "4|2"]
-    alice.choose("選擇要偷哪一格", "3|2")
+    assert alice.options("選擇要偷哪一格") == ["1|1", "2|1", "3|1", "4|1"]  # 小麥每次 1 個
+    alice.choose("選擇要偷哪一格", "3|1")
     assert "偷走" in alice.text and "Bob 的農田" in alice.text  # 偷完留在對方的農田畫面
     assert "今天已經偷過 Bob 的田了" in alice.text and alice.options("選擇要偷哪一格") == []
     alice.click("換一位玩家")

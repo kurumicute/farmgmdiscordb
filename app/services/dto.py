@@ -206,6 +206,8 @@ class StealFarmView:
     targets: list[StealTarget]  # 這次可以偷的土地
     limit_reached: bool  # 今天已經偷過這位玩家（每日土地上限）
     warehouse_full: bool  # 偷菜者的倉庫已滿
+    victim_full: bool = False  # 這位玩家今天被偷的人數已達上限（每日人數上限）
+    glove: bool = False  # 偷菜者啟用了傳說扒手手套（不受每日土地與人數上限）
 
 
 @dataclass(frozen=True)

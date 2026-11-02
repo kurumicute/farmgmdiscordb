@@ -98,6 +98,7 @@ class FarmBot(commands.Bot):
         self._settle_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
+        await self.cleanup_fishing()
         await self.sync_commands()
         if music_embedded(self.settings):
             await music.connect_lavalink(self)
@@ -107,6 +108,15 @@ class FarmBot(commands.Bot):
 
     async def sync_commands(self) -> None:
         await sync_commands(self.tree, self.settings)
+
+    async def cleanup_fishing(self) -> None:
+        """Bot 重啟後，把已超過期限仍標記為進行中的釣魚判定為失敗（沒逾時的可以重新開面板繼續）。"""
+        try:
+            n = await self.runner.run(self.service.cleanup_fishing_sessions)
+            if n:
+                logger.info("已清理 %d 筆逾時的釣魚 Session", n)
+        except Exception as exc:  # 清理失敗不影響啟動：讀取時仍會依時間判定
+            logger.warning("清理釣魚 Session 失敗：%s", type(exc).__name__)
 
     async def on_ready(self) -> None:
         user_id = self.user.id if self.user else "-"

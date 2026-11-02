@@ -70,6 +70,15 @@ class Response:
         self._done = True
         self.it.first = self.it.first or time.perf_counter()
 
+    async def edit_message(self, **kw):
+        """面板在 1.5 秒內準備好時直接以 edit_message 回覆（不先 defer）：首次回應即畫面更新完成。"""
+        self._done = True
+        now = time.perf_counter()
+        self.it.first = self.it.first or now
+        self.it.done = now
+        self.it.embed = kw.get("embed")
+        count_upload(kw, kw.get("attachments"))
+
     async def send_modal(self, modal):
         self._done = True
 

@@ -1,7 +1,8 @@
 """介紹網站（公開）：Bot 功能介紹、邀請連結與彙總統計。預設 Port 24444。
 
 - 只提供彙總數字（玩家數、農場數、伺服器數、今日操作數等），不輸出任何玩家名稱、ID 或個別資料。
-- /api/guide 提供操作手冊用的遊戲設定（作物、動物、道具、品質與突變、山洞冒險與機器、啟用中的活動），
+- /api/guide 提供操作手冊用的遊戲設定（作物、動物、道具、品質與突變、山洞冒險與機器、釣魚、啟用中的活動與
+  排名獎勵規則），
   數值即時讀自資料庫與 balance，管理員在後台調整後網站會跟著更新；同樣不含玩家資料。
 - 查詢都在唯讀交易中執行並快取（統計 STATS_CACHE_SECONDS、手冊 GUIDE_CACHE_SECONDS 秒），訪客再多也不會增加資料庫負擔。
 - 沒有任何寫入端點；頁面為靜態檔，前端只用 textContent 填入資料。
@@ -21,12 +22,14 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.models import Farm, FarmPlot, GameTransaction, Group, Player
-from app.game import balance, exploration
+from app.db.models import Farm, FarmPlot, GameTransaction, Group, Player, RankingRewardRule
+from app.game import balance, exploration, fishing
 from app.game import events as event_rules
+from app.game import ranking as ranking_rules
 from app.repositories import animals as animals_repo
 from app.repositories import crops as crops_repo
 from app.repositories import events as events_repo
+from app.repositories import fishing as fishing_repo
 from app.repositories import genetics as genetics_repo
 
 logger = logging.getLogger(__name__)
@@ -156,6 +159,40 @@ def build_exploration(names: dict[str, str]) -> dict:
     }
 
 
+def build_fishing(session: Session) -> dict:
+    """釣魚手冊：稀有度機率與售價、基礎成功率、時間設定、啟用中的釣具與魚種（只有規則與目錄，沒有玩家資料）。"""
+    version, s = fishing_repo.current_settings(session)
+    fish_types = fishing_repo.list_fish_types(session, active_only=True)
+    return {
+        "settings_version": version,
+        "base_success_pct": s["base_success_pct"],
+        "bite_wait": [s["bite_wait_min_seconds"], s["bite_wait_max_seconds"]],
+        "reaction_seconds": s["reaction_seconds"],
+        "action_timeout_seconds": s["action_timeout_seconds"],
+        "basket_capacity": s["basket_capacity"],
+        "rarities": [
+            {"code": r, "name": fishing.RARITY_NAMES[r], "emoji": fishing.RARITY_EMOJI[r],
+             "chance_pct": _pct(s["rarity_bp"][r]), "price": fishing.price_span(fish_types, r),
+             "stamina": s["difficulty"][r]["stamina"], "surge_pct": s["difficulty"][r]["surge_pct"],
+             "strong_pct": s["difficulty"][r]["strong_pct"], "chain_pct": s["difficulty"][r]["chain_pct"]}
+            for r in fishing.RARITIES
+        ],
+        "gear": [
+            {"kind": g.kind, "kind_name": fishing.GEAR_KIND_NAMES[g.kind], "name": g.name, "emoji": g.emoji,
+             "price": g.price, "required_level": g.required_level, "description": g.description,
+             "effects_text": fishing.gear_effects_text(g.kind, g.effects)}
+            for g in fishing_repo.list_gear(session, active_only=True)
+        ],
+        "fish": [
+            {"name": f.name, "emoji": f.emoji, "rarity": f.rarity, "rarity_name": fishing.RARITY_NAMES[f.rarity],
+             "rarity_emoji": fishing.RARITY_EMOJI[f.rarity], "price": [f.min_price, f.max_price],
+             "weight": [fishing.weight_text(f.min_weight_g), fishing.weight_text(f.max_weight_g)],
+             "description": f.description}
+            for f in fish_types
+        ],
+    }
+
+
 def build_guide(session: Session, now: datetime) -> dict:
     """操作手冊需要的遊戲設定。只輸出規則與數值，不含任何玩家、農場或群組資料。"""
     crops = [c for c in crops_repo.list_all(session) if c.active]
@@ -181,6 +218,8 @@ def build_guide(session: Session, now: datetime) -> dict:
             "max_plots": balance.MAX_PLOTS,
             "wither_minutes": balance.WITHER_SECONDS // 60,
             "steal_max": balance.STEAL_MAX_PER_ACTION,
+            "steal_plots_per_day": balance.STEAL_PLOTS_PER_VICTIM_PER_DAY,
+            "steal_thieves_per_day": balance.STEAL_THIEVES_PER_VICTIM_PER_DAY,
             "transfer_cooldown_days": balance.GROUP_TRANSFER_COOLDOWN_SECONDS // 86400,
             "max_block_pct": round(balance.DEFENSE_MAX_BLOCK_CHANCE * 100),
             "patrol_days": balance.PATROL_DAYS,
@@ -197,6 +236,7 @@ def build_guide(session: Session, now: datetime) -> dict:
             for c in crops
         ],
         "exploration": build_exploration(names),
+        "fishing": build_fishing(session),
         "qualities": [
             {"name": label, "chance_pct": _pct(g["quality_bp"][code]), "price_mul": g["quality_price_pct"][code] / 100}
             for code, label in balance.QUALITIES.items()
@@ -243,6 +283,18 @@ def build_guide(session: Session, now: datetime) -> dict:
             for e in sorted(events_repo.list_all(session), key=lambda e: e.id)
             if e.enabled
         ],
+        # 只列啟用中的排名獎勵規則（規則本身會在 Discord「🎁 排名獎勵」公開顯示，不含任何得獎紀錄）
+        "rankings": {
+            "settle_grace_seconds": balance.RANKING_SETTLE_GRACE_SECONDS,
+            "rules": [
+                {"name": r.name, "scope": r.scope, "metric": ranking_rules.METRICS[r.metric],
+                 "period": ranking_rules.PERIODS[r.period],
+                 "rewards": [ranking_rules.reward_text(x) for x in r.rewards]}
+                for r in session.scalars(
+                    select(RankingRewardRule).where(RankingRewardRule.enabled.is_(True)).order_by(RankingRewardRule.id)
+                )
+            ],
+        },
     }
 
 

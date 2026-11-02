@@ -126,6 +126,37 @@ def test_animals_need_barn_and_capacity(service, farmer, session_factory):
     assert [a["animal_no"] for a in service.list_animals(farmer)] == [1, 2, 3, 4]
 
 
+def test_release_animal_frees_slot_without_refund(service, farmer, clock, session_factory):
+    service.build(farmer, "畜舍")  # 容量 4
+    service.buy_animals(farmer, "雞", 4)
+    with pytest.raises(ValidationError, match="容量不足"):
+        service.buy_animals(farmer, "牛", 1)
+    before = gold(service, farmer)
+    result = service.release_animal(farmer, 2)
+    assert "已放生 雞#2" in result.message and "3/4" in result.message
+    assert gold(service, farmer) == before  # 不退款
+    assert [a["animal_no"] for a in service.list_animals(farmer)] == [1, 3, 4]
+    service.buy_animals(farmer, "牛", 1)  # 空出的欄位可以買更高級的動物
+    assert [(a["animal_no"], a["code"]) for a in service.list_animals(farmer)][-1] == (5, "cow")
+    with pytest.raises(NotFoundError):
+        service.release_animal(farmer, 2)  # 已經放生
+    # 生產中可以放生（餵食費不退）；產品還沒收集時不能放生
+    service.feed_animal(farmer, 1)
+    assert "餵食不會退還" in service.release_animal(farmer, 1).message
+    service.feed_animal(farmer, 3)
+    clock.advance(DAY)
+    with pytest.raises(ValidationError, match="先收集"):
+        service.release_animal(farmer, 3)
+    assert 3 in [a["animal_no"] for a in service.list_animals(farmer)]
+    # 只能放生自己的動物；紀錄寫入交易紀錄（金幣不變）
+    other = make_farmer(service, "別人", service.create_group("別的群").id)
+    with pytest.raises(NotFoundError):
+        service.release_animal(other, 4)
+    with session_factory() as s:
+        rows = s.scalars(select(GameTransaction).where(GameTransaction.event_type == "release_animal")).all()
+        assert [(r.item_code, r.quantity, r.gold_delta) for r in rows] == [("chicken", 1, 0), ("chicken", 1, 0)]
+
+
 def test_buy_animals_insufficient_gold(service, farmer, session_factory):
     service.build(farmer, "畜舍")
     set_gold(session_factory, farmer, 1999)

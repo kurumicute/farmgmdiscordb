@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.clock import TAIPEI_TZ, Clock, SystemClock
 from app.db.models import RankingAward, RankingRewardRule, RankingSettlement
-from app.game import balance, rules
+from app.game import balance, fishing, rules
 from app.game import events as event_rules
 from app.repositories import animals as animals_repo
 from app.repositories import catalog as catalog_repo
@@ -18,6 +18,7 @@ from app.repositories import crops as crops_repo
 from app.repositories import defenses as defenses_repo
 from app.repositories import events as events_repo
 from app.repositories import farms as farms_repo
+from app.repositories import fishing as fishing_repo
 from app.repositories import genetics as genetics_repo
 from app.repositories import groups as groups_repo
 from app.repositories import inventory as inventory_repo
@@ -27,6 +28,7 @@ from app.repositories import ranch as ranch_repo
 from app.repositories import steals as steals_repo
 from app.services.admin_service import crop_view
 from app.services.community_service import competition_view, quest_view
+from app.services.fishing_service import fish_type_view, gear_view
 from app.services.game_service import build_backpack
 from app.services.ranch_service import animal_type_view, animal_view, order_view
 from app.services.ranking_service import RankingService, rule_view, settlement_detail, settlement_view
@@ -476,6 +478,69 @@ class MonitorService:
                 "event_caps": {k: v[3] for k, v in event_rules.EFFECTS.items()},
                 "active_event_ids": [e.id for e in events_repo.active(session, now)],
                 "server_time": now,
+            }
+
+    # ---------- 釣魚（唯讀） ----------
+
+    def fishing_summary(self) -> dict:
+        now = self._clock.now()
+        with self._read_only() as session:
+            data = fishing_repo.overview(session, now)
+            version, settings = fishing_repo.current_settings(session)
+            return {**data, "settings_version": version, "base_success_pct": settings["base_success_pct"],
+                    "rarity_bp": settings["rarity_bp"], "server_time": now}
+
+    def fishing_players(self, q: str | None = None, limit: int = 20, offset: int = 0) -> dict:
+        with self._read_only() as session:
+            total, items = fishing_repo.player_rows(session, q, limit, offset)
+            return {"total": total, "limit": limit, "offset": offset, "items": items}
+
+    def fishing_player(self, player_id: int) -> dict | None:
+        with self._read_only() as session:
+            farm = farms_repo.get_by_player(session, player_id)
+            if farm is None:
+                return None
+            _total, rows = fishing_repo.player_rows(session, f"#{player_id}", 1, 0)
+            summary = next((r for r in rows if r["player_id"] == player_id), None)
+            detail = fishing_repo.player_detail(session, farm.id)
+            names = {}
+            for gid in {x["group_id"] for x in detail["shares"] if x["group_id"] is not None}:
+                group = groups_repo.get(session, gid)
+                names[gid] = group.name if group else None
+            for share in detail["shares"]:
+                share["group_name"] = names.get(share["group_id"])
+            return {"player_id": player_id, "farm_id": farm.id, "summary": summary, **detail}
+
+    def fishing_catalog(self) -> dict:
+        with self._read_only() as session:
+            version, settings = fishing_repo.current_settings(session)
+            caught = fishing_repo.fish_counts(session)
+            owners = fishing_repo.gear_usage(session)
+            return {
+                "fish": [{**fish_type_view(f), "caught": caught.get(f.code, 0)}
+                         for f in fishing_repo.list_fish_types(session)],
+                "gear": [{**gear_view(g), "owners": owners.get(g.code, 0)} for g in fishing_repo.list_gear(session)],
+                "settings": settings, "settings_version": version,
+                "history": [{"version": h.version, "created_by": h.created_by, "created_at": h.created_at}
+                            for h in fishing_repo.settings_history(session)],
+                "defaults": fishing.DEFAULT_SETTINGS,
+                "labels": {
+                    "rarities": fishing.RARITY_NAMES, "rarity_emoji": fishing.RARITY_EMOJI,
+                    "kinds": fishing.GEAR_KIND_NAMES, "settings": fishing.SETTING_LABELS,
+                    "difficulty": fishing.DIFFICULTY_LABELS, "effects": fishing.GEAR_EFFECT_NAMES,
+                    "statuses": fishing.STATUS_NAMES,
+                },
+                "ranges": {
+                    "fish_price": [fishing.PRICE_MIN, fishing.PRICE_MAX],
+                    "settings": {k: list(v) for k, v in fishing.SETTING_LIMITS.items()},
+                    "difficulty": {k: list(v) for k, v in fishing.DIFFICULTY_LIMITS.items()},
+                    "effects": {kind: {k: list(v) for k, v in lim.items()}
+                                for kind, lim in fishing.GEAR_EFFECT_LIMITS.items()},
+                    "weight_g": list(fishing.FISH_WEIGHT_RANGE_G),
+                    "fish_difficulty": list(fishing.FISH_DIFFICULTY_RANGE),
+                    "gear_price": list(fishing.GEAR_PRICE_RANGE), "gear_level": list(fishing.GEAR_LEVEL_RANGE),
+                    "gear_stock": list(fishing.GEAR_STOCK_RANGE),
+                },
             }
 
     def admin_farm(self, player_id: int) -> dict | None:

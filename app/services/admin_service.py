@@ -18,13 +18,15 @@ from app.db.models import (
     FarmAnimal,
     FarmBuilding,
     FarmPlot,
+    FishingGear,
+    FishType,
     GameEvent,
     GameTransaction,
     InventoryItem,
     Quest,
     StealRecord,
 )
-from app.game import balance, genetics, rules
+from app.game import balance, fishing, genetics, rules
 from app.game import events as event_rules
 from app.game.errors import AlreadyExistsError, NotFoundError, ValidationError, WarehouseFullError
 from app.game.rules import EventType
@@ -34,9 +36,11 @@ from app.repositories import community as community_repo
 from app.repositories import crops as crops_repo
 from app.repositories import events as events_repo
 from app.repositories import farms as farms_repo
+from app.repositories import fishing as fishing_repo
 from app.repositories import groups as groups_repo
 from app.repositories import inventory as inventory_repo
 from app.repositories import ranch as ranch_repo
+from app.services.fishing_service import fish_type_view, gear_view
 from app.services.game_service import genetics_label
 from app.services.ranch_service import animal_type_view
 from app.services.ranking_service import RankingService
@@ -84,6 +88,11 @@ def _snapshot(obj, fields) -> dict:
 
 
 CROP_FIELDS = ("name", "seed_price", "grow_seconds", "harvest_quantity", "sell_price", "variant_name", "active")
+FISH_FIELDS = (
+    "name", "emoji", "rarity", "min_price", "max_price", "min_weight_g", "max_weight_g", "difficulty", "description",
+    "sort_order", "active",
+)
+GEAR_FIELDS = ("name", "emoji", "description", "price", "required_level", "stock", "effects", "sort_order", "active")
 ANIMAL_FIELDS = (
     "name", "price", "feed_cost", "cycle_seconds", "product_name", "product_quantity", "product_price", "active",
 )
@@ -292,6 +301,133 @@ class AdminService(RankingService):
             session.delete(animal)
             self._audit(session, actor, "delete_animal_type", "animal_type", animal.id, snapshot)
             return {"deleted": code}
+
+    # ---------- 釣魚：魚種、釣具與設定 ----------
+
+    @staticmethod
+    def _text(value, label: str, max_len: int, *, required: bool = False) -> str:
+        value = (value or "").strip() if isinstance(value, str) else ""
+        if len(value) > max_len or (required and not value):
+            raise ValidationError(f"{label}{'必填，' if required else ''}長度不可超過 {max_len} 字。")
+        return value
+
+    def _fish_values(self, data: dict) -> dict:
+        values = fishing.validate_fish(data)
+        values["name"] = _name(data.get("name"), "魚類名稱")
+        values["emoji"] = self._text(data.get("emoji"), "圖示", 16, required=True)
+        values["description"] = self._text(data.get("description"), "說明", 200)
+        values["sort_order"] = _int(data.get("sort_order", 0), "排序", 0, 100_000)
+        return values
+
+    def create_fish_type(self, actor: str, data: dict) -> dict:
+        code = _code(data.get("code"), "魚類代碼")
+        values = self._fish_values(data)
+        with self._transaction() as session:
+            if fishing_repo.get_fish_type(session, code) is not None:
+                raise AlreadyExistsError(f"代碼「{code}」已被使用。")
+            if values["name"] in fishing_repo.fish_type_names(session):
+                raise AlreadyExistsError(f"魚類名稱「{values['name']}」已被使用。")
+            fish = FishType(code=code, active=True, **values)
+            session.add(fish)
+            session.flush()
+            self._audit(session, actor, "create_fish_type", "fish_type", fish.id, fish_type_view(fish))
+            return fish_type_view(fish)
+
+    def update_fish_type(self, actor: str, code: str, data: dict) -> dict:
+        """修改後立即生效；已釣到的魚保留捕獲當下的稀有度與價值，進行中的釣魚也不受影響。"""
+        values = self._fish_values(data)
+        with self._transaction() as session:
+            fish = fishing_repo.get_fish_type(session, code, for_update=True)
+            if fish is None:
+                raise NotFoundError(f"找不到魚類「{code}」。")
+            if values["name"] != fish.name and values["name"] in fishing_repo.fish_type_names(session):
+                raise AlreadyExistsError(f"魚類名稱「{values['name']}」已被使用。")
+            before = _snapshot(fish, FISH_FIELDS)
+            for k, v in values.items():
+                setattr(fish, k, v)
+            self._audit(session, actor, "update_fish_type", "fish_type", fish.id,
+                        {"fish": code, "before": before, "after": _snapshot(fish, FISH_FIELDS)})
+            return fish_type_view(fish)
+
+    def set_fish_type_active(self, actor: str, code: str, active: bool) -> dict:
+        with self._transaction() as session:
+            fish = fishing_repo.get_fish_type(session, code, for_update=True)
+            if fish is None:
+                raise NotFoundError(f"找不到魚類「{code}」。")
+            if fish.active != active:
+                fish.active = active
+                self._audit(session, actor, "enable_fish_type" if active else "disable_fish_type", "fish_type",
+                            fish.id, {"fish": code})
+            return fish_type_view(fish)
+
+    def _gear_values(self, kind: str, data: dict) -> dict:
+        stock = data.get("stock")
+        return {
+            "name": _name(data.get("name"), "釣具名稱"),
+            "emoji": self._text(data.get("emoji"), "圖示", 16, required=True),
+            "description": self._text(data.get("description"), "說明", 200),
+            "price": _int(data.get("price"), "價格", *fishing.GEAR_PRICE_RANGE),
+            "required_level": _int(data.get("required_level"), "需要等級", *fishing.GEAR_LEVEL_RANGE),
+            "stock": None if stock is None else _int(stock, "庫存", *fishing.GEAR_STOCK_RANGE),
+            "effects": fishing.validate_gear_effects(kind, data.get("effects")),
+            "sort_order": _int(data.get("sort_order", 0), "排序", 0, 100_000),
+        }
+
+    def create_fishing_gear(self, actor: str, data: dict) -> dict:
+        code = _code(data.get("code"), "釣具代碼")
+        kind = data.get("kind")
+        if kind not in fishing.GEAR_KINDS:
+            raise ValidationError("釣具類型必須是魚竿、魚線或魚餌。")
+        values = self._gear_values(kind, data)
+        with self._transaction() as session:
+            if fishing_repo.get_gear(session, code) is not None:
+                raise AlreadyExistsError(f"代碼「{code}」已被使用。")
+            if any(g.name == values["name"] for g in fishing_repo.list_gear(session)):
+                raise AlreadyExistsError(f"釣具名稱「{values['name']}」已被使用。")
+            gear = FishingGear(code=code, kind=kind, active=True, **values)
+            session.add(gear)
+            session.flush()
+            self._audit(session, actor, "create_fishing_gear", "fishing_gear", gear.id, gear_view(gear))
+            return gear_view(gear)
+
+    def update_fishing_gear(self, actor: str, code: str, data: dict) -> dict:
+        """修改價格、效果與庫存；效果在下一次拋竿時生效（進行中的釣魚使用拋竿當下的裝備效果）。類型不可修改。"""
+        with self._transaction() as session:
+            gear = fishing_repo.get_gear(session, code, for_update=True)
+            if gear is None:
+                raise NotFoundError(f"找不到釣具「{code}」。")
+            values = self._gear_values(gear.kind, data)
+            if values["name"] != gear.name and any(g.name == values["name"] for g in fishing_repo.list_gear(session)):
+                raise AlreadyExistsError(f"釣具名稱「{values['name']}」已被使用。")
+            before = _snapshot(gear, GEAR_FIELDS)
+            for k, v in values.items():
+                setattr(gear, k, v)
+            self._audit(session, actor, "update_fishing_gear", "fishing_gear", gear.id,
+                        {"gear": code, "before": before, "after": _snapshot(gear, GEAR_FIELDS)})
+            return gear_view(gear)
+
+    def set_fishing_gear_active(self, actor: str, code: str, active: bool) -> dict:
+        """停用後商店不再販售；玩家已持有的仍可裝備使用。"""
+        with self._transaction() as session:
+            gear = fishing_repo.get_gear(session, code, for_update=True)
+            if gear is None:
+                raise NotFoundError(f"找不到釣具「{code}」。")
+            if gear.active != active:
+                gear.active = active
+                self._audit(session, actor, "enable_fishing_gear" if active else "disable_fishing_gear",
+                            "fishing_gear", gear.id, {"gear": code})
+            return gear_view(gear)
+
+    def update_fishing_settings(self, actor: str, raw: dict) -> int:
+        """新增一個釣魚設定版本（稀有度機率合計必須 100%）；只影響之後開始的釣魚。"""
+        settings = fishing.validate_settings(raw)
+        now = self._clock.now()
+        with self._transaction() as session:
+            old_version, old = fishing_repo.current_settings(session)
+            version = fishing_repo.add_settings_version(session, settings, actor, now)
+            self._audit(session, actor, "update_fishing_settings", "fishing_settings", version,
+                        {"from_version": old_version, "before": old, "after": settings})
+            return version
 
     # ---------- 限時事件 ----------
 

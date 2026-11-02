@@ -47,6 +47,32 @@ def victims_at_limit(session: Session, thief_player_id: int, since: datetime, li
     )
 
 
+def thieves_since(session: Session, victim_player_id: int, since: datetime, exclude_thief: int | None = None) -> int:
+    """自 since 起成功偷過這位玩家的不同偷菜者人數（被阻止的不算；可排除某位偷菜者）。"""
+    stmt = select(func.count(func.distinct(StealRecord.thief_player_id))).where(
+        StealRecord.victim_player_id == victim_player_id,
+        StealRecord.outcome == "success",
+        StealRecord.created_at >= since,
+    )
+    if exclude_thief is not None:
+        stmt = stmt.where(StealRecord.thief_player_id != exclude_thief)
+    return int(session.scalar(stmt) or 0)
+
+
+def victims_full(session: Session, thief_player_id: int, since: datetime, limit: int):
+    """自 since 起已被 limit 位其他人成功偷過的被偷者 ID（子查詢；這位偷菜者不能再偷他們）。"""
+    return (
+        select(StealRecord.victim_player_id)
+        .where(
+            StealRecord.thief_player_id != thief_player_id,
+            StealRecord.outcome == "success",
+            StealRecord.created_at >= since,
+        )
+        .group_by(StealRecord.victim_player_id)
+        .having(func.count(func.distinct(StealRecord.thief_player_id)) >= limit)
+    )
+
+
 def stolen_quantity(session: Session, plot_id: int, planting_no: int) -> int:
     """同一株作物（土地＋種植次數）被成功偷走的總數。"""
     stmt = select(func.coalesce(func.sum(StealRecord.quantity), 0)).where(
@@ -62,12 +88,23 @@ def candidate_plots(
     now: datetime,
     wither_cutoff: datetime,
     day_start: datetime,
-    plots_per_victim: int,
+    plots_per_victim: int | None,
+    thieves_per_victim: int | None,
 ) -> list[tuple]:
-    """目前群組中其他成員、已成熟未乾枯、仍有剩餘、偷菜者尚未偷過且今天還沒偷滿該玩家的土地。"""
+    """目前群組中其他成員、已成熟未乾枯、仍有剩餘、偷菜者尚未偷過、今天還沒偷滿該玩家，
+    且該玩家今天被其他人偷的人數還沒達上限的土地（上限為 None 時不限制，例如傳說扒手手套）。
+    每列：(玩家 ID, 玩家名稱, 農場名稱, 土地編號, 作物名稱, 剩餘數量, 作物代碼)。"""
+    limits = []
+    if plots_per_victim is not None:
+        limits.append(GroupMember.player_id.not_in(
+            victims_at_limit(session, thief_player_id, day_start, plots_per_victim)))
+    if thieves_per_victim is not None:
+        limits.append(GroupMember.player_id.not_in(
+            victims_full(session, thief_player_id, day_start, thieves_per_victim)))
     stmt = (
         select(
-            Player.id, Player.display_name, Farm.name, FarmPlot.plot_number, CropType.name, FarmPlot.remaining_quantity
+            Player.id, Player.display_name, Farm.name, FarmPlot.plot_number, CropType.name, FarmPlot.remaining_quantity,
+            CropType.code,
         )
         .select_from(GroupMember)
         .join(Player, Player.id == GroupMember.player_id)
@@ -77,7 +114,7 @@ def candidate_plots(
         .where(
             GroupMember.group_id == group_id,
             GroupMember.player_id != thief_player_id,
-            GroupMember.player_id.not_in(victims_at_limit(session, thief_player_id, day_start, plots_per_victim)),
+            *limits,
             FarmPlot.watered_at.is_not(None),
             FarmPlot.ready_at <= now,
             FarmPlot.ready_at > wither_cutoff,

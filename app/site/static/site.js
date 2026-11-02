@@ -17,6 +17,7 @@
       const info = await res.json();
       setText("site-name", info.name);
       setText("footer-name", info.name);
+      document.title = `${info.name} ✦ Discord 農場與音樂機器人`;
       if (info.invite_url) {
         for (const id of ["invite-btn", "invite-link", "invite-top"]) {
           const a = $(id);
@@ -117,6 +118,8 @@
     setText("g-wither", duration(s.wither_minutes * 60));
     setText("g-upgrade", `每次農田 +${s.upgrade_plots} 格：${s.upgrade_prices.map((p) => num.format(p)).join(" → ")} 金幣（最多 ${s.max_plots} 格）`);
     setText("g-steal-max", String(s.steal_max));
+    if (s.steal_plots_per_day) setText("g-steal-day", String(s.steal_plots_per_day));
+    if (s.steal_thieves_per_day) setText("g-steal-thieves", String(s.steal_thieves_per_day));
     setText("g-transfer", `${s.transfer_cooldown_days} 天`);
     setText("g-craft-max", String(s.craft_max));
     const barn = g.buildings.find((b) => b.name === "畜舍");
@@ -162,6 +165,18 @@
     fillRows("g-events", g.events.length
       ? g.events.map((e) => [e.name, e.effects_text, e.schedule_text, statusTag(e.active_now)])
       : [["目前沒有排定的活動", "", "", ""]]);
+
+    if (g.rankings) renderRankings(g.rankings);
+  }
+
+  // 排名獎勵：啟用中的規則（不含任何得獎紀錄）
+  function renderRankings(r) {
+    const grace = r.settle_grace_seconds;
+    setText("g-rank-grace", grace >= 60 ? `${Math.round(grace / 60)} 分鐘` : `${grace} 秒`);
+    fillRows("g-rankings", r.rules.length
+      ? r.rules.map((x) => [x.name, x.scope === "group" ? "群組（每位成員各一份）" : "個人", x.metric, x.period,
+        x.rewards.map((t, i) => `第 ${i + 1} 名 ${t}`).join("、")])
+      : [["目前沒有啟用中的排名獎勵", "", "", "", ""]]);
   }
 
   // 山洞冒險與機器：區域、抽獎類型機率、素材、機器配方、培育配方與等級解鎖
@@ -171,6 +186,9 @@
     // 物品需要比區域解鎖更高的等級時才標示等級
     const names = (list, unlock) => list.map((i) => (i.min_level > unlock ? `${i.name}（${lv(i.min_level)}）` : i.name))
       .join("、");
+    if (x.areas.length) {
+      setText("g-area-example", `例如${x.areas.slice(0, 2).map((a) => `${a.name} ${duration(a.duration_seconds)}`).join("、")}`);
+    }
     setText("g-fake-coin", `1 個 = ${num.format(x.fake_coin_value)} 金幣`);
     setText("g-material-bag", `上限 ${num.format(x.material_bag_capacity)} 個`);
     fillRows("g-areas", x.areas.map((a) => [`${a.emoji} ${a.name}`, lv(a.unlock_level), duration(a.duration_seconds),
@@ -193,18 +211,71 @@
       u.level > x.max_level ? `${u.text}（尚未開放）` : u.text]));
   }
 
+  // 「農場」功能卡片：名稱與數字取自同一份遊戲設定；清單是空的就保留頁面上的預設文字
+  function listText(items) {
+    if (items.length <= 1) return items.join("");
+    return `${items.slice(0, -1).join("、")}與${items[items.length - 1]}`;
+  }
+
+  function setList(id, items, joiner = "、") {
+    if (items.length) setText(id, joiner ? items.join(joiner) : listText(items));
+  }
+
+  function renderCards(g) {
+    setList("c-qualities", g.qualities.map((q) => q.name));
+    setList("c-mutations", g.mutations.map((m) => m.name));
+    setList("c-animals", g.animals.map((a) => a.name));
+    setList("c-buildings", [...new Set(g.recipes.map((r) => r.building))]);
+    setList("c-recipes", g.recipes.map((r) => r.name));
+    setList("c-defenses", g.defenses.map((d) => d.name));
+    setText("c-hilo", String(g.gamble.hilo_multiplier));
+    setText("c-exact", String(g.gamble.exact_multiplier));
+    setList("c-tools", g.items.filter((i) => i.kind === "tool").map((i) => i.name));
+    setList("c-areas", g.exploration.areas.map((a) => a.name));
+    setList("c-rare-seeds", g.crops.filter((c) => !c.shop_buyable).map((c) => c.name));
+    setList("c-machines", g.exploration.machines.map((m) => m.name), null);
+    setText("c-transfer", String(g.start.transfer_cooldown_days));
+    const r = g.fishing ? g.fishing.rarities : [];
+    if (r.length) setText("c-fish-rarities", `${r[0].name}到${r[r.length - 1].name}共 ${r.length} 種稀有度`);
+  }
+
+  // 釣魚：稀有度機率與售價、基礎成功率、時間設定、釣具與魚類圖鑑
+  function renderFishing(f) {
+    setText("g-fish-wait", `${f.bite_wait[0]}–${f.bite_wait[1]} 秒`);
+    setText("g-fish-react", `${f.reaction_seconds} 秒`);
+    setText("g-fish-timeout", `${f.action_timeout_seconds} 秒`);
+    setText("g-fish-basket", `最多 ${num.format(f.basket_capacity)} 隻`);
+    setText("g-fish-success", `基礎釣魚成功率 ${f.base_success_pct}%，所有稀有度都一樣。稀有度只決定出現哪種魚與拉扯有多難，`
+      + "不會降低成功率；更好的魚竿和魚線能降低操作難度，魚餌能提高稀有魚的出現機率。");
+    fillRows("g-fish-rarities", f.rarities.map((r) => [`${r.emoji} ${r.name}`, pct(r.chance_pct),
+      r.price ? `${num.format(r.price[0])}–${num.format(r.price[1])}` : "目前沒有這種稀有度的魚",
+      `體力 ${r.stamina}；衝刺 ${r.surge_pct}%、強力掙扎 ${r.strong_pct}%` + (r.chain_pct ? `、連續衝刺 ${r.chain_pct}%` : "")]));
+    fillRows("g-fish-gear", f.gear.length
+      ? f.gear.map((g) => [`${g.emoji} ${g.name}`, g.kind_name, g.kind === "bait" ? `${num.format(g.price)}／個` : num.format(g.price),
+        `Lv.${g.required_level}`, g.effects_text])
+      : [["目前沒有販售中的釣具", "", "", "", ""]]);
+    fillRows("g-fish-list", f.fish.length
+      ? f.fish.map((x) => [`${x.emoji} ${x.name}`, `${x.rarity_emoji} ${x.rarity_name}`, `${x.price[0]}–${x.price[1]}`,
+        `${x.weight[0]}–${x.weight[1]}`, x.description])
+      : [["目前沒有開放的魚", "", "", "", ""]]);
+  }
+
   async function loadGuide() {
     const note = $("guide-source");
     try {
       const res = await fetch("/api/guide", { headers: { Accept: "application/json" }, cache: "no-store" });
       if (!res.ok) throw new Error(String(res.status));
-      renderGuide(await res.json());
+      const guide = await res.json();
+      renderGuide(guide);
+      if (guide.fishing) renderFishing(guide.fishing);
+      renderCards(guide);
       note.textContent = `✓ 以下數值即時讀自遊戲設定（最後更新 ${time.format(new Date())}），管理員調整後會自動同步。`;
       note.className = "data-source ok";
     } catch (err) {
       note.textContent = "⚠ 暫時無法讀取最新遊戲設定，以下顯示預設值，實際數值請以遊戲內顯示為準。";
       note.className = "data-source warn";
       fillRows("g-events", [["暫時無法讀取活動，請在 /farm 總覽查看目前的活動", "", "", ""]]);
+      fillRows("g-rankings", [["暫時無法讀取排名獎勵規則，請在 /farm 的「🏆 排行榜 → 🎁 排名獎勵」查看", "", "", "", ""]]);
     }
   }
 
@@ -568,5 +639,7 @@
   loadGuide();
   loadStats();
   setInterval(loadStats, 30000);
-  setInterval(loadGuide, 300000);
+  // 手冊數值（作物、釣魚機率等）：伺服器快取 60 秒，頁面每分鐘重新讀取，切回分頁時也立即更新
+  setInterval(loadGuide, 60000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadGuide(); });
 })();

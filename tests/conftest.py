@@ -11,7 +11,7 @@ from sqlalchemy import make_url, text
 
 from app.clock import ManualClock
 from app.db.session import make_engine, make_session_factory
-from app.game import balance, exploration
+from app.game import balance, exploration, fishing
 from app.services.monitor_service import MonitorService
 from app.services.ranking_service import RankingService
 
@@ -21,6 +21,7 @@ GAME_TABLES = (
     "competition_awards, competition_results, competition_contributions, competitions, "
     "quest_claims, quest_contributions, quests, admin_actions, "
     "exploration_logs, farm_explorations, "
+    "fish_shares, farm_fish, fishing_sessions, farm_fishing_gear, fishing_settings, "
     "craft_orders, farm_animals, farm_buildings, farm_defenses, steal_records, group_members, groups, "
     "gamble_prizes, farm_daily_stats, farm_stats, farm_effects, farm_tools, game_transactions, inventory_items, "
     "farm_plots, farms, "
@@ -93,6 +94,31 @@ def set_test_crop_times(eng) -> None:
                 ),
                 {"name": name, "g": grow, "seed": seed, "q": qty, "sell": sell, "c": code,
                  "vc": variant_code, "vn": variant_name},
+            )
+        # 釣魚目錄：刪除測試新增的魚種／釣具，初始資料重設為 Migration 0016 的值（farm_fish 等已先清空）
+        conn.execute(text("DELETE FROM fish_types WHERE NOT (code = ANY(:c))"),
+                     {"c": [f[0] for f in fishing.INITIAL_FISH]})
+        conn.execute(text("DELETE FROM fishing_gear WHERE NOT (code = ANY(:c))"),
+                     {"c": [g[0] for g in fishing.INITIAL_GEAR]})
+        for i, (code, name, emoji, rarity, pmin, pmax, wmin, wmax, diff, desc) in enumerate(fishing.INITIAL_FISH):
+            conn.execute(
+                text(
+                    "UPDATE fish_types SET name = :name, emoji = :emoji, rarity = :rarity, min_price = :pmin, "
+                    "max_price = :pmax, min_weight_g = :wmin, max_weight_g = :wmax, difficulty = :diff, "
+                    "description = :desc, sort_order = :sort, active = true WHERE code = :code"
+                ),
+                {"name": name, "emoji": emoji, "rarity": rarity, "pmin": pmin, "pmax": pmax, "wmin": wmin,
+                 "wmax": wmax, "diff": diff, "desc": desc, "sort": (i + 1) * 10, "code": code},
+            )
+        for i, (code, kind, name, emoji, price, level, desc, effects) in enumerate(fishing.INITIAL_GEAR):
+            conn.execute(
+                text(
+                    "UPDATE fishing_gear SET kind = :kind, name = :name, emoji = :emoji, price = :price, "
+                    "required_level = :level, description = :desc, effects = CAST(:effects AS json), stock = NULL, "
+                    "sort_order = :sort, active = true WHERE code = :code"
+                ),
+                {"kind": kind, "name": name, "emoji": emoji, "price": price, "level": level, "desc": desc,
+                 "effects": json.dumps(effects), "sort": (i + 1) * 10, "code": code},
             )
         for code, name, price, feed, cycle, _product, pname, pqty, pprice in balance.INITIAL_ANIMALS:
             conn.execute(

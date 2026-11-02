@@ -392,6 +392,42 @@ class RanchService(GameService):
                 quantity=qty,
             )
 
+    def release_animal(self, player_id: int, animal_no: int) -> ActionResult:
+        """放生自己的一隻動物，空出畜舍欄位；不退款。產品還沒收集時不能放生（避免產品遺失）。"""
+        with self._transaction() as session:
+            farm = self._locked_farm(session, player_id)
+            animal = ranch_repo.get_animal(session, farm.id, animal_no, for_update=True)
+            if animal is None:
+                raise NotFoundError(f"沒有編號 {animal_no} 的動物。")
+            now = self._clock.now()
+            animal_type = animals_repo.get(session, animal.animal_code)
+            name, code = animal_type.name, animal.animal_code
+            state = rules.animal_state(animal.fed_at, animal.ready_at, now)
+            if state == AnimalState.READY:
+                raise ValidationError(
+                    f"{name}#{animal_no} 還有{animal_type.product_name}沒收集，"
+                    f"請先收集（animal collect {animal_no}）再放生。"
+                )
+            session.delete(animal)
+            session.flush()
+            self._record(
+                session,
+                farm,
+                EventType.RELEASE_ANIMAL,
+                f"放生 {name}#{animal_no}",
+                item_code=code,
+                quantity=1,
+            )
+            note = "（正在生產中，這次的餵食不會退還）" if state == AnimalState.PRODUCING else ""
+            capacity = self._capacity(session, farm.id)
+            used = ranch_repo.count_animals(session, farm.id)
+            return ActionResult(
+                f"已放生 {name}#{animal_no}{note}，畜舍欄位 {used}/{capacity}，可以再買其他動物了。",
+                farm.gold,
+                item_code=code,
+                quantity=1,
+            )
+
     # ---------- 加工 ----------
 
     def recipes(self, player_id: int | None = None) -> list[dict]:

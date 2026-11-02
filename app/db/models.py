@@ -64,6 +64,9 @@ EVENT_TYPES = (
     "build_machine",
     "exchange",
     "make_seed",
+    "fishing_buy",
+    "fish_sell",
+    "release_animal",
 )
 
 QUALITY_CODES = ("normal", "good", "rare", "legendary")
@@ -915,3 +918,179 @@ class RankingAward(Base):
     reward_type: Mapped[str] = mapped_column(String(32), nullable=False)
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+# ---------- 釣魚（Migration 0016） ----------
+
+FISH_RARITY_SQL = "'common', 'rare', 'epic', 'legendary'"
+FISHING_STATUSES_SQL = (
+    "'casting', 'fighting', 'landed', 'escaped', 'line_broken', 'slipped', 'missed', 'timeout', 'abandoned'"
+)
+
+
+class FishType(Base):
+    """魚種（管理網站可新增、修改、停用）。代碼建立後不可修改；停用後不會再被釣到，已釣到的魚仍可販售。"""
+
+    __tablename__ = "fish_types"
+    __table_args__ = (
+        CheckConstraint(f"rarity IN ({FISH_RARITY_SQL})", name="rarity_valid"),
+        CheckConstraint("min_price <= max_price", name="price_order"),
+        CheckConstraint("min_price >= 0", name="price_non_negative"),  # 售價不受稀有度限制（Migration 0017）
+        CheckConstraint("min_weight_g > 0 AND min_weight_g <= max_weight_g", name="weight_order"),
+        CheckConstraint("difficulty BETWEEN 1 AND 5", name="difficulty_range"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    emoji: Mapped[str] = mapped_column(String(16), nullable=False, server_default="🐟")
+    rarity: Mapped[str] = mapped_column(String(16), nullable=False)
+    min_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_price: Mapped[int] = mapped_column(Integer, nullable=False)
+    min_weight_g: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_weight_g: Mapped[int] = mapped_column(Integer, nullable=False)
+    difficulty: Mapped[int] = mapped_column(Integer, nullable=False, server_default="3")  # 掙扎難度（體力倍率）
+    description: Mapped[str] = mapped_column(String(200), nullable=False, server_default="")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+
+class FishingGear(Base):
+    """釣具商品：魚竿、魚線、魚餌。effects 依類型（app/game/fishing.GEAR_EFFECT_LIMITS）；stock NULL 表示不限量。"""
+
+    __tablename__ = "fishing_gear"
+    __table_args__ = (
+        CheckConstraint("kind IN ('rod', 'line', 'bait')", name="kind_valid"),
+        CheckConstraint("price > 0", name="price_positive"),
+        CheckConstraint("required_level >= 1", name="required_level_positive"),
+        CheckConstraint("stock IS NULL OR stock >= 0", name="stock_non_negative"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    name: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    emoji: Mapped[str] = mapped_column(String(16), nullable=False, server_default="🎣")
+    description: Mapped[str] = mapped_column(String(200), nullable=False, server_default="")
+    price: Mapped[int] = mapped_column(Integer, nullable=False)
+    required_level: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    stock: Mapped[int | None] = mapped_column(Integer)
+    effects: Mapped[dict] = mapped_column(JSON, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+
+class FarmFishingGear(Base):
+    """玩家持有的釣具：魚竿、魚線數量固定 1；魚餌記數量。每種類型最多裝備一件（部分唯一索引）。"""
+
+    __tablename__ = "farm_fishing_gear"
+    __table_args__ = (
+        UniqueConstraint("farm_id", "gear_code", name="uq_farm_fishing_gear_farm_gear"),
+        CheckConstraint("kind IN ('rod', 'line', 'bait')", name="kind_valid"),
+        CheckConstraint("quantity >= 0", name="quantity_non_negative"),
+        Index("uq_farm_fishing_gear_equipped", "farm_id", "kind", unique=True, postgresql_where=text("equipped")),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), nullable=False)
+    gear_code: Mapped[str] = mapped_column(ForeignKey("fishing_gear.code", ondelete="RESTRICT"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    equipped: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FishingSetting(Base):
+    """釣魚設定的版本紀錄（最新版本生效，只新增不修改）；拋竿時把當時的設定存進 Session。"""
+
+    __tablename__ = "fishing_settings"
+    __table_args__ = (CheckConstraint("version >= 1", name="version_positive"),)
+
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    settings: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FishingSession(Base):
+    """一次釣魚：拋竿時扣魚餌並決定魚種、重量、價格與脫鉤回合，之後依時間與操作推進。
+    casting／fighting 為進行中（每座農場最多一筆，部分唯一索引）；其餘為結束狀態。
+    settings／gear 是拋竿當下的快照，管理員之後修改設定不影響進行中的釣魚。"""
+
+    __tablename__ = "fishing_sessions"
+    __table_args__ = (
+        CheckConstraint(f"status IN ({FISHING_STATUSES_SQL})", name="status_valid"),
+        CheckConstraint(f"rarity IN ({FISH_RARITY_SQL})", name="rarity_valid"),
+        CheckConstraint("react_deadline > bite_at AND bite_at > started_at", name="time_order"),
+        CheckConstraint("(status IN ('casting', 'fighting')) = (ended_at IS NULL)", name="ended_consistent"),
+        CheckConstraint("turns >= 0", name="turns_non_negative"),
+        Index(
+            "uq_fishing_sessions_farm_active", "farm_id", unique=True,
+            postgresql_where=text("status IN ('casting', 'fighting')"),
+        ),
+        Index("ix_fishing_sessions_farm_started", "farm_id", "started_at"),
+        Index("ix_fishing_sessions_started_at", "started_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    settings_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    settings: Mapped[dict] = mapped_column(JSON, nullable=False)
+    gear: Mapped[dict] = mapped_column(JSON, nullable=False)  # {"rod": {...}, "line": {...}, "bait": {...}}
+    fish_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    rarity: Mapped[str] = mapped_column(String(16), nullable=False)
+    weight_g: Mapped[int] = mapped_column(Integer, nullable=False)
+    price: Mapped[int] = mapped_column(Integer, nullable=False)
+    state: Mapped[dict] = mapped_column(JSON, nullable=False)  # 拉扯狀態（體力、距離、張力、下一個動作…）
+    turns: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    bite_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    react_deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    action_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    context_group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"))
+
+
+class FarmFish(Base):
+    """釣到的魚（每隻一列，含重量與售價）。sold_at 有值表示已販售（保留作為捕獲紀錄與圖鑑）。
+    session_id 唯一：同一次釣魚不會發放兩隻魚。"""
+
+    __tablename__ = "farm_fish"
+    __table_args__ = (
+        CheckConstraint(f"rarity IN ({FISH_RARITY_SQL})", name="rarity_valid"),
+        CheckConstraint("price BETWEEN 1 AND 200", name="price_range"),
+        CheckConstraint("weight_g > 0", name="weight_positive"),
+        CheckConstraint("(sold_at IS NULL) = (sold_price IS NULL)", name="sold_consistent"),
+        Index("ix_farm_fish_farm_unsold", "farm_id", postgresql_where=text("sold_at IS NULL")),
+        Index("ix_farm_fish_farm_caught", "farm_id", "caught_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), nullable=False)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("fishing_sessions.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    fish_code: Mapped[str] = mapped_column(ForeignKey("fish_types.code", ondelete="RESTRICT"), nullable=False)
+    rarity: Mapped[str] = mapped_column(String(16), nullable=False)  # 捕獲當下的稀有度與價值（之後不變）
+    weight_g: Mapped[int] = mapped_column(Integer, nullable=False)
+    price: Mapped[int] = mapped_column(Integer, nullable=False)
+    caught_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sold_price: Mapped[int | None] = mapped_column(Integer)
+
+
+class FishShare(Base):
+    """魚類分享紀錄（分享不轉移、不消耗魚，也沒有獎勵）。"""
+
+    __tablename__ = "fish_shares"
+    __table_args__ = (
+        Index("ix_fish_shares_farm", "farm_id", "shared_at"),
+        Index("ix_fish_shares_fish", "fish_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    fish_id: Mapped[int] = mapped_column(ForeignKey("farm_fish.id", ondelete="CASCADE"), nullable=False)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), nullable=False)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"))
+    shared_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

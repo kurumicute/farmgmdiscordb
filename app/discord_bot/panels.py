@@ -1,7 +1,8 @@
 """互動式農場面板：用 Embed、按鈕、下拉選單與數量輸入框操作整個遊戲，玩家不需要記指令。
 
 - `/farm` 開出只有自己看得到的面板；同一則訊息依按鈕切換頁面（總覽、農田、背包、商店、販售、動物、加工、
-  防守、偷菜、排行榜、任務競賽、群組、紀錄、說明）。只有開啟面板的玩家可以操作。
+  防守、偷菜、排行榜、任務競賽、群組、紀錄、說明、釣魚）。只有開啟面板的玩家可以操作。
+- 釣魚頁面在 fishing_panel.FishingPages（mixin），不使用圖片。
 - 身分與群組在開啟時由互動來源決定（不接受玩家輸入的 ID）；所有操作都呼叫既有的遊戲服務，
   在 ServiceRunner 的執行緒池中執行，交易完成後才更新 Discord 訊息。
 - 一鍵操作（全部澆水、全部收成、全部賣出…）是依序呼叫多個服務方法，每一步各自是一筆完整交易；
@@ -18,10 +19,12 @@ import re
 from collections.abc import Callable
 from datetime import datetime
 
+import aiohttp
 import discord
 
 from app.cli.commands import CommandHandler
 from app.discord_bot import farm_image
+from app.discord_bot.fishing_panel import FishingPages, fish_line
 from app.discord_bot.runner import player_message
 from app.game import balance, exploration, rules
 from app.game.errors import GameError, ValidationError
@@ -43,7 +46,7 @@ ANIMAL_EMOJI = {"chicken": "🐔", "cow": "🐄", "sheep": "🐑"}
 MATERIAL_EMOJI = {"wood": "🪵", "stone": "🪨", "copper_ore": "🟠", "iron_ore": "⛓️", "resin": "🍯", "herb": "🌿",
                   "gear": "⚙️", "crystal": "💎", "ancient_core": "🌳", "machine_core": "🔩", "fake_coin": "🪙"}
 ITEM_EMOJI = {"fertilizer": "🧪", "earthworm": "🪱", "auto_waterer": "🚿", "patrol_ticket": "🔦",
-              "auto_planter": "🤖", "auto_seller": "🏧"}
+              "auto_planter": "🤖", "auto_seller": "🏧", "thief_glove": "🧤"}
 PLOT_EMOJI = {
     PlotState.EMPTY: "⬜", PlotState.WAITING_WATER: "💧", PlotState.GROWING: "🌱",
     PlotState.READY: "✅", PlotState.WITHERED: "🥀",
@@ -172,7 +175,7 @@ class NameModal(discord.ui.Modal):
 # ---------- 面板 ----------
 
 
-class FarmPanel(discord.ui.View):
+class FarmPanel(FishingPages, discord.ui.View):
     """一個玩家的私密農場面板。頁面內容每次都重新從資料庫讀取，網站或其他介面的修改會立即反映。"""
 
     def __init__(self, cmds, owner_id: int, who, ctx) -> None:
@@ -219,12 +222,13 @@ class FarmPanel(discord.ui.View):
         return True
 
     async def on_timeout(self) -> None:
+        self._cancel_fish_timer()
         for item in self.children:
             item.disabled = True
         if self.message is not None:
             try:
                 await self.message.edit(content="面板已逾時，請重新輸入 /farm。", view=self)
-            except discord.HTTPException:
+            except (discord.HTTPException, aiohttp.ClientError):  # 斷網時是 aiohttp 例外
                 pass
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item) -> None:
@@ -317,6 +321,7 @@ class FarmPanel(discord.ui.View):
         except discord.HTTPException as exc:
             self.sent_digest = None  # 不確定訊息上現在是哪張圖，下次重新上傳
             logger.warning("更新面板失敗：%s", type(exc).__name__)
+        self._schedule_fish_timer(interaction)  # 釣魚畫面：上鉤、反應期限、拉扯逾時時自動更新
 
     def _attachments(self, interaction: discord.Interaction) -> list:
         """圖片和面板訊息上現有的一樣時沿用既有附件（例如賭場連續下注），否則上傳新檔案。"""
@@ -329,6 +334,7 @@ class FarmPanel(discord.ui.View):
 
     async def goto(self, interaction: discord.Interaction, page: str, notice: str | None = None) -> None:
         self.page, self.picker, self.confirm = page, None, None
+        self.fish_sell_ids = None
         await self.refresh(interaction, notice)
 
     async def act(
@@ -602,6 +608,7 @@ class FarmPanel(discord.ui.View):
         self.nav("作物價格", "prices", emoji="📈", row=4)
         self.nav("賭場", "casino", emoji="🎰", row=4, style=discord.ButtonStyle.primary)
         self.nav("山洞", "cave", emoji="⛰️", row=4, style=discord.ButtonStyle.primary)
+        self.nav("釣魚", "fishing", emoji="🎣", row=4, style=discord.ButtonStyle.primary)
         self.nav("說明", "help", emoji="❓", row=4)
         return e
 
@@ -722,10 +729,10 @@ class FarmPanel(discord.ui.View):
     # ======================================================================
 
     def _load_backpack(self):
-        return {"backpack": self.svc.get_backpack(self.player_id)}
+        return {"backpack": self.svc.get_backpack(self.player_id), "fish": self.svc.fish_basket(self.player_id)}
 
     def _build_backpack(self, d):
-        bp = d["backpack"]
+        bp, basket = d["backpack"], d["fish"]
         rare_seeds = exploration.rare_seed_codes()  # 稀有種子放素材背包，不佔倉庫
         tools = [f"{'✅' if t.enabled else '⏸️'} {t.name}（{'啟用中' if t.enabled else '已停用'}）" if t.owned
                  else f"🔒 {t.name}（未購買）" for t in bp.tools]
@@ -746,6 +753,9 @@ class FarmPanel(discord.ui.View):
               for x in bp.materials]),
             ("🔧 工具", tools),
             ("✨ 生效中的效果", effects),
+            (f"🎣 魚簍 {len(basket['fish'])}/{basket['capacity']}（全部價值 {money(basket['total_value'])} 金）",
+             [fish_line(f) for f in basket["fish"][:8]]
+             + ([f"…還有 {len(basket['fish']) - 8} 隻，到「🎣 魚簍」查看"] if len(basket["fish"]) > 8 else [])),
         ))
         for t in bp.tools:
             if t.owned:
@@ -756,6 +766,7 @@ class FarmPanel(discord.ui.View):
                 self.button(f"{'停用' if t.enabled else '啟用'}{t.name}", toggle, emoji="🔧", row=0)
         self.nav("前往販售", "sell", emoji="💰", row=1)
         self.nav("商店", "shop", emoji="🏪", row=1)
+        self.nav("魚簍", "fish_basket", emoji="🎣", row=1)
         coins = next((x.quantity for x in bp.materials if x.code == exploration.FAKE_COIN), 0)
         if coins:
             async def exchange(interaction):
@@ -816,7 +827,7 @@ class FarmPanel(discord.ui.View):
         for code, (name, price, kind, desc, _a) in balance.ITEMS.items():
             have = held.get(f"item:{code}", 0)
             if kind == "tool":
-                tag = "💎 奢侈品" if code in (balance.TOOL_AUTO_PLANTER, balance.TOOL_AUTO_SELLER) else "♾️ 永久工具"
+                tag = "💎 奢侈品" if code in balance.LUXURY_TOOLS else "♾️ 永久工具"
                 own = "✅ 已擁有" if have else "🔒 未擁有"
                 tools.append(f"{mark('item:' + code)}{ITEM_EMOJI.get(code, '🎁')} **{name}**　💰 **{money(price)}** 金"
                              f"　{tag}　{own}\n　📝 {desc}")
@@ -835,7 +846,7 @@ class FarmPanel(discord.ui.View):
         events = [f"🔥 **{ev['name']}**{'（限' + ev['crop_name'] + '）' if ev['crop_name'] else ''}"
                   f"\n　{ev['effects_text']}" for ev in d["events"]]
         e = discord.Embed(title="🏪 ✦ 農場商店 ✦", color=GOLD, description=sections(
-            f"💰 你的金幣：**{money(d['gold'])}**",
+            f"💰 你的金幣：**{money(d['gold'])}**　｜　🎣 釣具在「釣具商店」分頁",
             ("🌰 種子", seeds, "\n\n"),
             ("🧪 道具", consumables, "\n\n"),
             ("📦 倉庫", [warehouse]),
@@ -897,6 +908,9 @@ class FarmPanel(discord.ui.View):
                     if kind == "tool" and not held.get(f"item:{code}")]
         self.select("🛒 選擇要買的商品…", options, pick, row=0, selected=selected)
         self.quantity_buttons(row=1)
+        # 商店分成兩個分頁：農場商店（種子、道具、工具）與釣具商店
+        self.button("農場商店", self._noop, emoji="🌾", row=4, style=discord.ButtonStyle.primary, disabled=True)
+        self.nav("釣具商店", "fish_shop", emoji="🎣", row=4)
         self._nav_back()
         self.attach_image(e, d["image"])
         return e
@@ -1137,6 +1151,29 @@ class FarmPanel(discord.ui.View):
                                       ANIMAL_EMOJI.get(t["code"], "🐾")) for t in d["types"]], pick, row=1,
                     selected=(self.picker or {}).get("key"))
         self.quantity_buttons(row=2)
+
+        # 放生：先選動物，再按一次「確認放生」（不退款，不能復原）
+        releasing = self.confirm.split(":", 1)[1] if (self.confirm or "").startswith("release:") else None
+
+        async def pick_release(interaction, value):
+            a = next(x for x in d["animals"] if str(x["animal_no"]) == value)
+            self.picker, self.confirm = None, f"release:{value}"
+            warn = "，這次的餵食不會退還" if a["state"] == "producing" else ""
+            await self.refresh(interaction, f"⚠️ 確定要放生 {a['name']}#{value} 嗎？放生後不會退款{warn}。"
+                                            "再按一次「確認放生」。")
+
+        def release_option(a):
+            state = {"producing": "生產中", "ready": "產品未收集，要先收集", "hungry": "待餵食"}.get(a["state"], "")
+            return (f"#{a['animal_no']} {a['name']}", str(a["animal_no"]), f"🕊️ 放生（{state}）",
+                    ANIMAL_EMOJI.get(a["code"], "🐾"))
+
+        self.select("🕊️ 放生動物（空出欄位買其他動物）…", [release_option(a) for a in d["animals"][:25]],
+                    pick_release, row=3, selected=releasing)
+        if releasing is not None:
+            async def release(interaction):
+                await self.act(interaction, lambda: self.svc.release_animal(self.player_id, int(releasing)).message)
+
+            self.button(f"確認放生 #{releasing}", release, emoji="🕊️", row=4, style=discord.ButtonStyle.danger)
         self._nav_back()
         self.attach_image(e, d["image"])
         return e
@@ -1443,7 +1480,8 @@ class FarmPanel(discord.ui.View):
     def _load_steal(self):
         self._require_guild_for_steal()
         return {"targets": self.svc.steal_targets(self.group_id, self.player_id),
-                "players": self.svc.steal_players(self.group_id, self.player_id)}
+                "players": self.svc.steal_players(self.group_id, self.player_id),
+                "glove": self.svc.thief_glove_enabled(self.player_id)}
 
     def _steal_action(self, victim: int, value: str):
         plot, qty = (int(x) for x in value.split("|"))
@@ -1460,8 +1498,7 @@ class FarmPanel(discord.ui.View):
             "👀 用第一個選單選一位玩家，可以打開他的農田畫面，再選要偷哪一格。",
             ("可以偷的成熟作物", lines, "\n\n") if lines else "目前沒有可以偷的成熟作物。"
         ))
-        e.set_footer(text=f"每株作物每人只能偷一次，每次最多 {balance.STEAL_MAX_PER_ACTION} 個；"
-                          f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田；對方可能有防守設施。"
+        e.set_footer(text=steal_footer(d.get("glove", False))
                           + (f"第 {self.steal_page + 1}/{pages} 頁" if pages > 1 else ""))
 
         # 玩家選單：選一位玩家打開他的農田
@@ -1473,6 +1510,8 @@ class FarmPanel(discord.ui.View):
         def player_option(r):
             if r["limit_reached"]:
                 return f"今天已經偷過了｜{r['farm_name']}", "✅"
+            if r.get("victim_full"):
+                return f"今天已被 {balance.STEAL_THIEVES_PER_VICTIM_PER_DAY} 人偷過｜{r['farm_name']}", "🔒"
             if r["stealable"]:
                 return f"可以偷 {r['stealable']} 格｜{r['farm_name']}", "🥷"
             return f"目前沒有可偷的作物｜{r['farm_name']}", "🌱"
@@ -1528,8 +1567,13 @@ class FarmPanel(discord.ui.View):
         if v.limit_reached:
             status = (f"✅ 你今天已經偷過 {v.player_name} 的田了"
                       f"（每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格），明天再來。")
+        elif v.victim_full:
+            status = (f"🔒 {v.player_name} 今天已經被 {balance.STEAL_THIEVES_PER_VICTIM_PER_DAY} 個人偷過了"
+                      f"（每人每天最多被 {balance.STEAL_THIEVES_PER_VICTIM_PER_DAY} 人偷），明天再來。")
         elif v.warehouse_full:
             status = "📦 你的倉庫已滿，先清出空間才能偷菜。"
+        elif v.targets and v.glove:
+            status = f"🧤 傳說扒手手套生效中：有 **{len(v.targets)}** 格可以偷，每格都能下手，不限次數。"
         elif v.targets:
             status = (f"🥷 有 **{len(v.targets)}** 格可以偷，用下方選單選一格；"
                       f"今天只能偷他 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格，選好再下手。")
@@ -1540,8 +1584,7 @@ class FarmPanel(discord.ui.View):
             status,
             ("農田", lines),
         ))
-        e.set_footer(text=f"每株作物每人只能偷一次，每次最多 {balance.STEAL_MAX_PER_ACTION} 個；"
-                          f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田；對方可能有防守設施。")
+        e.set_footer(text=steal_footer(v.glove))
 
         async def steal(interaction, value):
             await self.act(interaction, self._steal_action(v.player_id, value))
@@ -2030,6 +2073,15 @@ class FarmPanel(discord.ui.View):
         return help_embed()
 
 
+def steal_footer(glove: bool) -> str:
+    """偷菜頁底部的規則說明；有傳說扒手手套時不受每日土地與人數上限。"""
+    per = f"每株作物每人只能偷一次，每次最多 {balance.STEAL_MAX_PER_ACTION} 個（小麥 1 個）；"
+    if glove:
+        return per + "🧤 傳說扒手手套：不限人數與次數；對方可能有防守設施。"
+    return (per + f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田、每人每天最多被 "
+            f"{balance.STEAL_THIEVES_PER_VICTIM_PER_DAY} 人偷；對方可能有防守設施。")
+
+
 def help_embed() -> discord.Embed:
     e = discord.Embed(title="❓ 怎麼玩", color=BLUE, description=(
         "輸入 **/farm** 打開農場面板，所有操作都用按鈕和選單完成，面板只有你看得到。"))
@@ -2041,12 +2093,20 @@ def help_embed() -> discord.Embed:
         "先建造畜舍再買動物，餵食後等待生產再收集。磨坊、烘焙坊、果醬工坊可以把作物加工成更值錢的商品。"))
     e.add_field(name="🥷 偷菜與防守", inline=False, value=(
         "可以偷同一伺服器成員已成熟的作物：在「🥷 偷菜」選一位玩家打開他的農田，再選要偷哪一格；"
-        "每天只能偷同一位玩家 1 格田。稻草人、警戒犬、防盜圍欄能阻止別人偷你的菜，巡查券可以查是誰來偷。"))
+        f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田，每人每天最多被 "
+        f"{balance.STEAL_THIEVES_PER_VICTIM_PER_DAY} 個人偷"
+        f"（每次最多偷 {balance.STEAL_MAX_PER_ACTION} 個，小麥 1 個）。"
+        "商店的「傳說扒手手套」可以不受每日限制，偷所有人的所有成熟農田。"
+        "稻草人、警戒犬、防盜圍欄能阻止別人偷你的菜，巡查券可以查是誰來偷。"))
     e.add_field(name="⛰️ 山洞冒險", inline=False, value=(
         "總覽「⛰️ 山洞」探索青青草原（Lv.1）、古老森林（Lv.5）、神秘礦坑（Lv.10），分別探險 8／16／24 小時，"
         "一次只能去一個區域，回來後領取獎勵才能再出發；可取得素材、稀有種子與假幣（背包兌換，1 個 = 100 金）。"
         "素材可在「🔧 機器」製作種子製造機、自動收割機、"
         "自動加工機與稀有作物培育器。"))
+    e.add_field(name="🎣 釣魚", inline=False, value=(
+        "總覽「🎣 釣魚」→ 先到「🛒 釣具商店」買魚竿、魚線、魚餌（商店也有「🎣 釣具商店」分頁）→「開始釣魚」。"
+        "魚上鉤後在時限內按「拉竿」，再依 💬 提示收線／放線／等待，把距離拉到 0 就釣起來了。"
+        "稀有度只影響拉扯難度，基礎成功率都一樣；釣到的魚放進魚簍，可以出售或「📢 分享到群組」。"))
     e.add_field(name="👥 群組", inline=False, value=(
         "每個 Discord 伺服器是一個群組。你的農場屬於建立時的伺服器，只有在那裡的操作才計入群組任務與競賽；"
         "可在「👥 群組」把農場轉移到目前的伺服器（每 7 天一次）。"))
