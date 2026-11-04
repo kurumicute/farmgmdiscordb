@@ -466,6 +466,23 @@ class GameService:
                 farm.gold,
             )
 
+    def rename_farm(self, player_id: int, new_name: str) -> ActionResult:
+        """更改自己農場的名稱，每次花費 balance.RENAME_FARM_COST 金幣（經 _record 記錄扣款）。"""
+        cost = balance.RENAME_FARM_COST
+        name = rules.validate_name(new_name, label="農場名稱", max_len=balance.FARM_NAME_MAX_LEN)
+        with self._transaction() as session:
+            farm = self._locked_farm(session, player_id)
+            if farm.name == name:
+                raise ValidationError("新名稱和目前的農場名稱相同。")
+            if farm.gold < cost:
+                raise InsufficientGoldError(f"金幣不足：改名需要 {cost}，目前只有 {farm.gold}。")
+            old_name = farm.name
+            farm.name = name
+            farm.gold -= cost
+            self._record(session, farm, EventType.RENAME_FARM, f"農場改名：「{old_name}」→「{name}」"[:200],
+                         gold_delta=-cost)
+            return ActionResult(f"農場名稱已從「{old_name}」改為「{name}」，花費 {cost} 金幣。", farm.gold, -cost)
+
     def _status(self, session: Session, farm: Farm, player_name: str) -> FarmStatus:
         now = self._clock.now()
         plots = []

@@ -421,7 +421,8 @@ def test_background_settlement_concurrent_no_duplicate(admin, clock, session_fac
         for t in threads:
             t.join()
         # 再跑一次（模擬重啟／Gateway 重連後再觸發）不會重複
-        assert admin.run_background_settlement("system") == {"rankings": [], "competitions": []}
+        assert admin.run_background_settlement("system") == {
+            "rankings": [], "competitions": [], "world_boss": [], "world_boss_spawned": []}
     finally:
         engine.dispose()
     created = [sid for r in results if r for sid in r["rankings"]]

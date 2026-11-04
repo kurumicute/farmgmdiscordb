@@ -855,7 +855,8 @@
     "casino": "scenes/casino.png",
     "explore_grassland": "scenes/explore_grassland.png",
     "explore_forest": "scenes/explore_forest.png",
-    "explore_mine": "scenes/explore_mine.png"
+    "explore_mine": "scenes/explore_mine.png",
+    "world_boss": "scenes/world_boss.png"
   },
   "layering": {
     "field": "依農場土地數選 field.bases[n]（4～16），第 k 塊地（依 plot_number 排序，0 起算）畫在 field.cells[k].rect",

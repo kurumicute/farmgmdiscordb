@@ -14,6 +14,7 @@ class MonitorConnection {
     this.attempt = 0;
     this.timer = null;
     this.ws = null;
+    this.paused = false;
   }
 
   static backoff(attempt) {
@@ -51,7 +52,34 @@ class MonitorConnection {
     };
   }
 
+  // 分頁切到背景時暫停：關閉連線、不重連，伺服器就不會為看不到的分頁持續查詢資料庫
+  pause() {
+    if (this.paused) return;
+    this.paused = true;
+    if (this.timer) this.clearTimeout(this.timer);
+    this.timer = null;
+    const ws = this.ws;
+    this.ws = null; // 先清掉，onclose 才不會排程重連
+    if (ws) {
+      try {
+        ws.close();
+      } catch (err) {
+        // 連線本來就斷了
+      }
+    }
+    this.onStatus("paused", null);
+  }
+
+  // 回到前景：立即重新連線（連上後伺服器會馬上推送最新快照）
+  resume() {
+    if (!this.paused) return;
+    this.paused = false;
+    this.attempt = 0;
+    this.connect();
+  }
+
   scheduleReconnect() {
+    if (this.paused) return;
     this.ws = null;
     this.attempt += 1;
     const delay = MonitorConnection.backoff(this.attempt);
@@ -92,6 +120,7 @@ if (typeof document !== "undefined") {
     transfer_group: "轉移所屬群組", gamble: "賭場",
     explore: "山洞探索", build_machine: "製作機器", exchange: "假幣兌換", make_seed: "製造種子",
     fishing_buy: "購買釣具", fish_sell: "販售魚類", release_animal: "放生動物",
+    boss_donate: "世界 Boss 捐獻", boss_reward: "世界 Boss 獎勵", rename_farm: "農場改名",
   };
 
   const state = {
@@ -234,6 +263,7 @@ if (typeof document !== "undefined") {
     fishing: ["釣魚管理", "釣魚數據、玩家釣魚紀錄、魚類與釣具管理、釣魚機率設定"],
     events: ["限時活動", "加成活動的效果、排程與啟用狀態"],
     community: ["任務與競賽", "群組任務進度、群組競賽排名與結算"],
+    worldboss: ["世界 Boss", "群組後勤活動：建立與控制 Boss、補給與獎勵設定、捐獻與領獎紀錄"],
     leaderboard: ["排行榜", "總排行榜、群組內排行與群組總排行（名次以後端排序為準）"],
     rewards: ["排名獎勵", "每日／每週／每月排名獎勵規則與結算紀錄"],
     steals: ["偷菜與防守", "偷菜成功與被阻止紀錄、各農場防守設施"],
@@ -1150,6 +1180,9 @@ if (typeof document !== "undefined") {
     delete_animal: "刪除玩家動物", set_farm_values: "調整金幣與等級",
     create_ranking_rule: "新增排名獎勵", update_ranking_rule: "修改排名獎勵", enable_ranking_rule: "啟用排名獎勵",
     disable_ranking_rule: "停用排名獎勵", delete_ranking_rule: "刪除排名獎勵", settle_ranking: "結算排名獎勵",
+    world_boss_create: "建立世界 Boss", world_boss_update: "修改世界 Boss", world_boss_settings: "調整 Boss 補給",
+    world_boss_rewards: "調整 Boss 獎勵", world_boss_start: "開始世界 Boss", world_boss_pause: "暫停世界 Boss",
+    world_boss_resume: "繼續世界 Boss", world_boss_end: "結束世界 Boss",
     create_fish_type: "新增魚類", update_fish_type: "修改魚類", enable_fish_type: "啟用魚類", disable_fish_type: "停用魚類",
     create_fishing_gear: "新增釣具", update_fishing_gear: "修改釣具", enable_fishing_gear: "啟用釣具",
     disable_fishing_gear: "停用釣具", update_fishing_settings: "調整釣魚設定",
@@ -1398,7 +1431,8 @@ if (typeof document !== "undefined") {
       await loadAuth();
       $("admin-menu").open = false;
       toast(`已登入管理員 ${extra.admin.username || ""}`, "good");
-      await Promise.all([loadCommunity(), loadGenetics(), loadCatalog(), loadPlayerAdmin(), loadRankingRewards()]);
+      await Promise.all([loadCommunity(), loadGenetics(), loadCatalog(), loadPlayerAdmin(), loadRankingRewards(),
+        loadWorldBoss()]);
     } catch (err) {
       $("admin-note").textContent = `登入失敗：${err.message}`;
     }
@@ -1412,7 +1446,7 @@ if (typeof document !== "undefined") {
     $("admin-menu").open = false;
     toast("已登出管理員", "info");
     genetics.formBuilt = false;
-    await Promise.all([loadCommunity(), loadGenetics(), loadCatalog(), loadRankingRewards()]);
+    await Promise.all([loadCommunity(), loadGenetics(), loadCatalog(), loadRankingRewards(), loadWorldBoss()]);
   }
 
   // 下拉選單：保留目前選擇；選項文字由 Option 建構子設定（純文字，不解析 HTML）
@@ -3129,6 +3163,416 @@ if (typeof document !== "undefined") {
     });
   }
 
+  // ---------- 世界 Boss：活動列表、詳情（補給、排行、捐獻與領獎紀錄）與管理表單 ----------
+  const boss = { selected: null, data: null, detail: null, formsFor: null, scheduleId: null, scheduleFilled: false };
+  const BOSS_SUPPLIES = ["food", "medical", "combat", "equipment"];
+  const BOSS_OUTCOMES = { victory: "勝利", participation: "參與" };
+  const BOSS_END_REASONS = { defeated: "Boss 被擊敗", timeout: "時間到", admin: "管理員結束" };
+
+  function bossItemsText(items) {
+    return Object.entries(items || {}).map(([code, qty]) => `${code}×${qty}`).join(", ");
+  }
+
+  // 「crystal×1, gear*2」→ {crystal: 1, gear: 2}；格式錯誤時丟出可讀的錯誤
+  function parseBossItems(text, label) {
+    const out = {};
+    for (const raw of text.split(/[,，\n]/)) {
+      const part = raw.trim();
+      if (!part) continue;
+      const m = part.match(/^([a-z][a-z0-9_]{1,31})\s*[×x*]\s*(\d+)$/);
+      if (!m) throw new Error(`${label}「${part}」格式不正確，請用「代碼×數量」。`);
+      out[m[1]] = Number(m[2]);
+    }
+    return out;
+  }
+
+  function bossActionButtons(e) {
+    if (!extra.admin.loggedIn || e.state === "ended" || e.state === "defeated") return el("td");
+    const actions = [];
+    if (e.state === "scheduled") actions.push(["start", "立即開始", ""]);
+    if (e.state === "active") actions.push(["pause", "暫停", ""]);
+    if (e.state === "paused") actions.push(["resume", "繼續", ""]);
+    actions.push(["end", "結束", "danger"]);
+    return el("td", {}, actions.map(([action, label, cls]) => {
+      const btn = el("button", { className: cls, text: label });
+      btn.type = "button";
+      btn.addEventListener("click", (ev) => { ev.stopPropagation(); bossAction(e, action, label); });
+      return btn;
+    }));
+  }
+
+  async function bossAction(e, action, label) {
+    const messages = {
+      start: "活動會立即開始，玩家可以開始捐獻。",
+      pause: "暫停期間 Boss 不會受到傷害，玩家也不能捐獻；活動結束時間不變。",
+      resume: "繼續後恢復自動作戰與捐獻。",
+      end: "結束後無法恢復；玩家可以依目前結果領取獎勵（未擊敗則發參與獎勵）。",
+    };
+    const answer = await confirmDialog({
+      title: `${label}「${e.name}」`, message: messages[action], confirmText: label, danger: action === "end",
+    });
+    if (!answer.ok) return;
+    try {
+      await adminRequest("POST", `/api/admin/world-boss/${e.event_id}/${action}`);
+      toast(`已${label}世界 Boss「${e.name}」。`, "good");
+      await loadWorldBoss();
+    } catch (err) {
+      toast(`${label}失敗：${err.message}`, "bad");
+    }
+  }
+
+  async function loadWorldBoss() {
+    const scopes = extra.groups.map((g) => [g.group_id, `🏠 #${g.group_id} ${g.name}`]);
+    fillSelect($("wbf-group"), scopes, "🌏 全服（所有玩家）");
+    fillSelect($("wsc-group"), scopes, "🌏 全服（所有玩家）");
+    try {
+      boss.data = await fetchJson("/api/monitor/world-boss?limit=200");
+    } catch (err) {
+      replaceRows($("wb-rows"), [], `世界 Boss 資料載入失敗：${err.message}`, 9);
+      return;
+    }
+    const d = boss.data.defaults;
+    if (!$("wbf-name").value) $("wbf-name").value = d.name;
+    if (!$("wbf-hp").value) $("wbf-hp").value = d.max_hp;
+    if (!$("wbf-start").value) {
+      const now = new Date();
+      $("wbf-start").value = localInput(now);
+      $("wbf-end").value = localInput(new Date(now.getTime() + d.duration_hours * 3600000));
+    }
+    $("wbs-codes").textContent = "可捐獻代碼：" + d.donatable.map((x) => `${x.code}（${x.name}）`).join("、");
+    const rows = boss.data.events.map((e) => {
+      const tr = el("tr", { className: "clickable" }, [
+        td(e.event_id, "num"), td(e.group_name), td(e.schedule_id ? `${e.name}（排程）` : e.name), statusTd(e.state_label),
+        progressTd(fmtNum(e.hp), fmtNum(e.max_hp), e.hp_pct), td(fmtNum(e.participants), "num"),
+        td(fmtNum(e.total_quantity), "num"), td(`${fmtTime(e.starts_at)} ～ ${fmtTime(e.ends_at)}`),
+        bossActionButtons(e),
+      ]);
+      if (e.event_id === boss.selected) tr.classList.add("selected");
+      tr.addEventListener("click", () => { boss.selected = e.event_id; boss.formsFor = null; loadWorldBoss(); });
+      return tr;
+    });
+    replaceRows($("wb-rows"), rows, "目前沒有世界 Boss 活動", 9);
+    replaceRows($("wbsch-rows"), scheduleRows(boss.data.schedules), "目前沒有排程", 9);
+    if (!boss.scheduleFilled) { boss.scheduleFilled = true; fillScheduleForm(null); }
+    await loadWorldBossDetail();
+  }
+
+  async function loadWorldBossDetail() {
+    const box = $("wb-detail");
+    if (!boss.selected) { box.hidden = true; return; }
+    let v;
+    try {
+      v = await fetchJson(`/api/monitor/world-boss/${boss.selected}`);
+    } catch (err) {
+      box.hidden = true;
+      return;
+    }
+    boss.detail = v;
+    box.hidden = false;
+    $("wb-detail-title").textContent = `#${v.event_id} ${v.name}（${v.scope_label}）`;
+    $("wb-detail-meta").textContent = `${v.state_label}・HP ${fmtNum(v.hp)} / ${fmtNum(v.max_hp)}（${v.hp_pct}%）・`
+      + `${fmtTime(v.starts_at)} ～ ${fmtTime(v.ends_at)}・建立者 ${v.created_by}`;
+    $("wb-supplies").replaceChildren(...v.supplies.map((s) => el("li", {
+      text: `${s.emoji} ${s.name}（${s.effect}）：${fmtNum(s.progress)} / ${fmtNum(s.target)}（${s.ratio_pct}%）`,
+    })));
+    const status = [
+      `攻擊倍率 ×${v.attack_mult}・出勤率 ${v.uptime_pct}%・每小時傷害 ${fmtNum(v.damage_per_hour)}`,
+      `活躍參與人數 ${fmtNum(v.participants)}・捐獻 ${fmtNum(v.donations)} 次`,
+      `活動總捐獻量 ${fmtNum(v.total_quantity)} 個・總積分 ${fmtNum(v.total_points)}`,
+      v.ended_at ? `已結束：${fmtTime(v.ended_at)}（${BOSS_END_REASONS[v.end_reason] || v.end_reason}）` : "尚未結算",
+      v.settled_at ? `結算確認：${fmtTime(v.settled_at)}・已領獎 ${fmtNum(v.claims)} 人` : "獎勵：活動結束後開放領取",
+    ];
+    if (v.paused_at) status.push(`暫停於 ${fmtTime(v.paused_at)}`);
+    $("wb-status").replaceChildren(...status.map((t) => el("li", { text: t })));
+    const r = v.rewards_text;
+    const rewardLines = [`勝利：${r.victory}`, `參與：${r.participation}`];
+    if (r.min_points) rewardLines.unshift(`參與門檻：積分 ≥ ${fmtNum(r.min_points)}（未達沒有任何獎勵）`);
+    if (r.bonus_points) rewardLines.push(`積分 ≥ ${fmtNum(r.bonus_points)}：${r.bonus}`);
+    r.rank.forEach((t, i) => rewardLines.push(`第 ${i + 1} 名：${t}`));
+    if (r.title) rewardLines.push(`稱號「${r.title}」：擊敗時前 ${r.title_top} 名`);
+    $("wb-reward-list").replaceChildren(...rewardLines.map((t) => el("li", { text: t })));
+    replaceRows($("wb-rank-rows"), v.ranking.map((x) => el("tr", {}, [
+      td(x.rank, "num"), td(x.player_name), td(fmtNum(x.points), "num"), td(fmtNum(x.quantity), "num"),
+      td(fmtNum(x.donations), "num"), td(fmtTime(x.first_at)),
+    ])), "還沒有玩家捐獻", 6);
+    replaceRows($("wb-log-rows"), v.contributions.map((c) => el("tr", {}, [
+      td(fmtTime(c.created_at)), td(c.player_name), td(c.category_name), td(c.item_name), td(fmtNum(c.quantity), "num"),
+      td(c.supply), td(fmtNum(c.points), "num"), td(fmtNum(c.damage), "num"),
+    ])), "沒有捐獻紀錄", 8);
+    replaceRows($("wb-claim-rows"), v.claim_rows.map((c) => el("tr", {}, [
+      td(fmtTime(c.claimed_at)), td(c.player_name), td(c.rank, "num"), td(fmtNum(c.points), "num"),
+      td(BOSS_OUTCOMES[c.outcome] || c.outcome), td(fmtNum(c.gold), "num"), td(c.items_text, "wrap"), td(c.title || "—"),
+    ])), "沒有獎勵發放紀錄", 8);
+    if (boss.formsFor !== v.event_id) fillBossForms(v);
+  }
+
+  // 只在切換活動時填入表單，避免自動更新覆蓋正在編輯的內容
+  function fillBossForms(v) {
+    boss.formsFor = v.event_id;
+    $("wbb-name").value = v.name;
+    $("wbb-hp").value = v.max_hp;
+    $("wbb-start").value = localInput(new Date(v.starts_at));
+    $("wbb-end").value = localInput(new Date(v.ends_at));
+    const s = v.settings;
+    $("wbs-dph").value = s.base_damage_per_hour;
+    $("wbs-instant").value = s.instant_damage_per_point;
+    $("wbs-gpp").value = s.gold_per_point;
+    $("wbs-crop").value = s.crop_supply;
+    $("wbs-fish").value = s.fish_supply;
+    for (const code of BOSS_SUPPLIES) $(`wbs-t-${code}`).value = s.supply_targets[code];
+    $("wbs-cap").value = s.effects.ratio_cap_pct;
+    $("wbs-uptime").value = s.effects.base_uptime_pct;
+    $("wbs-medical").value = s.effects.medical_recovery_pct;
+    $("wbs-combat").value = s.effects.combat_attack_pct;
+    $("wbs-equipment").value = s.effects.equipment_attack_pct;
+    $("wbs-per-item").value = s.limits.per_item_max;
+    $("wbs-per-action").value = s.limits.per_action_max;
+    $("wbs-items").value = Object.entries(s.items).map(([code, x]) => `${code} ${x.supply} ${x.points}`).join("\n");
+    fillBossRewards("wbr", v.rewards);
+    for (const id of ["wb-basic-box", "wb-settings-box", "wb-rewards-box"]) clearDirty(id);
+  }
+
+  function bossSettingsBody() {
+    const items = {};
+    $("wbs-items").value.split("\n").forEach((line, i) => {
+      const t = line.trim();
+      if (!t) return;
+      const m = t.match(/^([a-z][a-z0-9_]{1,31})\s+(food|medical|combat|equipment)\s+(\d+)$/);
+      if (!m) throw new Error(`指定物品第 ${i + 1} 行「${t}」格式不正確，請用「代碼 補給 積分」。`);
+      items[m[1]] = { supply: m[2], points: Number(m[3]) };
+    });
+    const num = (id) => Number($(id).value);
+    return {
+      base_damage_per_hour: num("wbs-dph"), instant_damage_per_point: num("wbs-instant"), gold_per_point: num("wbs-gpp"),
+      crop_supply: $("wbs-crop").value, fish_supply: $("wbs-fish").value,
+      supply_targets: Object.fromEntries(BOSS_SUPPLIES.map((c) => [c, num(`wbs-t-${c}`)])),
+      effects: {
+        ratio_cap_pct: num("wbs-cap"), base_uptime_pct: num("wbs-uptime"), medical_recovery_pct: num("wbs-medical"),
+        combat_attack_pct: num("wbs-combat"), equipment_attack_pct: num("wbs-equipment"),
+      },
+      limits: { per_item_max: num("wbs-per-item"), per_action_max: num("wbs-per-action") },
+      items,
+    };
+  }
+
+  // 獎勵表單（活動的 wbr-*、排程的 wsr-* 共用）
+  function bossRewardsBody(p = "wbr") {
+    const rank = $(`${p}-rank`).value.split("\n").map((l) => l.trim()).filter(Boolean).map((line, i) => {
+      const [gold, ...rest] = line.split(/\s+/);
+      if (!/^\d+$/.test(gold)) throw new Error(`排名獎勵第 ${i + 1} 行要以金幣數字開頭。`);
+      return { gold: Number(gold), items: parseBossItems(rest.join(","), `第 ${i + 1} 名獎勵`) };
+    });
+    const part = (k, label) => ({ gold: Number($(`${p}-${k}-gold`).value), items: parseBossItems($(`${p}-${k}-items`).value, label) });
+    return {
+      min_points: Number($(`${p}-min-points`).value),
+      victory: part("v", "勝利獎勵"), participation: part("p", "參與獎勵"),
+      bonus_points: Number($(`${p}-b-points`).value), bonus: part("b", "達標獎勵"),
+      rank, title: $(`${p}-title`).value.trim(), title_top: Number($(`${p}-title-top`).value),
+    };
+  }
+
+  function fillBossRewards(p, r) {
+    for (const [k, key] of [["v", "victory"], ["p", "participation"], ["b", "bonus"]]) {
+      $(`${p}-${k}-gold`).value = r[key].gold;
+      $(`${p}-${k}-items`).value = bossItemsText(r[key].items);
+    }
+    $(`${p}-b-points`).value = r.bonus_points;
+    $(`${p}-min-points`).value = r.min_points ?? 0;
+    $(`${p}-rank`).value = r.rank.map((x) => `${x.gold} ${bossItemsText(x.items).replace(/, /g, " ")}`.trim()).join("\n");
+    $(`${p}-title`).value = r.title;
+    $(`${p}-title-top`).value = r.title_top;
+  }
+
+  // ---------- 世界 Boss 排程 ----------
+  function scheduleRows(list) {
+    return list.map((s) => {
+      const btns = [];
+      if (extra.admin.loggedIn) {
+        const toggle = el("button", { text: s.enabled ? "停用" : "啟用" });
+        toggle.type = "button";
+        toggle.addEventListener("click", (ev) => { ev.stopPropagation(); toggleSchedule(s); });
+        const del = el("button", { className: "danger", text: "刪除" });
+        del.type = "button";
+        del.addEventListener("click", (ev) => { ev.stopPropagation(); deleteSchedule(s); });
+        btns.push(toggle, del);
+      }
+      const next = s.next_event ? `#${s.next_event.event_id} ${fmtTime(s.next_event.starts_at)}` : "—";
+      const tr = el("tr", { className: "clickable" }, [
+        td(s.schedule_id, "num"), td(s.name), td(s.group_name), td(s.time_text, "wrap"), td(fmtNum(s.max_hp), "num"),
+        td(next), td(s.upcoming_slots.slice(0, 3).map(fmtTime).join("、") || "—", "wrap"),
+        statusTd(s.enabled ? "啟用中" : "已停用", s.enabled ? "good" : "muted"), el("td", {}, btns),
+      ]);
+      if (s.schedule_id === boss.scheduleId) tr.classList.add("selected");
+      tr.addEventListener("click", () => fillScheduleForm(s));
+      return tr;
+    });
+  }
+
+  function fillScheduleForm(s) {
+    boss.scheduleId = s ? s.schedule_id : null;
+    const d = boss.data.defaults.schedule;
+    const v = s || d;
+    $("wbsch-form-title").textContent = s ? `修改排程 #${s.schedule_id}「${s.name}」` : "新增排程";
+    $("wsc-name").value = v.name;
+    $("wsc-group").value = v.group_id ? String(v.group_id) : "";
+    $("wsc-interval").value = v.interval_days;
+    $("wsc-time").value = `${String(v.spawn_hour).padStart(2, "0")}:${String(v.spawn_minute).padStart(2, "0")}`;
+    $("wsc-anchor").value = v.anchor_date;
+    $("wsc-duration").value = v.duration_minutes;
+    $("wsc-hp").value = v.max_hp;
+    $("wsc-enabled").value = !s || s.enabled ? "1" : "0";
+    for (const code of BOSS_SUPPLIES) $(`wsc-t-${code}`).value = v.settings.supply_targets[code];
+    fillBossRewards("wsr", v.rewards);
+    if (s) $("wbsch-form-box").open = true;
+    clearDirty("wbsch-form-box");
+    if (boss.data) replaceRows($("wbsch-rows"), scheduleRows(boss.data.schedules), "目前沒有排程", 9);
+  }
+
+  async function toggleSchedule(s) {
+    const label = s.enabled ? "停用" : "啟用";
+    const answer = await confirmDialog({ title: `${label}排程「${s.name}」`, confirmText: label,
+      message: s.enabled ? "停用後不再產生新的一場；已建立的下一場保留，可在活動列表結束。" : "啟用後會立即建立下一場。" });
+    if (!answer.ok) return;
+    try {
+      await adminRequest("PUT", `/api/admin/world-boss-schedules/${s.schedule_id}/enabled`, { enabled: !s.enabled });
+      toast(`已${label}排程「${s.name}」。`, "good");
+      await loadWorldBoss();
+    } catch (err) {
+      toast(`${label}失敗：${err.message}`, "bad");
+    }
+  }
+
+  async function deleteSchedule(s) {
+    const answer = await confirmDialog({ title: `刪除排程「${s.name}」`, confirmText: "刪除", danger: true,
+      message: "刪除後不再出現；尚未結束的那一場會一起結束，已產生的活動、捐獻與領獎紀錄都會保留。" });
+    if (!answer.ok) return;
+    try {
+      await adminRequest("DELETE", `/api/admin/world-boss-schedules/${s.schedule_id}`);
+      if (boss.scheduleId === s.schedule_id) boss.scheduleId = null;
+      toast(`已刪除排程「${s.name}」。`, "good");
+      await loadWorldBoss();
+    } catch (err) {
+      toast(`刪除失敗：${err.message}`, "bad");
+    }
+  }
+
+  function scheduleBody() {
+    const [hour, minute] = $("wsc-time").value.split(":").map(Number);
+    const base = boss.scheduleId ? boss.data.schedules.find((x) => x.schedule_id === boss.scheduleId) : null;
+    const settings = JSON.parse(JSON.stringify((base || boss.data.defaults.schedule).settings));
+    for (const code of BOSS_SUPPLIES) settings.supply_targets[code] = Number($(`wsc-t-${code}`).value);
+    return {
+      name: $("wsc-name").value.trim(), group_id: $("wsc-group").value ? Number($("wsc-group").value) : null,
+      interval_days: Number($("wsc-interval").value), spawn_hour: hour, spawn_minute: minute,
+      anchor_date: $("wsc-anchor").value, duration_minutes: Number($("wsc-duration").value),
+      max_hp: Number($("wsc-hp").value), enabled: $("wsc-enabled").value === "1",
+      settings, rewards: bossRewardsBody("wsr"),
+    };
+  }
+
+  function initWorldBoss() {
+    $("wbf-submit").addEventListener("click", async () => {
+      if (!validateForm($("wb-form-box"))) return;
+      const body = {
+        group_id: $("wbf-group").value ? Number($("wbf-group").value) : null, name: $("wbf-name").value.trim(),
+        max_hp: Number($("wbf-hp").value), starts_at: isoFromLocal($("wbf-start").value),
+        ends_at: isoFromLocal($("wbf-end").value),
+      };
+      if (body.ends_at <= body.starts_at) { toast("結束時間必須晚於開始時間。", "bad"); $("wbf-end").focus(); return; }
+      try {
+        const v = await adminRequest("POST", "/api/admin/world-boss", body);
+        boss.selected = v.event_id;
+        boss.formsFor = null;
+        clearDirty("wb-form-box");
+        toast(`已建立世界 Boss #${v.event_id}「${v.name}」。`, "good");
+        await loadWorldBoss();
+      } catch (err) {
+        toast(`建立世界 Boss 失敗：${err.message}`, "bad");
+      }
+    });
+    $("wbb-submit").addEventListener("click", async () => {
+      const v = boss.detail;
+      if (!v || !validateForm($("wb-basic-box"))) return;
+      const body = {
+        name: $("wbb-name").value.trim(), max_hp: Number($("wbb-hp").value),
+        starts_at: isoFromLocal($("wbb-start").value), ends_at: isoFromLocal($("wbb-end").value),
+      };
+      const answer = await confirmDialog({
+        title: `修改「${v.name}」`, confirmText: "儲存",
+        diff: [["名稱", v.name, body.name], ["HP 上限", fmtNum(v.max_hp), fmtNum(body.max_hp)],
+          ["開始", fmtTime(v.starts_at), fmtTime(body.starts_at)], ["結束", fmtTime(v.ends_at), fmtTime(body.ends_at)]],
+      });
+      if (!answer.ok) return;
+      try {
+        await adminRequest("PUT", `/api/admin/world-boss/${v.event_id}`, body);
+        boss.formsFor = null;
+        toast("已更新世界 Boss。", "good");
+        await loadWorldBoss();
+      } catch (err) {
+        toast(`更新失敗：${err.message}`, "bad");
+      }
+    });
+    $("wbs-submit").addEventListener("click", async () => {
+      const v = boss.detail;
+      if (!v || !validateForm($("wb-settings-box"))) return;
+      let body;
+      try { body = bossSettingsBody(); } catch (err) { toast(err.message, "bad"); return; }
+      const answer = await confirmDialog({
+        title: `更新「${v.name}」的補給設定`, confirmText: "儲存",
+        message: "會先以目前設定結算到現在的傷害，之後的戰鬥與捐獻改用新設定。",
+      });
+      if (!answer.ok) return;
+      try {
+        await adminRequest("PUT", `/api/admin/world-boss/${v.event_id}/settings`, body);
+        boss.formsFor = null;
+        toast("已更新補給設定。", "good");
+        await loadWorldBoss();
+      } catch (err) {
+        toast(`更新補給設定失敗：${err.message}`, "bad");
+      }
+    });
+    $("wsc-new").addEventListener("click", () => fillScheduleForm(null));
+    $("wsc-submit").addEventListener("click", async () => {
+      if (!boss.data || !validateForm($("wbsch-form-box"))) return;
+      let body;
+      try { body = scheduleBody(); } catch (err) { toast(err.message, "bad"); return; }
+      const editing = boss.scheduleId;
+      const answer = await confirmDialog({
+        title: editing ? `修改排程「${body.name}」` : `新增排程「${body.name}」`, confirmText: "儲存",
+        message: "儲存後套用到之後新建立的場次；已建立的下一場請在活動列表個別修改。",
+      });
+      if (!answer.ok) return;
+      try {
+        const s = editing
+          ? await adminRequest("PUT", `/api/admin/world-boss-schedules/${editing}`, body)
+          : await adminRequest("POST", "/api/admin/world-boss-schedules", body);
+        boss.scheduleId = s.schedule_id;
+        clearDirty("wbsch-form-box");
+        toast(`已儲存排程「${s.name}」。`, "good");
+        await loadWorldBoss();
+      } catch (err) {
+        toast(`儲存排程失敗：${err.message}`, "bad");
+      }
+    });
+    $("wbr-submit").addEventListener("click", async () => {
+      const v = boss.detail;
+      if (!v || !validateForm($("wb-rewards-box"))) return;
+      let body;
+      try { body = bossRewardsBody(); } catch (err) { toast(err.message, "bad"); return; }
+      const answer = await confirmDialog({ title: `更新「${v.name}」的獎勵設定`, confirmText: "儲存",
+        message: "已有玩家領獎後不能再修改。" });
+      if (!answer.ok) return;
+      try {
+        await adminRequest("PUT", `/api/admin/world-boss/${v.event_id}/rewards`, body);
+        boss.formsFor = null;
+        toast("已更新獎勵設定。", "good");
+        await loadWorldBoss();
+      } catch (err) {
+        toast(`更新獎勵設定失敗：${err.message}`, "bad");
+      }
+    });
+  }
+
   // ---------- 自動更新：只更新目前分頁；使用者操作中暫停，避免下拉選單、輸入與按鈕被重建 ----------
   const EDIT_PAUSE_MS = 20000;
   let lastInteraction = 0;
@@ -3139,7 +3583,8 @@ if (typeof document !== "undefined") {
     steals: [loadSteals, loadDefenses],
     ranch: [loadRanch],
     fishing: [loadFishing],
-    community: [loadCommunity, loadCatalog],  // 目錄提供任務表單的動物產品選項
+    community: [loadCommunity, loadCatalog],
+    worldboss: [loadWorldBoss],  // 目錄提供任務表單的動物產品選項
     genetics: [loadGenetics],
     backpack: [loadBackpack],
     events: [loadCatalog],
@@ -3188,6 +3633,7 @@ if (typeof document !== "undefined") {
     initManage();
     initRankingRewards();
     initFishing();
+    initWorldBoss();
     loadAuth();
     $("admin-login-btn").addEventListener("click", adminLogin);
     $("admin-pass").addEventListener("keydown", (e) => { if (e.key === "Enter") adminLogin(); });
@@ -3237,6 +3683,7 @@ if (typeof document !== "undefined") {
         if (status === "connecting") setStatus("wait", "連線中…");
         else if (status === "reconnecting") setStatus("wait", "重新連線中…");
         else if (status === "open") setStatus("ok", "已連線・同步資料中");
+        else if (status === "paused") setStatus("wait", "分頁在背景，已暫停同步");
         else if (status === "closed") {
           setStatus("bad", `連線中斷・${Math.round(delay / 1000)} 秒後重連`);
           document.body.classList.add("stale"); // 保留最後一次真實資料，但標示為過期
@@ -3255,6 +3702,13 @@ if (typeof document !== "undefined") {
     state.ready = true;
     refreshExtras(true);
     conn.connect();
+    // 分頁在背景超過 30 秒才暫停（短暫切換分頁不必斷線重連）；回到前景立即恢復
+    let hideTimer = null;
+    document.addEventListener("visibilitychange", () => {
+      clearTimeout(hideTimer);
+      if (document.hidden) hideTimer = setTimeout(() => conn.pause(), 30000);
+      else conn.resume();
+    });
 
     let debounce = null;
     $("farm-search").addEventListener("input", (e) => {

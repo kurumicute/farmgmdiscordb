@@ -71,6 +71,43 @@ def _same_origin(websocket: WebSocket) -> bool:
     return urlsplit(origin).netloc.lower() == (websocket.headers.get("host") or "").lower()
 
 
+class SnapshotCache:
+    """所有 WebSocket 連線共用的監控快照：同時開多個分頁時，同一段時間內只查詢一次資料庫。
+
+    快照在 max_age 秒內直接沿用；同時有多個連線要更新時，由鎖保證只有一個去查詢，其餘等它完成後沿用結果。
+    查詢失敗不快取（下一個連線會重試）。"""
+
+    FORCE_MAX_AGE = 0.5  # 使用者按「重新整理」時：半秒內剛查過的結果仍可沿用（多分頁同時重新整理只查一次）
+
+    def __init__(self) -> None:
+        self._value: dict | None = None
+        self._at = 0.0
+        self._lock: asyncio.Lock | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if self._loop is not loop:  # Lock 綁定事件迴圈（測試會建立新的迴圈）
+            self._lock, self._loop = asyncio.Lock(), loop
+        return self._lock
+
+    async def get(self, service: MonitorService, max_age: float) -> dict:
+        async with self._get_lock():
+            loop_time = asyncio.get_running_loop().time()
+            if self._value is not None and loop_time - self._at < max_age:
+                return self._value
+            snapshot = jsonable_encoder(await run_in_threadpool(service.snapshot))
+            self._value, self._at = snapshot, asyncio.get_running_loop().time()
+            return snapshot
+
+
+def _snapshot_cache(app) -> SnapshotCache:
+    cache = getattr(app.state, "snapshot_cache", None)
+    if cache is None:
+        cache = app.state.snapshot_cache = SnapshotCache()
+    return cache
+
+
 @ws_router.websocket("/ws/monitor")
 async def monitor_ws(websocket: WebSocket) -> None:
     if not _same_origin(websocket):
@@ -79,19 +116,23 @@ async def monitor_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     service: MonitorService = websocket.app.state.monitor_service
     refresh = websocket.app.state.refresh_seconds
+    cache = _snapshot_cache(websocket.app)
+    # 定時推送：比更新間隔稍短的快照仍算新鮮，讓多個分頁共用同一次查詢，又不會把舊資料推兩輪
+    max_age = refresh * 0.8
     try:
         while True:
             try:
-                snapshot = await run_in_threadpool(service.snapshot)
-                await websocket.send_json({"type": "snapshot", "data": jsonable_encoder(snapshot)})
+                snapshot = await cache.get(service, max_age)
+                await websocket.send_json({"type": "snapshot", "data": snapshot})
             except SQLAlchemyError as exc:
                 logger.warning("監控快照讀取失敗：%s", type(exc).__name__)
                 await websocket.send_json({"type": "error", "message": DB_ERROR_MESSAGE})
             # 等待下一輪；期間若用戶端送出任何訊息（例如 "refresh"）則立即重新整理
             try:
                 await asyncio.wait_for(websocket.receive_text(), timeout=refresh)
+                max_age = SnapshotCache.FORCE_MAX_AGE
             except TimeoutError:
-                pass
+                max_age = refresh * 0.8
     except WebSocketDisconnect:
         pass
 
@@ -304,4 +345,20 @@ async def get_ranking_settlement(
     result = await run_in_threadpool(_service(request).ranking_settlement, settlement_id)
     if result is None:
         raise HTTPException(status_code=404, detail="找不到這筆結算。")
+    return result
+
+
+# ---------- 世界 Boss（唯讀） ----------
+
+
+@router.get("/world-boss")
+async def list_world_boss(request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 50) -> dict:
+    return await run_in_threadpool(_service(request).world_boss, limit)
+
+
+@router.get("/world-boss/{event_id}")
+async def get_world_boss(request: Request, event_id: Annotated[int, Path(ge=1, le=MAX_BIGINT)]) -> dict:
+    result = await run_in_threadpool(_service(request).world_boss_detail, event_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="找不到這場世界 Boss 活動。")
     return result

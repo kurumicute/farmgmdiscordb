@@ -161,6 +161,19 @@ def test_sensible_play_lands_fish_once(fisher, clock, player_id, session_factory
     assert fisher.fish_basket(player_id)["fish"][0]["id"] == fish["id"]
 
 
+def test_fish_price_above_200_can_be_landed(fisher, clock, player_id, session_factory):
+    """0017 起魚種售價不受稀有度限制；售價超過 200 的魚也要能釣起來（曾被 farm_fish 的 CHECK 擋住）。"""
+    fisher.update_fishing_settings("test", settings_with(base_success_pct=100))
+    with session_factory.begin() as s:
+        s.execute(text("UPDATE fish_types SET min_price = 300, max_price = 500"))
+    equip_starter(fisher, player_id)
+    result = fight(fisher, player_id, cast_and_hook(fisher, clock, player_id))
+    assert result["status"] == "landed"
+    assert 300 <= result["fish"]["price"] <= 500
+    gold = fisher.fishing_overview(player_id)["gold"]
+    assert fisher.sell_fish(player_id, None).gold == gold + result["fish"]["price"]
+
+
 def test_stale_turn_is_not_applied_twice(fisher, clock, player_id):
     fisher.update_fishing_settings("test", settings_with(base_success_pct=100))
     equip_starter(fisher, player_id)

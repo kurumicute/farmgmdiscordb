@@ -139,6 +139,11 @@
           <p>買魚竿、魚線和魚餌，等魚上鉤後拉竿，再跟魚拉扯把牠拉上岸。<span id="c-fish-rarities">普通到傳說四種稀有度</span>，釣到好魚還能分享到群組炫耀。</p>
         </article>
         <article class="card">
+          <span class="card-icon" aria-hidden="true">🐉</span>
+          <h3>世界 Boss</h3>
+          <p>所有伺服器的玩家一起當農場後勤！<span id="c-boss">深淵魔龍每 2 天晚上 9 點出現</span>，捐獻作物、漁獲與素材補給前線，前線自動作戰扣 Boss 血量；打倒後依貢獻領金幣、稀有種子與稱號。</p>
+        </article>
+        <article class="card">
           <span class="card-icon" aria-hidden="true">👥</span>
           <h3>群組任務與競賽</h3>
           <p>伺服器一起完成任務、和其他伺服器比賽；農場每 <span id="c-transfer">7</span> 天可以轉移到另一個伺服器一次。</p>
@@ -189,6 +194,7 @@
                   <tr><td>看排行與獎勵</td><td>「🏆 排行榜」→ 切換範圍與期間；「🎁 排名獎勵」看發獎規則</td></tr>
                   <tr><td>任務與競賽</td><td>「📜 任務競賽」→ 看進度、領獎；「📚 已結算的競賽」看結果</td></tr>
                   <tr><td>把農場搬到這個伺服器</td><td>「👥 群組」→「🔁 把農場轉移到這個伺服器」→ 再按一次確認</td></tr>
+                  <tr><td>更改農場名稱</td><td>「❓ 說明」→「✏️ 更改農場名稱」→ 輸入新名稱送出（每次 <b id="g-rename-quick">300 金幣</b>）</td></tr>
                   <tr><td>給朋友看我的農場</td><td>總覽「📢 分享到頻道」</td></tr>
                   <tr><td>查最近做了什麼</td><td>「🧾 紀錄」</td></tr>
                   <tr><td>面板沒反應／逾時</td><td>15 分鐘沒操作會逾時，再輸入一次 <code>/farm</code>；資料不會遺失</td></tr>
@@ -204,6 +210,7 @@
             <ul>
               <li>在伺服器輸入 <code>/farm</code> →「🌱 建立農場」（或「✏️ 自訂名稱建立」）。每個 Discord 帳號只有一座農場。</li>
               <li>起始資源：<b id="g-start">500 金幣、4 格農田、倉庫 50 格</b>。農場屬於建立時所在的伺服器。</li>
+              <li>想換農場名稱：總覽「❓ 說明」→「✏️ 更改農場名稱」，每次 <b id="g-rename">300 金幣</b>（金幣不足時按鈕無法按）。</li>
               <li>總覽會列出每格農田的作物與成熟倒數、倉庫、所屬群組、動物、加工、進行中的活動與待辦事項。</li>
               <li>總覽上的「💧 全部澆水」「🧺 全部收成」可以直接操作；「📢 分享到頻道」會把農場狀態公開貼到頻道。</li>
               <li>面板只有你看得到，15 分鐘沒操作會逾時，再輸入 <code>/farm</code> 即可。</li>
@@ -590,6 +597,73 @@
                 </tbody>
               </table>
             </div>
+          </div>
+        </details>
+
+        <details class="guide" id="world-boss">
+          <summary>🐉 世界 Boss（伺服器後勤活動）</summary>
+          <div class="guide-body">
+            <ul>
+              <li><b>活動介紹</b>：世界 Boss 分成 🌏 <b>全服</b>（所有伺服器的玩家一起打，例如固定出現的「深淵魔龍」）
+                與 🏠 <b>伺服器</b>活動（管理員為某個伺服器開啟），大家一起當<b>農場後勤</b>。
+                玩家<b>不直接攻擊</b> Boss，而是把農作物、漁獲、素材與加工品捐給前線，Boss 戰鬥由系統自動進行。</li>
+              <li><b>參與方式</b>：在伺服器頻道輸入 <code>/farm</code> → 總覽「🐉 世界Boss」（介紹區：圖片、排行榜、活動說明）→「⚔️ 進入深淵魔龍」（戰鬥區：HP 與補給數值）→「📦 捐獻物資」→
+                選類別、物品與數量 →「✅ 確認捐獻」；🐟 漁獲可以一次勾選多種魚，勾選的魚種全部捐出。確認後才會扣除物品，按「❌ 取消」不會扣任何東西；重複點擊也只會捐一次。</li>
+              <li><b>後勤支援</b>：前線依四種補給的達成率自動作戰，每小時扣 Boss HP（基礎 <span id="g-boss-dph">1,500</span>／小時）；
+                每次捐獻也會<b>立即</b>造成「積分 × <span id="g-boss-instant">2</span> × 攻擊倍率」的傷害。</li>
+              <li><b>捐獻積分</b>：🌾 農作物與 🐟 漁獲依售價換算，每 <span id="g-boss-gpp">10</span> 金幣售價 = 1 積分
+                （無條件進位；品質越高越多分）；⚙️ 農場素材、🍲 指定加工物品、🧪 指定特殊材料依活動指定的固定積分（見下表）。</li>
+              <li><b>避免失衡</b>：單次最多捐 <span id="g-boss-action">99</span> 個；每種物品每場最多 <span id="g-boss-item">200</span> 個；
+                補給超過目標的部分最多只算到 <span id="g-boss-cap">150%</span>。</li>
+              <li><b>貢獻排行榜</b>：「🏆 查看排行榜」依個人貢獻積分排序（同分時先捐獻的在前），顯示積分與捐獻數量。</li>
+              <li><b>活動週期</b>：管理員開啟的活動有自己的開始與結束時間（預設 <span id="g-boss-hours">72</span> 小時）；
+                固定出現的 Boss 依下表時間（台灣時間）自動出現。Boss 的 HP 歸零或時間到就結束。看得到全服活動與自己所在伺服器的活動，
+                同時有多場時可以在面板「🔀 切換世界 Boss」。資料都存在資料庫，機器人重啟也不會遺失。</li>
+              <li><b>獎勵制度</b>：活動結束後按「🎁 領取獎勵」，<b>每人每場只能領一次</b>，只有捐獻過的玩家可以領。</li>
+            </ul>
+            <p class="note" id="g-boss-now">目前全服世界 Boss：讀取中…</p>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>固定出現的 Boss</th><th>範圍</th><th>出現頻率</th><th>出現時間（台灣）</th><th>HP</th><th>主要獎勵</th></tr></thead>
+                <tbody id="g-boss-schedules">
+                  <tr><td>🐉 深淵魔龍</td><td>全服</td><td>2 天一次</td><td>晚上 9 點（持續 3 小時）</td><td>15,000</td>
+                    <td>擊敗：1,200 金幣、水晶 ×2；第 1 名 3,000 金幣、月光花種子 ×2、古木核心 ×1；前 3 名稱號「降龍勇士」</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>補給</th><th>來源</th><th>影響</th><th>目標</th></tr></thead>
+                <tbody id="g-boss-supplies">
+                  <tr><td>🌾 糧食補給</td><td>農作物</td><td>持續作戰（沒有糧食時出勤率 30%）</td><td>1,000</td></tr>
+                  <tr><td>🩹 醫療補給</td><td>藥草、雞蛋、牛奶、果醬等</td><td>恢復能力（救回 50% 缺勤時間）</td><td>600</td></tr>
+                  <tr><td>⚔️ 戰鬥補給</td><td>漁獲、麵粉、麵包</td><td>傷害效率（傷害 +100%）</td><td>700</td></tr>
+                  <tr><td>🛡️ 裝備補給</td><td>洞窟探索與機器製作素材</td><td>戰鬥能力（傷害 +50%）</td><td>800</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>指定物品</th><th>補給</th><th>每個積分</th></tr></thead>
+                <tbody id="g-boss-items">
+                  <tr><td colspan="3">讀取指定物品中…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>獎勵</th><th>條件</th><th>內容</th></tr></thead>
+                <tbody id="g-boss-rewards">
+                  <tr><td>🎯 參與門檻</td><td>個人積分 ≥ 30</td><td>未達門檻沒有任何獎勵（含排名）</td></tr>
+                  <tr><td>🏆 勝利獎勵</td><td>Boss 被擊敗，所有貢獻者</td><td>1,200 金幣、水晶 ×2</td></tr>
+                  <tr><td>🤝 參與獎勵</td><td>Boss 未被擊敗，所有貢獻者</td><td>300 金幣</td></tr>
+                  <tr><td>⭐ 貢獻達標</td><td>個人積分 ≥ 200</td><td>500 金幣、琥珀瓜種子 ×2</td></tr>
+                  <tr><td>🥇 排名獎勵</td><td>個人排行前 10 名</td><td>3,000／2,000／1,500／800／800／400… 金幣與稀有物品</td></tr>
+                  <tr><td>🎖️ 特殊稱號</td><td>擊敗 Boss 時前 3 名</td><td>降龍勇士</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="note" id="g-boss-source">補給目標與獎勵為目前全服世界 Boss（深淵魔龍）的設定；伺服器自己的活動由管理員設定，實際內容以 Discord「📖 活動說明」為準。</p>
           </div>
         </details>
 

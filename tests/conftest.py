@@ -17,6 +17,8 @@ from app.services.ranking_service import RankingService
 
 ROOT = Path(__file__).resolve().parents[1]
 GAME_TABLES = (
+    "world_boss_reward_claims, world_boss_contributions, world_boss_supplies, world_boss_events, "
+    "world_boss_schedules, "
     "ranking_awards, ranking_settlements, ranking_reward_rules, game_events, "
     "competition_awards, competition_results, competition_contributions, competitions, "
     "quest_claims, quest_contributions, quests, admin_actions, "

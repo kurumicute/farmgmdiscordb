@@ -63,3 +63,24 @@ test("轉交快照與錯誤訊息，忽略無效 JSON", () => {
   ws.onmessage({ data: "not json" });
   assert.deepEqual(messages, [{ type: "error", message: "db down" }]);
 });
+
+test("分頁在背景時暫停：關閉連線且不重連，回到前景立即重連", () => {
+  const { conn, timers, statuses } = setup();
+  conn.connect();
+  const ws = FakeWebSocket.instances[0];
+  let closed = 0;
+  ws.close = () => { closed += 1; };
+  ws.onopen();
+  conn.pause();
+  assert.equal(closed, 1);
+  assert.deepEqual(statuses.at(-1), ["paused", null]);
+  ws.onclose(); // 關閉事件不應排程重連
+  assert.equal(timers.length, 0);
+  conn.pause(); // 重複暫停沒有作用
+  assert.equal(closed, 1);
+  conn.resume();
+  assert.equal(FakeWebSocket.instances.length, 2);
+  assert.deepEqual(statuses.at(-1), ["connecting", null]);
+  conn.resume(); // 沒有暫停時不會多開連線
+  assert.equal(FakeWebSocket.instances.length, 2);
+});

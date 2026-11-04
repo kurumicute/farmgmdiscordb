@@ -22,7 +22,9 @@ VIEW_TO_PERIOD = {"day": "daily", "week": "weekly", "month": "monthly"}
 SCOPES = {"group": "群組排名（獎勵發給群組全體成員）", "individual": "個人排名"}
 METRICS = {"money": "金幣", "sales": "農產品販售", "goods": "商品總販售"}
 # 計算「淨賺金幣」時排除的交易類型（非遊戲經營所得）
-NET_GOLD_EXCLUDED = ("create_farm", "admin_adjust", "quest_reward", "competition_reward", "ranking_reward")
+NET_GOLD_EXCLUDED = (
+    "create_farm", "admin_adjust", "quest_reward", "competition_reward", "ranking_reward", "boss_reward",
+)
 
 
 def period_bounds(period: str, at: datetime) -> tuple[datetime, datetime]:

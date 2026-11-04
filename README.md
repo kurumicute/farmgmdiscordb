@@ -409,6 +409,11 @@ CMD 遊戲與監控網頁啟動時都會：
 | `ranking_settlements` | 每條規則每個期間的結算快照（規則與排名）；`(rule_id, period_start)` 唯一；規則刪除後 `rule_id` 設為 NULL |
 | `ranking_awards` | 排名獎勵發放紀錄；`(settlement_id, player_id)` 唯一 |
 | `game_events` | 限時活動；效果範圍與排程（once／daily／weekly）由 CHECK 限制；`crop_type_id` 可空（全部作物） |
+| `world_boss_events` | 世界 Boss 活動（`group_id` 為所屬群組，NULL = 全服；名稱、HP、期間、狀態 active／paused／ended、`last_tick_at` 戰鬥推進時間、結束原因、設定與獎勵 JSON 快照；排程產生的場次有 `schedule_id`、`slot_at`）；手動活動每個範圍最多一場未結束、每個排程最多一場未結束（部分唯一索引），`(schedule_id, slot_at)` 唯一 |
+| `world_boss_schedules` | 固定出現的世界 Boss（範圍、每幾天、台灣時間時分、起始日期、持續分鐘、HP、設定與獎勵範本、啟用）；Migration 0020 寫入「深淵魔龍」 |
+| `world_boss_supplies` | 四種補給（food／medical／combat／equipment）的目標與進度，主鍵 `(event_id, supply_code)` |
+| `world_boss_contributions` | 捐獻紀錄（類別、物品、品質、數量、積分、立即傷害）；`(event_id, player_id, request_id)` 唯一，重複點擊不會重複扣除 |
+| `world_boss_reward_claims` | 世界 Boss 獎勵領取紀錄（名次、積分、結果、金幣、物品、稱號）；`(event_id, player_id)` 唯一 |
 | `inventory_items` | `(farm_id, item_code, quality, mutation)` 唯一，不同品質／突變分開存放；`quantity >= 0`；種子為 `seed_<code>`、農產品為 `<code>`、珍稀變種為獨立代碼 |
 | `crop_genetics_settings` | 品質與突變設定的版本紀錄（只新增），最新版本生效 |
 | `game_transactions` | `context_group_id` 操作所在群組（可空，只做紀錄）；`applied_events` 該次套用的限時活動；`event_type` 由 CHECK 限定（`app/db/models.EVENT_TYPES`，含 transfer_group 轉移所屬群組）；依 `created_at`、`(farm_id, created_at)` 建索引 |
@@ -577,6 +582,24 @@ Bot、網站、CMD 共用同一個 PostgreSQL；網站修改的資料 Bot 下一
 - 沒有使用 emoji「反應」：面板是私密訊息，Discord 不允許對私密訊息加反應，而且反應需要額外的 Gateway Intent；按鈕與選單可以即時回饋並由伺服器驗證。
 - 進階玩家或管理者可設 `DISCORD_ADVANCED_COMMANDS=true`，另外註冊與 CMD 一一對應的文字指令（`/farm-cmd`、`/buy`、`/sell`、`/steal`…，用 `/farm-help` 列出）。
 
+### 🐉 世界 Boss（後勤活動，Migration 0019／0020）
+
+- 範圍分成 🌏 全服（所有伺服器的玩家一起打，私訊也看得到）與 🏠 伺服器活動；同時有多場時，面板用「🔀 切換世界 Boss」切換。介面只顯示名稱，不顯示等級。
+- 固定出現：預設排程「深淵魔龍」全服、每 2 天 21:00（台灣時間）出現、持續 3 小時、HP 15,000，以 10 位玩家同時支援可擊敗為目標（`tests/test_world_boss.py` 驗證 10 人可打倒、1 人與 5 人打不倒）。上一場結束後系統立即建立下一場，管理員可在出現前於「世界 Boss」分頁個別修改那一場的出現時間、HP、補給與獎勵（含排名獎勵）；修改排程只影響之後的場次。
+
+- 管理員在監控網站「世界 Boss」分頁建立活動（所屬群組、名稱、等級、HP、開始／結束時間），可立即開始、暫停、繼續、結束，
+  並調整補給目標、效果、捐獻限制、指定物品與獎勵（已有人領獎後不能再改獎勵）。每個群組同一時間最多一場未結束的活動。
+- 玩家在伺服器頻道 `/farm` →「🐉 世界Boss」先到**介紹區**（附 Boss 圖片）：名稱、HP 進度條、剩餘時間、狀態、我的參與，
+  與「⚔️ 進入（Boss 名稱）／🏆 查看排行榜／📖 活動說明／🎁 領取獎勵／🔄 更新狀態」；排行榜與活動說明也在介紹區。
+- 按「⚔️ 進入（Boss 名稱）」到**戰鬥區**（不附圖片，只有數值面板）：HP、四種補給進度、前線戰況、群組參與、
+  個人貢獻（積分、捐獻總數、排名、領獎狀態）與「📦 捐獻物資／🎁 領取獎勵／🔄 更新狀態／🐉 回介紹區」。
+- 捐獻：選類別（🌾 農作物／🐟 漁獲／⚙️ 農場素材／🍲 指定加工物品／🧪 指定特殊材料）→ 物品 → 數量 →「✅ 確認捐獻」（取消不扣物品）；🐟 漁獲改為勾選魚種（可複選），勾選的魚種全部捐出（每種受單次與每場上限限制），一次確認、每種各一筆捐獻紀錄。
+  作物與魚依售價換算積分，其他物品用活動指定的固定積分；單次與每種物品每場都有上限，補給超過目標的效果有上限。
+- 戰鬥由系統自動進行：每小時傷害 = 基礎傷害 × 攻擊倍率（戰鬥、裝備補給）× 出勤率（糧食、醫療補給），每次捐獻另造成立即傷害。
+  HP 在玩家查看／捐獻／領獎與背景結算（`BACKGROUND_TASKS_RUNNER`）時推進並寫入 PostgreSQL；Bot 重啟不影響。
+- 活動結束（HP 歸零、時間到或管理員結束）後，捐獻過的玩家可領一次獎勵：勝利或參與獎勵、積分達標獎勵、排名獎勵與稱號。
+  交易紀錄類型為 `boss_donate`／`boss_reward`（獎勵金幣不計入淨賺排行）。
+
 ### 農場轉移所屬群組（7 天冷卻）
 
 在要轉入的伺服器打開 `/farm` →「👥 群組」→「把農場轉移到這個伺服器」，畫面會說明影響與冷卻，再按一次「確認轉移」才執行（進階文字指令 `/farm-cmd transfer-group` 同樣有確認按鈕）。
@@ -598,6 +621,19 @@ Bot、網站、CMD 共用同一個 PostgreSQL；網站修改的資料 Bot 下一
 - 背景結算（排名獎勵與競賽）由 `BACKGROUND_TASKS_RUNNER` 指定的程序執行（`web` 預設、`bot` 或 `none`），另一方只在查詢排行時補結算。
   同時執行也安全：PostgreSQL advisory lock 讓同一時間只有一個程序結算，`(rule_id, period_start)` 等唯一限制保證不會重複發獎；重啟或 Gateway 重連不會重新發放。
 - 500 名玩家不需要分片（Sharding）。
+- 監控網站的 WebSocket：所有分頁共用同一份快照（更新間隔內只查詢一次資料庫，`app/api/monitor.py` 的 `SnapshotCache`）；
+  分頁在背景超過 30 秒會暫停同步，回到前景立即重連。
+
+### 效能監控
+
+- **互動送達延遲**：Bot 收到互動時已超過 2 秒會記錄「互動送達延遲 X 秒（類型、指令、使用者）」。
+  玩家遇到「此交互失敗」或日誌出現 10062 時，先看有沒有這行：有 → 網路或 Discord 慢；沒有 → Bot 處理慢（再看服務耗時）。
+- **SQL 統計（pg_stat_statements）**：compose 的 PostgreSQL 已載入此模組。既有 Volume 需要在資料庫執行一次
+  `docker exec farmgm-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d farmgm -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"'`
+  （新 Volume 由 `docker/initdb/02-pg-stat-statements.sh` 自動建立）。查最耗時的 SQL：
+  `docker exec farmgm-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d farmgm -c "SELECT calls, round(total_exec_time) AS total_ms, round(mean_exec_time::numeric, 2) AS mean_ms, left(query, 80) FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 15"'`；
+  歸零：`SELECT pg_stat_statements_reset();`。
+- **音訊封包**：播放時掉封包達 1%（約每分鐘 30 個）才記錄警告，偶爾 ±1 的統計抖動不記錄。
 
 ### 故障排查
 
@@ -699,6 +735,23 @@ Lavalink 版兩次是同一台電腦另一天的量測（數字和上面幾列�
 「種滿農田」「全部澆水」「全部收成」「清除乾枯」已改為單一交易（`GameService.plant_all` 等）。
 處理量的主要限制是 Python 的 CPU 時間（每次換頁都重新查詢並繪製整頁），再增加執行緒效果有限；
 500 人「同一秒」同時操作是極端情況，實際玩家操作分散時等待會短很多。
+
+**世界 Boss**（`scripts/world_boss_stresstest.py <玩家數> [global|guild] [工作執行緒]`，2026-11-04，16 執行緒，所有玩家在同一秒開始）：
+每位玩家開面板 → 世界 Boss → 捐作物 ×5 → 捐素材 ×5（連點兩下確認）→ 排行榜 → 更新狀態，再以同一個 request_id 同時送出兩次；
+最後管理員結束活動、每人同時領獎兩次。同時每 0.5 秒執行背景結算。
+
+| 情境（平均完成時間） | 換頁／查看 | 確認捐獻 | 領獎 | Bot CPU | 結果 |
+|---|---|---|---|---|---|
+| 200 人，全服同一場（所有捐獻鎖同一列） | 約 2.0 秒 | 6.4 秒 | 1.9 秒 | 約 1 核 | 全部一致、0 錯誤 |
+| 200 人，20 個伺服器各一場 | 約 2.2 秒 | 4.5 秒 | 1.1 秒 | 約 1.2 核 | 全部一致、0 錯誤 |
+| 500 人，全服同一場 | 約 6.0 秒 | 16.0 秒 | 4.8 秒 | 約 1 核 | 全部一致、0 錯誤 |
+
+一致性檢查全部通過：補給進度 = 捐獻積分、HP = 最大 HP − 立即傷害、背包扣除量正確、同一 request_id 只算一次、
+每人只領一次獎、金幣 = 交易紀錄、排行統計表一致、世界 Boss 圖片只在介紹區（每人進入與從戰鬥區返回各上傳一次）。首次回應在 1.5 秒內 defer，符合 Discord 3 秒規則；
+表中是「畫面更新完成」的時間。壓測發現並修正兩個問題：
+(1) 同一面板連點兩下時兩次重繪交錯，元件被加兩次而顯示「未預期的錯誤」，且圖片被拿掉再重傳（`FarmPanel` 的重繪到送出畫面改為依序執行，所有頁面適用）；
+(2) 查看世界 Boss 會鎖活動列，全服活動時所有人連看畫面都要排隊（改為唯讀推算 HP，只有捐獻、領獎、管理與背景結算才鎖定寫回；200 人查看由約 3.4 秒降到約 2 秒）。
+確認捐獻在全服活動時會在同一列排隊（每筆交易依序），是正確性的必要代價；人數分散在不同伺服器時較快。
 
 ### 一次性清除舊 CMD 測試玩家
 

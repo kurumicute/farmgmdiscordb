@@ -130,6 +130,58 @@ def test_welcome_in_dm_and_named_creation(cmds, session_factory):
         assert s.scalar(select(Farm.name)) == "開心農場"
 
 
+def test_open_panel_expired_interaction_is_ignored(cmds, caplog):
+    """互動在 3 秒期限後才送到（10062 Unknown interaction）：只記一行警告，不丟出例外。"""
+    from types import SimpleNamespace
+
+    interaction = FakeInteraction(ALICE, GUILD_A)
+
+    async def expired(**_kw):
+        raise discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), {"code": 10062,
+                                                                                  "message": "Unknown interaction"})
+
+    interaction.response.defer = expired
+    with caplog.at_level("WARNING"):
+        run(cmds.open_panel(interaction))
+    assert "開啟面板逾時" in caplog.text
+    assert not [kind for kind, _c, _kw in interaction.log if kind == "followup"]
+
+
+def test_rename_farm_from_help_page(cmds, admin, session_factory):
+    """說明頁的「更改農場名稱」：每次 300 金幣、記錄交易；金幣不足時按鈕停用，服務層也會擋。"""
+    from app.game.errors import InsufficientGoldError, ValidationError
+
+    cost = balance.RENAME_FARM_COST
+    p = make_player(cmds, ALICE, name="阿明")
+    pid = p.panel.player_id
+    admin.set_farm_values("test", pid, gold=1000)
+    shown = p.click("說明")
+    embed = [kw["embed"] for kind, _c, kw in shown.log if kind == "edit" and "embed" in kw][-1]
+    assert len(embed) <= 6000 and len(embed.fields) <= 25  # Discord Embed 上限
+    assert "怎麼玩" in p.text and "目前：**阿明的農場**" in p.text and "回總覽" in " ".join(p.labels())
+    p.modal("更改農場名稱", "  星空牧場  ")
+    assert "已從「阿明的農場」改為「星空牧場」" in p.text and "星空牧場" in p.text
+    with session_factory() as s:
+        farm = s.scalar(select(Farm).where(Farm.player_id == pid))
+        assert (farm.name, farm.gold) == ("星空牧場", 1000 - cost)
+        tx = s.scalar(select(GameTransaction).where(GameTransaction.event_type == "rename_farm"))
+        assert tx.gold_delta == -cost and "星空牧場" in tx.description
+    p.click("回總覽")
+    assert "星空牧場" in p.text
+    # 同名、空白、金幣不足
+    with pytest.raises(ValidationError, match="相同"):
+        admin.rename_farm(pid, "星空牧場")
+    with pytest.raises(ValidationError, match="空白"):
+        admin.rename_farm(pid, "   ")
+    admin.set_farm_values("test", pid, gold=cost - 1)
+    with pytest.raises(InsufficientGoldError):
+        admin.rename_farm(pid, "別的名字")
+    p.click("說明")
+    assert p.button("更改農場名稱").disabled
+    with session_factory() as s:
+        assert s.scalar(select(Farm.name).where(Farm.player_id == pid)) == "星空牧場"
+
+
 def test_every_page_renders(cmds, admin):
     p = make_player(cmds, ALICE)
     for page in PAGES:

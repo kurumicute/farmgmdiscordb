@@ -8,7 +8,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.clock import TAIPEI_TZ, Clock, SystemClock
-from app.db.models import RankingAward, RankingRewardRule, RankingSettlement
+from app.db.models import RankingAward, RankingRewardRule, RankingSettlement, WorldBossEvent, WorldBossSchedule
 from app.game import balance, fishing, rules
 from app.game import events as event_rules
 from app.repositories import animals as animals_repo
@@ -32,6 +32,7 @@ from app.services.fishing_service import fish_type_view, gear_view
 from app.services.game_service import build_backpack
 from app.services.ranch_service import animal_type_view, animal_view, order_view
 from app.services.ranking_service import RankingService, rule_view, settlement_detail, settlement_view
+from app.services.world_boss_service import defaults_view, detail_view, event_view, schedule_view
 
 ACTIVITY_HOURS = 12
 
@@ -639,3 +640,32 @@ class MonitorService:
             if st is None:
                 return None
             return settlement_detail(session, st)
+
+    # ---------- 世界 Boss（唯讀：HP 依同一公式即時推算，不寫回資料庫） ----------
+
+    def world_boss(self, limit: int = 50) -> dict:
+        now = self._clock.now()
+        with self._read_only() as session:
+            events = session.scalars(
+                select(WorldBossEvent)
+                .order_by((WorldBossEvent.status != "ended").desc(), WorldBossEvent.created_at.desc(),
+                          WorldBossEvent.id.desc())
+                .limit(limit)
+            )
+            rows = []
+            for ev in events:
+                view = event_view(session, ev, now)
+                view.pop("rewards")
+                rows.append(view)
+            names = catalog_repo.item_names(session)
+            schedules = [schedule_view(session, s, now, names)
+                         for s in session.scalars(select(WorldBossSchedule).order_by(WorldBossSchedule.id))]
+            return {"events": rows, "schedules": schedules, "defaults": defaults_view(session), "server_time": now}
+
+    def world_boss_detail(self, event_id: int) -> dict | None:
+        now = self._clock.now()
+        with self._read_only() as session:
+            ev = session.get(WorldBossEvent, event_id)
+            if ev is None:
+                return None
+            return detail_view(session, ev, now)

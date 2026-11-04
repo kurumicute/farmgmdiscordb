@@ -60,6 +60,9 @@ class EventType(StrEnum):
     FISHING_BUY = "fishing_buy"
     FISH_SELL = "fish_sell"
     RELEASE_ANIMAL = "release_animal"
+    BOSS_DONATE = "boss_donate"
+    BOSS_REWARD = "boss_reward"
+    RENAME_FARM = "rename_farm"
 
 
 EVENT_TYPE_LABELS = {
@@ -98,6 +101,9 @@ EVENT_TYPE_LABELS = {
     EventType.FISHING_BUY: "購買釣具",
     EventType.FISH_SELL: "販售魚類",
     EventType.RELEASE_ANIMAL: "放生動物",
+    EventType.BOSS_DONATE: "世界 Boss 捐獻",
+    EventType.BOSS_REWARD: "世界 Boss 獎勵",
+    EventType.RENAME_FARM: "農場改名",
 }
 
 

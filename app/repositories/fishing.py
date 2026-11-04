@@ -177,11 +177,16 @@ def player_session_stats(session: Session, farm_id: int) -> dict:
 # ---------- 魚簍 ----------
 
 
+def in_basket() -> tuple:
+    """SQL 條件：還在魚簍中的魚（沒有賣掉，也沒有捐給世界 Boss）。"""
+    return FarmFish.sold_at.is_(None), FarmFish.donated_at.is_(None)
+
+
 def basket(session: Session, farm_id: int) -> list[tuple[FarmFish, FishType]]:
     stmt = (
         select(FarmFish, FishType)
         .join(FishType, FishType.code == FarmFish.fish_code)
-        .where(FarmFish.farm_id == farm_id, FarmFish.sold_at.is_(None))
+        .where(FarmFish.farm_id == farm_id, *in_basket())
         .order_by(FarmFish.price.desc(), FarmFish.weight_g.desc(), FarmFish.id)
     )
     return [(fish, ftype) for fish, ftype in session.execute(stmt)]
@@ -189,7 +194,7 @@ def basket(session: Session, farm_id: int) -> list[tuple[FarmFish, FishType]]:
 
 def basket_count(session: Session, farm_id: int) -> int:
     return session.scalar(
-        select(func.count()).select_from(FarmFish).where(FarmFish.farm_id == farm_id, FarmFish.sold_at.is_(None))
+        select(func.count()).select_from(FarmFish).where(FarmFish.farm_id == farm_id, *in_basket())
     )
 
 
@@ -206,7 +211,7 @@ def get_farm_fish(session: Session, farm_id: int, fish_id: int) -> tuple[FarmFis
 
 def lock_unsold(session: Session, farm_id: int, fish_ids: list[int] | None) -> list[FarmFish]:
     """鎖定這座農場尚未販售的魚；fish_ids 為 None 表示全部。"""
-    stmt = select(FarmFish).where(FarmFish.farm_id == farm_id, FarmFish.sold_at.is_(None))
+    stmt = select(FarmFish).where(FarmFish.farm_id == farm_id, *in_basket())
     if fish_ids is not None:
         stmt = stmt.where(FarmFish.id.in_(fish_ids))
     return list(session.scalars(stmt.order_by(FarmFish.id).with_for_update()))
@@ -321,7 +326,7 @@ def overview(session: Session, now: datetime) -> dict:
     ).one()
     legendary = session.scalar(select(func.count()).select_from(FarmFish).where(FarmFish.rarity == "legendary"))
     shares = session.scalar(select(func.count()).select_from(FishShare))
-    in_baskets = session.scalar(select(func.count()).select_from(FarmFish).where(FarmFish.sold_at.is_(None)))
+    in_baskets = session.scalar(select(func.count()).select_from(FarmFish).where(*in_basket()))
     return {
         "sessions": s[0], "landed": s[1], "failed": s[2], "active": s[3], "players": s[4],
         "success_rate": round(s[1] * 100 / (s[0] - s[3]), 1) if s[0] - s[3] else None,
@@ -348,7 +353,7 @@ def player_rows(session: Session, q: str | None, limit: int, offset: int) -> tup
             func.count().filter(FarmFish.rarity == "legendary").label("legendary"),
             func.count().filter(FarmFish.sold_at.is_not(None)).label("sold"),
             func.coalesce(func.sum(FarmFish.sold_price), 0).label("sold_gold"),
-            func.count().filter(FarmFish.sold_at.is_(None)).label("basket"),
+            func.count().filter(*in_basket()).label("basket"),
         ).group_by(FarmFish.farm_id).subquery()
     )
     shares = select(FishShare.farm_id.label("farm_id"), func.count().label("shares")).group_by(

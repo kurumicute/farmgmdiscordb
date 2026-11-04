@@ -24,3 +24,6 @@ YTDiscordBot-main/
 *.txt
 !requirements.txt
 *.bat
+
+# 世界 Boss 示意圖：只在開發時參考，執行時不需要
+dragon.png

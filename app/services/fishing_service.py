@@ -59,7 +59,7 @@ def fish_view(fish: FarmFish, ftype) -> dict:
         "id": fish.id, "code": fish.fish_code, "name": ftype.name, "emoji": ftype.emoji, "rarity": fish.rarity,
         "rarity_name": fishing.RARITY_NAMES[fish.rarity], "rarity_emoji": fishing.RARITY_EMOJI[fish.rarity],
         "weight_g": fish.weight_g, "weight_text": fishing.weight_text(fish.weight_g), "price": fish.price,
-        "caught_at": fish.caught_at, "sold_at": fish.sold_at,
+        "caught_at": fish.caught_at, "sold_at": fish.sold_at, "donated_at": fish.donated_at,
     }
 
 
@@ -459,7 +459,7 @@ class FishingService(ExplorationService):
             if group_id is None:
                 raise ValidationError("分享魚類需要在你所在的 Discord 伺服器中操作。")
             got = fishing_repo.get_farm_fish(session, farm.id, fish_id)
-            if got is None or got[0].sold_at is not None:
+            if got is None or got[0].sold_at is not None or got[0].donated_at is not None:
                 raise NotFoundError("找不到這隻魚（可能已經賣掉了）。")
             fish, ftype = got
             now = self._clock.now()

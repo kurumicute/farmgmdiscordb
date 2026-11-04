@@ -1,9 +1,10 @@
 """農場圖片：依狀態拼出農田（4～16 格）、建築畫面與商店頁面的 PNG（素材與規則見 farm/拼接說明.md）。
 
 只依賴 Pillow 與素材資料夾；拼圖在 ServiceRunner 的執行緒中呼叫，不在事件迴圈執行。
-素材只讀一次並快取；預先產生的圖或底圖命中時直接回傳檔案內容。
+素材只讀一次並快取；預先產生的圖或底圖命中時沿用（第一次轉成 PANEL_COLORS 色後快取，之後直接回傳）。
 """
 
+import functools
 import io
 import json
 from pathlib import Path
@@ -11,6 +12,10 @@ from pathlib import Path
 from PIL import Image
 
 ASSETS = Path(__file__).resolve().parent / "farm"  # 素材資料夾（測試可改指到其他位置）
+
+# 農田與建築畫面上傳時的色數：64 色比 256 色小約 3～5 成（農田 117→59 KB），像素風畫面肉眼幾乎看不出差別。
+# 固定場景圖（商店、賭場、山洞、世界 Boss）不受影響，仍直接上傳原檔
+PANEL_COLORS = 64
 
 STATE_BADGE = {"seeds": "need_water", "sprout": "timer", "young": "timer", "unripe": "timer", "ready": "ready"}
 
@@ -30,6 +35,8 @@ def reset_cache() -> None:
     global _manifest
     _manifest = None
     _cache.clear()
+    world_boss_png.cache_clear()
+    file_png.cache_clear()
 
 
 def img(rel: str) -> Image.Image:
@@ -39,9 +46,15 @@ def img(rel: str) -> Image.Image:
 
 
 def encode(image: Image.Image) -> bytes:
-    buf = io.BytesIO()  # 256 色 PNG：約為全彩的 1/5，編碼也快很多
-    image.quantize(256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE).save(buf, "PNG")
+    buf = io.BytesIO()  # 調色盤 PNG（PANEL_COLORS 色）：比全彩小很多，編碼也快
+    image.quantize(PANEL_COLORS, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE).save(buf, "PNG")
     return buf.getvalue()
+
+
+@functools.lru_cache(maxsize=512)
+def file_png(rel: str) -> bytes:
+    """預先產生的農田圖／底圖（素材檔為 256 色）轉成 PANEL_COLORS 色後快取；每個檔案只轉一次。"""
+    return encode(img(rel))
 
 
 # ---------- 農田 ----------
@@ -141,7 +154,7 @@ def farm_png(plots: list[dict]) -> bytes:
     plots = plots[:field["slots"]]  # 最多畫 16 格（超過上限的舊農場只畫前 16 格）
     hit = preset_for(plots)
     if hit and not hit[1]:
-        return (ASSETS / hit[0]).read_bytes()
+        return file_png(hit[0])
     if hit:  # 預先產生的圖 + 補標記
         canvas = img(hit[0]).copy()
         for k, plot in enumerate(plots):
@@ -219,7 +232,7 @@ def yard_png(workshop: dict, animals: list[dict]) -> bytes:
             draw_bubble(target(), bubble, m["products"].get(a.get("product_code"), badges["ready"]))
 
     if canvas is None:
-        return (ASSETS / base_rel).read_bytes()  # 沒有動物、機器都閒置：直接上傳底圖
+        return file_png(base_rel)  # 沒有動物、機器都閒置：直接用底圖
     return encode(canvas)
 
 
@@ -234,6 +247,14 @@ def shop_png() -> bytes:
 
 def casino_png() -> bytes:
     return scene_png("casino")
+
+
+@functools.lru_cache(maxsize=1)
+def world_boss_png() -> bytes:
+    """世界 Boss 頁的固定圖（由 dragon.png 縮成 1024×576、256 色）。
+
+    只讀一次；內容不變，面板會沿用訊息上已上傳的附件。"""
+    return scene_png("world_boss")
 
 
 def explore_png(area_code: str) -> bytes | None:

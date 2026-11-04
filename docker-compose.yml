@@ -31,7 +31,10 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     # 資料庫只有數十 MB，預設 shared_buffers=128MB 用不到；32MB 已足夠快取全部資料（資料變大時再調高）
-    command: ["postgres", "-c", "shared_buffers=32MB"]
+    # pg_stat_statements：統計每種 SQL 的次數與耗時，用來找慢查詢（只記頂層語句；需在資料庫執行一次 CREATE EXTENSION，
+    # 新 Volume 由 docker/initdb/02 建立）。查詢方式見 README「效能監控」
+    command: ["postgres", "-c", "shared_buffers=32MB",
+              "-c", "shared_preload_libraries=pg_stat_statements", "-c", "pg_stat_statements.track=top"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?請在 .env 設定 POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?請在 .env 設定 POSTGRES_PASSWORD}

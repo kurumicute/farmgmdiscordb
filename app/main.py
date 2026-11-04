@@ -128,7 +128,7 @@ async def _auto_settle(app: FastAPI, interval: float) -> None:
     while True:
         try:
             settled = await run_in_threadpool(app.state.social_service.run_background_settlement, "system")
-            if settled and (settled["rankings"] or settled["competitions"]):
+            if settled and (settled["rankings"] or settled["competitions"] or settled.get("world_boss")):
                 logger.info("已自動結算：%s", settled)
         except Exception as exc:  # 資料庫暫時無法連線等錯誤：記錄後下次再試，不中斷服務
             logger.warning("自動結算排名獎勵失敗：%s", type(exc).__name__)

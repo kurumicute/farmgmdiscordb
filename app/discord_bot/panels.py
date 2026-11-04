@@ -16,6 +16,7 @@ import hashlib
 import io
 import logging
 import re
+import time
 from collections.abc import Callable
 from datetime import datetime
 
@@ -26,6 +27,7 @@ from app.cli.commands import CommandHandler
 from app.discord_bot import farm_image
 from app.discord_bot.fishing_panel import FishingPages, fish_line
 from app.discord_bot.runner import player_message
+from app.discord_bot.world_boss_panel import WorldBossPages
 from app.game import balance, exploration, rules
 from app.game.errors import GameError, ValidationError
 from app.game.rules import EVENT_TYPE_LABELS, PlotState
@@ -172,10 +174,24 @@ class NameModal(discord.ui.Modal):
         await self._handler(interaction, self.name.value.strip() or None)
 
 
+class RenameModal(discord.ui.Modal):
+    """更改農場名稱：預先填入目前名稱，送出後才扣金幣。"""
+
+    def __init__(self, current: str, on_submit: Callable):
+        super().__init__(title=cut(f"更改農場名稱（{balance.RENAME_FARM_COST} 金幣）", 45), timeout=300)
+        self._handler = on_submit
+        self.name = discord.ui.TextInput(label="新的農場名稱", default=current[: balance.FARM_NAME_MAX_LEN],
+                                         max_length=balance.FARM_NAME_MAX_LEN)
+        self.add_item(self.name)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self._handler(interaction, self.name.value.strip())
+
+
 # ---------- 面板 ----------
 
 
-class FarmPanel(FishingPages, discord.ui.View):
+class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
     """一個玩家的私密農場面板。頁面內容每次都重新從資料庫讀取，網站或其他介面的修改會立即反映。"""
 
     def __init__(self, cmds, owner_id: int, who, ctx) -> None:
@@ -207,6 +223,11 @@ class FarmPanel(FishingPages, discord.ui.View):
         # 圖片內容的雜湊：本次畫面的圖、面板訊息上目前掛著的圖；相同時沿用訊息上的附件，不重新上傳
         self.image_digest: bytes | None = None
         self.sent_digest: bytes | None = None
+        self.image_size = 0  # 本次畫面圖片的位元組數（只用於記錄上傳）
+        # 同一面板的重繪一次只跑一個：discord.py 會同時處理連點的兩次互動，
+        # 兩個 render 交錯時元件會被加兩次（超過一列 5 個而失敗）
+        self._render_lock: asyncio.Lock | None = None
+        self._render_loop = None
 
     @property
     def svc(self):
@@ -241,8 +262,18 @@ class FarmPanel(FishingPages, discord.ui.View):
     async def run(self, fn, *args):
         return await self.cmds.runner.run(fn, *args)
 
+    def _lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if self._render_loop is not loop:  # Lock 綁定事件迴圈；正式環境只有一個迴圈，測試每次 asyncio.run 都是新迴圈
+            self._render_lock, self._render_loop = asyncio.Lock(), loop
+        return self._render_lock
+
     async def render(self, notice: str | None = None) -> discord.Embed:
-        """讀取目前頁面的資料並重建元件；讀取失敗時顯示錯誤並提供回總覽按鈕。"""
+        """讀取目前頁面的資料並重建元件；讀取失敗時顯示錯誤並提供回總覽按鈕。同一面板的重繪依序執行。"""
+        async with self._lock():
+            return await self._render(notice)
+
+    async def _render(self, notice: str | None) -> discord.Embed:
         self.clear_items()
         self.files, self.image_digest = [], None  # 換頁時舊圖片也要移除
         if self.page != "welcome":
@@ -312,15 +343,36 @@ class FarmPanel(FishingPages, discord.ui.View):
     async def refresh(
         self, interaction: discord.Interaction, notice: str | None = None, *, budget: float | None = None
     ) -> None:
-        embed = await self._in_time(interaction, self.render(notice), budget)
-        self._register_items(interaction)
+        # 重繪到送出畫面整段持有鎖：重繪會改寫面板共用的元件與圖片狀態（files／image_digest），
+        # 連點時另一次重繪不能夾在這次「重繪完、送出前」之間（否則圖片會被拿掉再重新上傳）。
+        # 等鎖的時間也算在直接回覆的時限內，超過時照常先 defer。
+        lock = self._lock()
+
+        async def locked_render() -> discord.Embed:
+            await lock.acquire()
+            try:
+                return await self._render(notice)
+            except BaseException:
+                lock.release()
+                raise
+
+        embed = await self._in_time(interaction, locked_render(), budget)
         try:
-            # attachments：傳新檔案會取代舊圖，傳 [] 會移除，傳訊息上既有的附件則保留不重傳
-            await self._show(interaction, embed, self._attachments(interaction))
-            self.sent_digest = self.image_digest
-        except discord.HTTPException as exc:
-            self.sent_digest = None  # 不確定訊息上現在是哪張圖，下次重新上傳
-            logger.warning("更新面板失敗：%s", type(exc).__name__)
+            self._register_items(interaction)
+            try:
+                # attachments：傳新檔案會取代舊圖，傳 [] 會移除，傳訊息上既有的附件則保留不重傳
+                attachments = self._attachments(interaction)
+                started = time.perf_counter()
+                await self._show(interaction, embed, attachments)
+                self.sent_digest = self.image_digest
+                if attachments and attachments is self.files:  # 真的上傳了新圖片（沿用既有附件時不記錄）
+                    logger.info("面板上傳圖片（玩家 #%s，頁面 %s，%d KB，%.0f ms）", self.player_id, self.page,
+                                self.image_size // 1024, (time.perf_counter() - started) * 1000)
+            except discord.HTTPException as exc:
+                self.sent_digest = None  # 不確定訊息上現在是哪張圖，下次重新上傳
+                logger.warning("更新面板失敗：%s", type(exc).__name__)
+        finally:
+            lock.release()
         self._schedule_fish_timer(interaction)  # 釣魚畫面：上鉤、反應期限、拉扯逾時時自動更新
 
     def _attachments(self, interaction: discord.Interaction) -> list:
@@ -367,6 +419,10 @@ class FarmPanel(FishingPages, discord.ui.View):
         await self.refresh(interaction, cut(notice, 1500), budget=DIRECT_REPLY_SECONDS - (loop.time() - started))
 
     async def show_error(self, interaction: discord.Interaction, message: str) -> None:
+        async with self._lock():  # 與 refresh 相同：改寫元件到送出畫面之間不讓其他重繪插進來
+            await self._show_error(interaction, message)
+
+    async def _show_error(self, interaction: discord.Interaction, message: str) -> None:
         self.clear_items()
         embed = discord.Embed(title="⚠️ 無法完成", color=RED, description=f"### {cut(message, 1500)}")
         embed.set_footer(text="按「返回」回到剛才的畫面")
@@ -389,6 +445,7 @@ class FarmPanel(FishingPages, discord.ui.View):
         if png:  # discord.File 只能送出一次，每次都建新的
             self.files = [discord.File(io.BytesIO(png), filename=FARM_IMAGE)]
             self.image_digest = hashlib.blake2b(png, digest_size=16).digest()
+            self.image_size = len(png)
             embed.set_image(url=f"attachment://{FARM_IMAGE}")
 
     def _image(self, what: str, make: Callable[[], bytes]) -> bytes | None:
@@ -605,6 +662,7 @@ class FarmPanel(FishingPages, discord.ui.View):
         self.nav("任務競賽", "quests", emoji="📜", row=3)
         self.nav("群組", "group", emoji="👥", row=3)
         self.nav("紀錄", "log", emoji="🧾", row=3)
+        self.nav("世界Boss", "boss", emoji="🐉", row=3, style=discord.ButtonStyle.danger)
         self.nav("作物價格", "prices", emoji="📈", row=4)
         self.nav("賭場", "casino", emoji="🎰", row=4, style=discord.ButtonStyle.primary)
         self.nav("山洞", "cave", emoji="⛰️", row=4, style=discord.ButtonStyle.primary)
@@ -2066,11 +2124,24 @@ class FarmPanel(FishingPages, discord.ui.View):
                              description=sections(("", lines, "\n\n")) if lines else "目前沒有紀錄。")
 
     def _load_help(self):
-        return {}
+        status = self.svc.get_farm_status(self.player_id)
+        return {"name": status.name, "gold": status.gold}
 
-    def _build_help(self, _d):
+    def _build_help(self, d):
         self._nav_back(row=0)
-        return help_embed()
+        cost = balance.RENAME_FARM_COST
+
+        async def rename(interaction):
+            async def submitted(modal_interaction, name):
+                await self.act(modal_interaction, lambda: self.svc.rename_farm(self.player_id, name).message)
+
+            await interaction.response.send_modal(RenameModal(d["name"], submitted))
+
+        self.button(f"更改農場名稱（{cost} 金幣）", rename, emoji="✏️", row=0, disabled=d["gold"] < cost)
+        e = help_embed()
+        e.add_field(name="🏡 農場名稱", inline=False, value=(
+            f"目前：**{d['name']}**\n按「✏️ 更改農場名稱」可以改名，每次 {cost} 金幣（你有 {d['gold']:,} 金幣）。"))
+        return e
 
 
 def steal_footer(glove: bool) -> str:
@@ -2107,6 +2178,9 @@ def help_embed() -> discord.Embed:
         "總覽「🎣 釣魚」→ 先到「🛒 釣具商店」買魚竿、魚線、魚餌（商店也有「🎣 釣具商店」分頁）→「開始釣魚」。"
         "魚上鉤後在時限內按「拉竿」，再依 💬 提示收線／放線／等待，把距離拉到 0 就釣起來了。"
         "稀有度只影響拉扯難度，基礎成功率都一樣；釣到的魚放進魚簍，可以出售或「📢 分享到群組」。"))
+    e.add_field(name="🐉 世界 Boss", inline=False, value=(
+        "伺服器的共同活動：總覽「🐉 世界Boss」→「📦 捐獻物資」把農作物、漁獲、素材或加工品捐給前線，"
+        "糧食／醫療／戰鬥／裝備四種補給越充足，前線自動打 Boss 越快。活動結束後依結果、積分與排名「🎁 領取獎勵」。"))
     e.add_field(name="👥 群組", inline=False, value=(
         "每個 Discord 伺服器是一個群組。你的農場屬於建立時的伺服器，只有在那裡的操作才計入群組任務與競賽；"
         "可在「👥 群組」把農場轉移到目前的伺服器（每 7 天一次）。"))

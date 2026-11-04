@@ -41,6 +41,7 @@ MAX_TRADE_QUANTITY = 9999
 
 PLAYER_NAME_MAX_LEN = 32
 FARM_NAME_MAX_LEN = 40
+RENAME_FARM_COST = 300  # 更改農場名稱每次的金幣費用
 
 # 初始作物設定（供測試參考；遊戲執行時以資料庫 crop_types 為準，可在監控網站新增／修改／停用）
 # Migration 0013 已把資料庫價格調整為：小麥 5/11、胡蘿蔔 12/15、番茄 25/22、草莓 60/34（種子價格/單位售價）

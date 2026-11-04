@@ -243,7 +243,13 @@ class FarmCommands:
     async def open_panel(self, interaction: discord.Interaction) -> None:
         """開啟私密的農場面板。先 defer（3 秒規則），讀取資料後以 followup 送出面板。"""
         w = who(interaction)
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+        except discord.NotFound:
+            # 10062 Unknown interaction：互動送到 Bot 時已超過 Discord 的 3 秒期限（通常是網路延遲），
+            # 已無法回覆；玩家再輸入一次 /farm 即可，不需要記錄完整錯誤堆疊
+            logger.warning("開啟面板逾時（互動已失效，使用者 %s）", interaction.user.id)
+            return
         try:
             ctx = await self.runner.run(self.service.external_context, PLATFORM, w.user_id, w.guild_id, w.guild_name)
         except Exception as exc:

@@ -49,6 +49,29 @@ def test_intents_and_music_toggle(runner):
     assert not bot_intents(settings(music_enabled=False)).voice_states
 
 
+def test_slow_interaction_delivery_is_logged(runner, caplog):
+    """互動送到 Bot 已超過 2 秒才記一行警告（分辨網路慢或 Bot 慢）；正常送達與時鐘誤差（負值）不記錄。"""
+    from datetime import timedelta
+
+    import discord
+
+    from app.discord_bot.bot import interaction_delay_seconds
+
+    bot = FarmBot(settings(music_enabled=False), None, runner)
+    now = discord.utils.utcnow()
+
+    def fake(seconds_ago, data):
+        return SimpleNamespace(created_at=now - timedelta(seconds=seconds_ago), data=data,
+                               type=discord.InteractionType.application_command, user=SimpleNamespace(id=42))
+
+    assert interaction_delay_seconds(fake(-1, {}), now) == 0.0
+    with caplog.at_level("WARNING"):
+        asyncio.run(bot.on_interaction(fake(0.2, {"name": "farm"})))
+        assert "互動送達延遲" not in caplog.text
+        asyncio.run(bot.on_interaction(fake(3.5, {"name": "farm"})))
+    assert "互動送達延遲" in caplog.text and "farm" in caplog.text and "application_command" in caplog.text
+
+
 def test_advanced_farm_commands_do_not_collide(runner):
     bot = FarmBot(settings(discord_advanced_commands=True), None, runner)
     names = [c.name for c in bot.tree.get_commands()]
@@ -419,6 +442,10 @@ def test_stats_update_logs_only_dropped_frames(caplog):
     frames = SimpleNamespace(sent=3000, nulled=0, deficit=0)
     asyncio.run(music.on_wavelink_stats_update(SimpleNamespace(frames=frames)))
     asyncio.run(music.on_wavelink_stats_update(SimpleNamespace(frames=None)))
+    jitter = SimpleNamespace(sent=2999, nulled=0, deficit=1)  # 統計抖動（實際日誌常見 ±1）：不記錄
+    asyncio.run(music.on_wavelink_stats_update(SimpleNamespace(frames=jitter)))
+    negative = SimpleNamespace(sent=3001, nulled=0, deficit=-1)
+    asyncio.run(music.on_wavelink_stats_update(SimpleNamespace(frames=negative)))
     assert not caplog.records
     dropped = SimpleNamespace(sent=2950, nulled=40, deficit=10)
     asyncio.run(music.on_wavelink_stats_update(SimpleNamespace(frames=dropped)))

@@ -2,6 +2,7 @@
 
 from fastapi.testclient import TestClient
 
+from app.game import balance
 from app.site.server import INVITE_PERMISSIONS, create_site_app
 from tests.conftest import make_farmer
 
@@ -66,6 +67,7 @@ def test_feature_cards_have_guide_slots(session_factory):
         assert f'id="{slot}"' in page
     guide = c.get("/api/guide").json()
     assert guide["start"]["steal_plots_per_day"] == 1
+    assert guide["start"]["rename_cost"] == balance.RENAME_FARM_COST
     assert any(i["kind"] == "tool" for i in guide["items"])
     assert any(not crop["shop_buyable"] for crop in guide["crops"])  # 稀有種子（琥珀瓜、月光花）
 

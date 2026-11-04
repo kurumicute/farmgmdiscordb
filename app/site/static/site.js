@@ -115,6 +115,10 @@
   function renderGuide(g) {
     const s = g.start;
     setText("g-start", `${num.format(s.gold)} 金幣、${s.plots} 格農田、倉庫 ${s.warehouse} 格`);
+    if (s.rename_cost != null) {
+      setText("g-rename", `${num.format(s.rename_cost)} 金幣`);
+      setText("g-rename-quick", `${num.format(s.rename_cost)} 金幣`);
+    }
     setText("g-wither", duration(s.wither_minutes * 60));
     setText("g-upgrade", `每次農田 +${s.upgrade_plots} 格：${s.upgrade_prices.map((p) => num.format(p)).join(" → ")} 金幣（最多 ${s.max_plots} 格）`);
     setText("g-steal-max", String(s.steal_max));
@@ -167,6 +171,69 @@
       : [["目前沒有排定的活動", "", "", ""]]);
 
     if (g.rankings) renderRankings(g.rankings);
+    if (g.world_boss) renderWorldBoss(g.world_boss);
+  }
+
+  // 世界 Boss：補給、指定物品、積分規則與預設獎勵（只有規則，沒有任何伺服器或玩家資料）
+  function renderWorldBoss(b) {
+    // 本場全服 Boss 的即時狀態（HP 依時間推算；手冊資料每分鐘更新一次）
+    const c = b.current;
+    const when = (iso) => new Date(iso).toLocaleString("zh-TW", { timeZone: "Asia/Taipei", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    if (c) {
+      const time = c.state === "scheduled" ? `${when(c.starts_at)} 開始` : `${when(c.ends_at)} 結束`;
+      setText("g-boss-now", `目前全服世界 Boss：${c.name}｜${c.state_label}｜HP ${num.format(c.hp)} / ${num.format(c.max_hp)}`
+        + `（${c.hp_pct}%）｜${time}｜參與 ${num.format(c.participants)} 人`);
+    } else {
+      setText("g-boss-now", "目前沒有全服世界 Boss 活動，請看下表的固定出現時間。");
+    }
+    const src = b.source || {};
+    setText("g-boss-source", src.kind === "default"
+      ? "目前沒有全服活動或排程，表格為預設值；伺服器自己的活動由管理員設定，實際內容以 Discord「📖 活動說明」為準。"
+      : `補給目標與獎勵為${src.kind === "event" ? "本場" : "排程"}全服世界 Boss「${src.name}」的設定；`
+        + "伺服器自己的活動由管理員設定，實際內容以 Discord「📖 活動說明」為準。");
+    const first = (b.schedules || []).find((x) => x.scope === "全服") || (b.schedules || [])[0];
+    if (first) {
+      const [h, m] = first.time.split(":").map(Number);
+      const part = h < 5 ? "凌晨" : h < 11 ? "早上" : h < 13 ? "中午" : h < 18 ? "下午" : "晚上";
+      const freq = first.interval_days === 1 ? "每天" : `每 ${first.interval_days} 天`;
+      setText("c-boss", `${first.name}${freq}${part} ${h % 12 || 12} 點${m ? ` ${m} 分` : ""}出現`);
+    }
+    setText("g-boss-dph", num.format(b.base_damage_per_hour));
+    setText("g-boss-instant", String(b.instant_damage_per_point));
+    setText("g-boss-gpp", String(b.gold_per_point));
+    setText("g-boss-action", String(b.limits.per_action_max));
+    setText("g-boss-item", String(b.limits.per_item_max));
+    setText("g-boss-cap", `${b.ratio_cap_pct}%`);
+    setText("g-boss-hours", String(b.duration_hours));
+    fillRows("g-boss-supplies", b.supplies.map((s) => [`${s.emoji} ${s.name}`, s.description,
+      `${s.effect}（${s.effect_text}）`, num.format(s.target)]));
+    fillRows("g-boss-items", b.items.length
+      ? b.items.map((i) => [i.name, i.supply, String(i.points)])
+      : [["目前沒有指定物品", "", ""]]);
+    const r = b.rewards;
+    const rows = [];
+    if (r.min_points) rows.push(["🎯 參與門檻", `個人積分 ≥ ${num.format(r.min_points)}`, "未達門檻沒有任何獎勵（含排名）"]);
+    rows.push(
+      ["🏆 勝利獎勵", "Boss 被擊敗，所有貢獻者", r.victory],
+      ["🤝 參與獎勵", "Boss 未被擊敗，所有貢獻者", r.participation],
+    );
+    if (r.bonus_points) rows.push(["⭐ 貢獻達標", `個人積分 ≥ ${num.format(r.bonus_points)}`, r.bonus]);
+    r.rank.forEach((t, i) => rows.push([i < 3 ? ["🥇", "🥈", "🥉"][i] + " 排名獎勵" : "🏅 排名獎勵", `個人第 ${i + 1} 名`, t]));
+    if (r.title) rows.push(["🎖️ 特殊稱號", `擊敗 Boss 時前 ${r.title_top} 名`, r.title]);
+    fillRows("g-boss-rewards", rows);
+    const hm = (m) => (m % 60 ? `${Math.floor(m / 60)} 小時 ${m % 60} 分` : `${m / 60} 小時`);
+    // 「21:00」→「晚上 9 點」；「07:30」→「早上 7 點 30 分」
+    const clock = (t) => {
+      const [h, m] = t.split(":").map(Number);
+      const part = h < 5 ? "凌晨" : h < 11 ? "早上" : h < 13 ? "中午" : h < 18 ? "下午" : "晚上";
+      return `${part} ${h % 12 || 12} 點${m ? ` ${m} 分` : ""}`;
+    };
+    fillRows("g-boss-schedules", (b.schedules || []).length
+      ? b.schedules.map((x) => [x.name, x.scope, x.interval_days === 1 ? "每天一次" : `${x.interval_days} 天一次`,
+        `${clock(x.time)}（持續 ${hm(x.duration_minutes)}）`, num.format(x.max_hp),
+        [`擊敗：${x.rewards.victory}`, x.rewards.rank.length ? `第 1 名 ${x.rewards.rank[0]}` : "",
+          x.rewards.title ? `前 ${x.rewards.title_top} 名稱號「${x.rewards.title}」` : ""].filter(Boolean).join("；")])
+      : [["目前沒有固定出現的世界 Boss", "", "", "", "", ""]]);
   }
 
   // 排名獎勵：啟用中的規則（不含任何得獎紀錄）

@@ -1,5 +1,5 @@
 """管理 API（寫入）：群組任務與競賽、作物品質設定、作物／動物種類、限時事件，
-以及調整玩家的金幣、等級、背包、土地、建築、動物。
+以及調整玩家的金幣、等級、背包、土地、建築、動物，與世界 Boss 活動管理。
 
 所有寫入都會記錄在管理操作紀錄（admin_actions）；調整玩家資料另外寫入玩家的交易紀錄（admin_adjust）。
 群組建立與成員管理改由 Discord 端處理，網站不提供。
@@ -10,7 +10,7 @@
 - 必須帶自訂標頭 X-Farmgm-Admin，且 Origin（若有）須與 Host 相同（防 CSRF）。
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
@@ -558,3 +558,148 @@ async def set_ranking_rule_enabled(request: Request, rule_id: EventId, body: Ena
 @router.delete("/ranking-rules/{rule_id}")
 async def delete_ranking_rule(request: Request, rule_id: EventId, actor: Actor) -> dict:
     return await _call(_social(request).delete_ranking_rule, actor, rule_id)
+
+
+# ---------- 世界 Boss ----------
+
+Supply = Literal["food", "medical", "combat", "equipment"]
+ItemCode = Annotated[str, Field(min_length=2, max_length=64, pattern=CODE_PATTERN)]
+BossInt = Annotated[int, Field(ge=0, le=1_000_000_000)]  # 詳細範圍由服務層（app/game/world_boss）檢查
+
+
+class BossSupplyTargets(BaseModel):
+    food: BossInt
+    medical: BossInt
+    combat: BossInt
+    equipment: BossInt
+
+
+class BossEffects(BaseModel):
+    ratio_cap_pct: BossInt
+    base_uptime_pct: BossInt
+    medical_recovery_pct: BossInt
+    combat_attack_pct: BossInt
+    equipment_attack_pct: BossInt
+
+
+class BossLimits(BaseModel):
+    per_item_max: BossInt
+    per_action_max: BossInt
+
+
+class BossItem(BaseModel):
+    supply: Supply
+    points: BossInt
+
+
+class BossSettingsBody(BaseModel):
+    base_damage_per_hour: BossInt
+    instant_damage_per_point: BossInt
+    gold_per_point: BossInt
+    crop_supply: Supply
+    fish_supply: Supply
+    supply_targets: BossSupplyTargets
+    effects: BossEffects
+    limits: BossLimits
+    items: dict[ItemCode, BossItem] = Field(default_factory=dict, max_length=60)
+
+
+class BossRewardPart(BaseModel):
+    gold: BossInt = 0
+    items: dict[ItemCode, BossInt] = Field(default_factory=dict, max_length=5)
+
+
+class BossRewardsBody(BaseModel):
+    min_points: BossInt  # 參與門檻：積分未達此值沒有任何獎勵
+    victory: BossRewardPart
+    participation: BossRewardPart
+    bonus_points: BossInt
+    bonus: BossRewardPart
+    rank: list[BossRewardPart] = Field(default_factory=list, max_length=10)
+    title: str = Field(default="", max_length=20)
+    title_top: BossInt = 0
+
+
+class BossBasic(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    level: int | None = Field(default=None, ge=1, le=999)  # 介面不顯示等級，保留相容
+    max_hp: int = Field(ge=1, le=1_000_000_000)
+    starts_at: datetime
+    ends_at: datetime
+
+
+class BossCreate(BossBasic):
+    group_id: int | None = Field(default=None, ge=1, le=MAX_BIGINT)  # None = 全服（所有玩家）
+    settings: BossSettingsBody | None = None
+    rewards: BossRewardsBody | None = None
+
+
+def _boss_data(body: BossBasic) -> dict:
+    data = body.model_dump()
+    data["starts_at"], data["ends_at"] = _aware(body.starts_at), _aware(body.ends_at)
+    return data
+
+
+@router.post("/world-boss", status_code=201)
+async def create_world_boss(request: Request, body: BossCreate, actor: Actor) -> dict:
+    return await _call(_social(request).create_world_boss, actor, _boss_data(body))
+
+
+@router.put("/world-boss/{event_id}")
+async def update_world_boss(request: Request, event_id: EventId, body: BossBasic, actor: Actor) -> dict:
+    return await _call(_social(request).update_world_boss, actor, event_id, _boss_data(body))
+
+
+@router.put("/world-boss/{event_id}/settings")
+async def update_world_boss_settings(request: Request, event_id: EventId, body: BossSettingsBody,
+                                     actor: Actor) -> dict:
+    return await _call(_social(request).update_world_boss_settings, actor, event_id, body.model_dump())
+
+
+@router.put("/world-boss/{event_id}/rewards")
+async def update_world_boss_rewards(request: Request, event_id: EventId, body: BossRewardsBody,
+                                    actor: Actor) -> dict:
+    return await _call(_social(request).update_world_boss_rewards, actor, event_id, body.model_dump())
+
+
+@router.post("/world-boss/{event_id}/{action}")
+async def world_boss_action(
+    request: Request, event_id: EventId, action: Literal["start", "pause", "resume", "end"], actor: Actor
+) -> dict:
+    return await _call(_social(request).world_boss_action, actor, event_id, action)
+
+
+class BossScheduleBody(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    group_id: int | None = Field(default=None, ge=1, le=MAX_BIGINT)  # None = 全服
+    interval_days: int = Field(ge=1, le=30)
+    spawn_hour: int = Field(ge=0, le=23)
+    spawn_minute: int = Field(ge=0, le=59)
+    anchor_date: date
+    duration_minutes: int = Field(ge=10, le=10080)
+    max_hp: int = Field(ge=1, le=1_000_000_000)
+    settings: BossSettingsBody | None = None
+    rewards: BossRewardsBody | None = None
+    enabled: bool = True
+
+
+@router.post("/world-boss-schedules", status_code=201)
+async def create_world_boss_schedule(request: Request, body: BossScheduleBody, actor: Actor) -> dict:
+    return await _call(_social(request).create_world_boss_schedule, actor, body.model_dump())
+
+
+@router.put("/world-boss-schedules/{schedule_id}")
+async def update_world_boss_schedule(request: Request, schedule_id: EventId, body: BossScheduleBody,
+                                     actor: Actor) -> dict:
+    return await _call(_social(request).update_world_boss_schedule, actor, schedule_id, body.model_dump())
+
+
+@router.put("/world-boss-schedules/{schedule_id}/enabled")
+async def set_world_boss_schedule_enabled(request: Request, schedule_id: EventId, body: EnabledBody,
+                                          actor: Actor) -> dict:
+    return await _call(_social(request).set_world_boss_schedule_enabled, actor, schedule_id, body.enabled)
+
+
+@router.delete("/world-boss-schedules/{schedule_id}")
+async def delete_world_boss_schedule(request: Request, schedule_id: EventId, actor: Actor) -> dict:
+    return await _call(_social(request).delete_world_boss_schedule, actor, schedule_id)

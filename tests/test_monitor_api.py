@@ -1,8 +1,11 @@
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from starlette.websockets import WebSocketDisconnect
 
+from app.api.monitor import SnapshotCache
 from app.auth import AdminAuth, hash_password
 from app.db.models import Farm, GameTransaction
 from app.db.session import make_engine, make_session_factory
@@ -131,6 +134,34 @@ def test_websocket_pushes_fresh_snapshots(client, service, player_id):
         second = ws.receive_json()  # 下一次定時快照
         assert second["data"]["summary"]["total_gold"] == 490
         assert second["data"]["transactions"][0]["event_type"] == "buy_seed"
+
+
+def test_websocket_connections_share_one_snapshot(session_factory, clock, service, player_id, monkeypatch):
+    """多個分頁同時連線：同一段時間只查詢一次資料庫；送出 refresh 時仍會拿到最新資料。"""
+    from app.services.monitor_service import MonitorService
+
+    calls = {"n": 0}
+    original = MonitorService.snapshot
+
+    def counting(self, *a, **k):
+        calls["n"] += 1
+        return original(self, *a, **k)
+
+    monkeypatch.setattr(MonitorService, "snapshot", counting)
+    app = create_app(session_factory, clock=clock, refresh_seconds=5, allowed_hosts=["testserver"])
+    with (
+        TestClient(app) as client,
+        client.websocket_connect("/ws/monitor") as a,
+        client.websocket_connect("/ws/monitor") as b,
+    ):
+        assert a.receive_json()["type"] == "snapshot"
+        assert b.receive_json()["type"] == "snapshot"
+        assert calls["n"] == 1  # 第二個分頁沿用第一個查到的快照
+        service.buy_seeds(player_id, "wheat", 1)
+        time.sleep(SnapshotCache.FORCE_MAX_AGE + 0.1)
+        a.send_text("refresh")
+        fresh = a.receive_json()
+        assert fresh["data"]["summary"]["total_gold"] == 490
 
 
 def test_websocket_rejects_cross_origin(client):

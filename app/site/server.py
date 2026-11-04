@@ -22,15 +22,27 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.models import Farm, FarmPlot, GameTransaction, Group, Player, RankingRewardRule
+from app.db.models import (
+    Farm,
+    FarmPlot,
+    GameTransaction,
+    Group,
+    Player,
+    RankingRewardRule,
+    WorldBossEvent,
+    WorldBossSchedule,
+)
 from app.game import balance, exploration, fishing
 from app.game import events as event_rules
 from app.game import ranking as ranking_rules
+from app.game import world_boss as wb
 from app.repositories import animals as animals_repo
+from app.repositories import catalog as catalog_repo
 from app.repositories import crops as crops_repo
 from app.repositories import events as events_repo
 from app.repositories import fishing as fishing_repo
 from app.repositories import genetics as genetics_repo
+from app.services.world_boss_service import event_view
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
@@ -193,6 +205,94 @@ def build_fishing(session: Session) -> dict:
     }
 
 
+def _boss_source(session: Session, now: datetime) -> tuple[dict, dict, int, dict | None, dict]:
+    """手冊數值的來源：未結束的全服活動（進行中優先，其次最早開始的）→ 第一個啟用的全服排程 → 程式預設值。
+    只看全服（group_id NULL）：伺服器自己的活動不公開。回傳 (settings, rewards, 持續分鐘, 本場狀態, 來源)。"""
+    E = WorldBossEvent
+    events = list(session.scalars(select(E).where(E.group_id.is_(None), E.status != "ended")
+                                  .order_by(E.starts_at, E.id)))
+    views = [event_view(session, ev, now) for ev in events]
+    views = [v for v in views if v["state"] not in ("ended", "defeated")] or views
+    if views:
+        v = next((x for x in views if x["state"] == "active"), views[0])
+        minutes = int((v["ends_at"] - v["starts_at"]).total_seconds() // 60)
+        current = {
+            "name": v["name"], "state": v["state"], "state_label": v["state_label"],
+            "hp": v["hp"], "max_hp": v["max_hp"], "hp_pct": v["hp_pct"],
+            "starts_at": v["starts_at"].isoformat(), "ends_at": v["ends_at"].isoformat(),
+            "participants": v["participants"],
+            "supplies": [{"name": s["name"], "emoji": s["emoji"], "progress": s["progress"], "target": s["target"]}
+                         for s in v["supplies"]],
+        }
+        return v["settings"], v["rewards"], minutes, current, {"kind": "event", "name": v["name"]}
+    sc = session.scalar(select(WorldBossSchedule).where(WorldBossSchedule.enabled.is_(True),
+                                                        WorldBossSchedule.group_id.is_(None))
+                        .order_by(WorldBossSchedule.id).limit(1))
+    if sc is not None:
+        return sc.settings, sc.rewards, sc.duration_minutes, None, {"kind": "schedule", "name": sc.name}
+    return (wb.DEFAULT_SETTINGS, wb.DEFAULT_REWARDS, wb.DEFAULT_DURATION_HOURS * 60, None,
+            {"kind": "default", "name": None})
+
+
+def build_world_boss(session: Session, names: dict[str, str], now: datetime) -> dict:
+    """世界 Boss 手冊：補給類型與效果、捐獻類別、積分規則、限制、獎勵、本場全服活動狀態，以及啟用中的固定出現排程
+    （名稱、全服或伺服器、出現時間與獎勵；不含伺服器名稱或任何玩家資料）。
+    數值取自目前的全服活動或排程（與 Discord「📖 活動說明」一致），都沒有時才用程式預設值。"""
+    s, r, minutes, current, source = _boss_source(session, now)
+
+    def part(p: dict) -> str:
+        bits = [f"{p['gold']:,} 金幣"] if p["gold"] else []
+        bits += [f"{names.get(code, code)} ×{qty}" for code, qty in p["items"].items()]
+        return "、".join(bits) or "無"
+
+    def rewards(x: dict) -> dict:
+        return {
+            "min_points": wb.min_points(x),
+            "victory": part(x["victory"]), "participation": part(x["participation"]),
+            "bonus_points": x["bonus_points"], "bonus": part(x["bonus"]),
+            "rank": [part(y) for y in x["rank"]], "title": x["title"], "title_top": x["title_top"],
+        }
+
+    schedules = [
+        {"name": sc.name, "scope": "全服" if sc.group_id is None else "指定伺服器",
+         "interval_days": sc.interval_days, "time": f"{sc.spawn_hour:02d}:{sc.spawn_minute:02d}",
+         "duration_minutes": sc.duration_minutes, "max_hp": sc.max_hp, "rewards": rewards(sc.rewards)}
+        for sc in session.scalars(select(WorldBossSchedule).where(WorldBossSchedule.enabled.is_(True))
+                                  .order_by(WorldBossSchedule.id))
+    ]
+
+    eff = s["effects"]
+    effect_text = {
+        "food": f"沒有糧食時出勤率 {eff['base_uptime_pct']}%，補滿時 100%",
+        "medical": f"補滿時救回 {eff['medical_recovery_pct']}% 的缺勤時間",
+        "combat": f"補滿時傷害 +{eff['combat_attack_pct']}%",
+        "equipment": f"補滿時傷害 +{eff['equipment_attack_pct']}%",
+    }
+    return {
+        "source": source,
+        "current": current,
+        "supplies": [
+            {"code": code, "emoji": e, "name": n, "effect": f, "description": d, "effect_text": effect_text[code],
+             "target": s["supply_targets"][code]}
+            for code, (e, n, f, d) in wb.SUPPLY_INFO.items()
+        ],
+        "categories": [{"emoji": e, "name": n} for e, n in wb.CATEGORY_INFO.values()],
+        "items": [
+            {"name": names.get(code, code), "supply": wb.SUPPLY_INFO[v["supply"]][1], "points": v["points"]}
+            for code, v in s["items"].items() if v["points"] > 0
+        ],
+        "gold_per_point": s["gold_per_point"],
+        "base_damage_per_hour": s["base_damage_per_hour"],
+        "instant_damage_per_point": s["instant_damage_per_point"],
+        "ratio_cap_pct": eff["ratio_cap_pct"],
+        "limits": s["limits"],
+        "duration_hours": wb.DEFAULT_DURATION_HOURS,  # 管理員手動建立活動的預設時長
+        "duration_minutes": minutes,  # 本場（或排程）的持續時間
+        "rewards": rewards(r),
+        "schedules": schedules,
+    }
+
+
 def build_guide(session: Session, now: datetime) -> dict:
     """操作手冊需要的遊戲設定。只輸出規則與數值，不含任何玩家、農場或群組資料。"""
     crops = [c for c in crops_repo.list_all(session) if c.active]
@@ -213,6 +313,7 @@ def build_guide(session: Session, now: datetime) -> dict:
             "gold": balance.INITIAL_GOLD,
             "plots": balance.INITIAL_PLOTS,
             "warehouse": balance.INITIAL_WAREHOUSE_CAPACITY,
+            "rename_cost": balance.RENAME_FARM_COST,
             "upgrade_prices": list(balance.UPGRADE_PRICES),
             "upgrade_plots": balance.UPGRADE_PLOTS_ADDED,
             "max_plots": balance.MAX_PLOTS,
@@ -237,6 +338,7 @@ def build_guide(session: Session, now: datetime) -> dict:
         ],
         "exploration": build_exploration(names),
         "fishing": build_fishing(session),
+        "world_boss": build_world_boss(session, catalog_repo.item_names(session), now),
         "qualities": [
             {"name": label, "chance_pct": _pct(g["quality_bp"][code]), "price_mul": g["quality_price_pct"][code] / 100}
             for code, label in balance.QUALITIES.items()

@@ -67,6 +67,9 @@ EVENT_TYPES = (
     "fishing_buy",
     "fish_sell",
     "release_animal",
+    "boss_donate",
+    "boss_reward",
+    "rename_farm",
 )
 
 QUALITY_CODES = ("normal", "good", "rare", "legendary")
@@ -1059,9 +1062,10 @@ class FarmFish(Base):
     __tablename__ = "farm_fish"
     __table_args__ = (
         CheckConstraint(f"rarity IN ({FISH_RARITY_SQL})", name="rarity_valid"),
-        CheckConstraint("price BETWEEN 1 AND 200", name="price_range"),
+        CheckConstraint("price >= 0", name="price_non_negative"),  # 售價跟隨 fish_types，不設上限（Migration 0021）
         CheckConstraint("weight_g > 0", name="weight_positive"),
         CheckConstraint("(sold_at IS NULL) = (sold_price IS NULL)", name="sold_consistent"),
+        CheckConstraint("sold_at IS NULL OR donated_at IS NULL", name="sold_or_donated"),
         Index("ix_farm_fish_farm_unsold", "farm_id", postgresql_where=text("sold_at IS NULL")),
         Index("ix_farm_fish_farm_caught", "farm_id", "caught_at"),
     )
@@ -1078,6 +1082,8 @@ class FarmFish(Base):
     caught_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     sold_price: Mapped[int | None] = mapped_column(Integer)
+    # 捐獻給世界 Boss 的時間（Migration 0019）；有值時不在魚簍中，也不能販售或分享
+    donated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class FishShare(Base):
@@ -1094,3 +1100,171 @@ class FishShare(Base):
     farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), nullable=False)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="SET NULL"))
     shared_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+# ---------- 世界 Boss（Migration 0019） ----------
+
+
+class WorldBossSchedule(Base):
+    """固定週期出現的世界 Boss（例如每 2 天晚上 9 點的深淵魔龍）。group_id NULL 表示全服。
+    系統在上一場結束後自動建立下一場（world_boss_events，含 slot_at），管理員可在出現前個別修改那一場的時間與獎勵；
+    settings／rewards 是之後每一場的範本。"""
+
+    __tablename__ = "world_boss_schedules"
+    __table_args__ = (
+        CheckConstraint("length(btrim(name)) BETWEEN 1 AND 40", name="name_len"),
+        CheckConstraint("interval_days BETWEEN 1 AND 30", name="interval_range"),
+        CheckConstraint("spawn_hour BETWEEN 0 AND 23 AND spawn_minute BETWEEN 0 AND 59", name="time_range"),
+        CheckConstraint("duration_minutes BETWEEN 10 AND 10080", name="duration_range"),
+        CheckConstraint("max_hp > 0", name="max_hp_positive"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"))
+    interval_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    spawn_hour: Mapped[int] = mapped_column(Integer, nullable=False)  # 台灣時間
+    spawn_minute: Mapped[int] = mapped_column(Integer, nullable=False)
+    anchor_date: Mapped[date] = mapped_column(Date, nullable=False)  # 從這一天（台灣日期）起每 interval_days 天出現
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_hp: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    settings: Mapped[dict] = mapped_column(JSON, nullable=False)
+    rewards: Mapped[dict] = mapped_column(JSON, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WorldBossEvent(Base):
+    """一場世界 Boss 活動：group_id 為所屬 Discord 群組，NULL 表示全服（所有玩家都能參加）。
+    HP、時間、狀態與設定都存在這裡；
+    status：active（未開始或進行中，依 starts_at 判斷）、paused、ended。
+    手動建立的活動：同一範圍（全服或同一群組）最多一場未結束（部分唯一索引）。
+    排程產生的活動：記錄 schedule_id 與排定時間 slot_at，(schedule_id, slot_at) 唯一，每個排程同時最多一場未結束。
+    settings／rewards 是建立時的快照（app/game/world_boss 的預設值），管理員可在結束前修改；結束後保留作為歷史紀錄。"""
+
+    __tablename__ = "world_boss_events"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'paused', 'ended')", name="status_valid"),
+        CheckConstraint("max_hp > 0 AND hp >= 0 AND hp <= max_hp", name="hp_range"),
+        CheckConstraint("level >= 1", name="level_positive"),
+        CheckConstraint("ends_at > starts_at", name="ends_after_start"),
+        CheckConstraint("length(btrim(name)) BETWEEN 1 AND 40", name="name_len"),
+        CheckConstraint(
+            "(status = 'ended') = (ended_at IS NOT NULL AND end_reason IS NOT NULL)", name="ended_consistent"
+        ),
+        CheckConstraint(
+            "end_reason IS NULL OR end_reason IN ('defeated', 'timeout', 'admin')", name="end_reason_valid"
+        ),
+        CheckConstraint("(defeated_at IS NOT NULL) = (end_reason = 'defeated')", name="defeated_consistent"),
+        # 管理員手動建立的活動：同一範圍（全服或同一群組）最多一場未結束；排程產生的活動：每個排程最多一場未結束
+        Index(
+            "uq_world_boss_events_scope_open", text("COALESCE(group_id, 0)"), unique=True,
+            postgresql_where=text("status IN ('active', 'paused') AND schedule_id IS NULL"),
+        ),
+        Index(
+            "uq_world_boss_events_schedule_open", "schedule_id", unique=True,
+            postgresql_where=text("status IN ('active', 'paused') AND schedule_id IS NOT NULL"),
+        ),
+        UniqueConstraint("schedule_id", "slot_at", name="uq_world_boss_events_schedule_slot"),
+        Index("ix_world_boss_events_group_created", "group_id", "created_at"),
+        Index("ix_world_boss_events_status_ends", "status", "ends_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id", ondelete="RESTRICT"))
+    schedule_id: Mapped[int | None] = mapped_column(ForeignKey("world_boss_schedules.id", ondelete="SET NULL"))
+    slot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    level: Mapped[int] = mapped_column(Integer, nullable=False)  # 目前介面不顯示（保留欄位）
+    max_hp: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    hp: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # 戰鬥模擬已推進到的時間（之後的傷害依當下補給計算）
+    last_tick_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    defeated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_reason: Mapped[str | None] = mapped_column(String(16))
+    # 系統確認活動結束（獎勵開放領取）的時間
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    settings: Mapped[dict] = mapped_column(JSON, nullable=False)
+    rewards: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WorldBossSupply(Base):
+    """各補給類型的進度（積分）與目標；建立活動時建立四列，捐獻時在同一筆交易中累加。"""
+
+    __tablename__ = "world_boss_supplies"
+    __table_args__ = (
+        CheckConstraint("supply_code IN ('food', 'medical', 'combat', 'equipment')", name="supply_valid"),
+        CheckConstraint("target > 0", name="target_positive"),
+        CheckConstraint("progress >= 0", name="progress_non_negative"),
+    )
+
+    event_id: Mapped[int] = mapped_column(ForeignKey("world_boss_events.id", ondelete="CASCADE"), primary_key=True)
+    supply_code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    target: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    progress: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+
+
+class WorldBossContribution(Base):
+    """捐獻紀錄（只新增）。request_id 由面板產生，(event_id, player_id, request_id) 唯一：重複點擊不會重複扣物品。"""
+
+    __tablename__ = "world_boss_contributions"
+    __table_args__ = (
+        UniqueConstraint("event_id", "player_id", "request_id", name="uq_world_boss_contributions_request"),
+        CheckConstraint("category IN ('crop', 'fish', 'material', 'goods', 'special')", name="category_valid"),
+        CheckConstraint("supply_code IN ('food', 'medical', 'combat', 'equipment')", name="supply_valid"),
+        CheckConstraint("quantity > 0", name="quantity_positive"),
+        CheckConstraint("points > 0", name="points_positive"),
+        CheckConstraint("damage >= 0", name="damage_non_negative"),
+        Index("ix_world_boss_contributions_event_player", "event_id", "player_id"),
+        Index("ix_world_boss_contributions_event_created", "event_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("world_boss_events.id", ondelete="CASCADE"), nullable=False)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), nullable=False)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    category: Mapped[str] = mapped_column(String(16), nullable=False)
+    supply_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    item_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    quality: Mapped[str | None] = mapped_column(String(16))
+    mutation: Mapped[str | None] = mapped_column(String(16))
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    points: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    damage: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")  # 捐獻時立即造成的傷害
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WorldBossRewardClaim(Base):
+    """獎勵領取紀錄；(event_id, player_id) 唯一，每位玩家每場活動只能領一次。保存當時的名次、積分與發放內容。"""
+
+    __tablename__ = "world_boss_reward_claims"
+    __table_args__ = (
+        UniqueConstraint("event_id", "player_id", name="uq_world_boss_reward_claims_once"),
+        CheckConstraint("outcome IN ('victory', 'participation')", name="outcome_valid"),
+        CheckConstraint("gold >= 0", name="gold_non_negative"),
+        CheckConstraint("rank >= 1", name="rank_positive"),
+        Index("ix_world_boss_reward_claims_player", "player_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("world_boss_events.id", ondelete="CASCADE"), nullable=False)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), nullable=False)
+    player_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    points: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    gold: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    items: Mapped[dict] = mapped_column(JSON, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(20))
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

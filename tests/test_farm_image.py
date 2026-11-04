@@ -14,26 +14,41 @@ def size_of(png: bytes) -> tuple[int, int]:
     return Image.open(io.BytesIO(png)).size
 
 
+def colors_of(png: bytes) -> int:
+    im = Image.open(io.BytesIO(png))
+    assert im.mode == "P"  # 調色盤 PNG
+    return len(im.getcolors(maxcolors=1 << 16))
+
+
+def preset(rel: str) -> bytes:
+    """預先產生的圖：沿用檔案內容，但上傳前轉成 PANEL_COLORS 色（第一次轉換後快取）。"""
+    out = farm_image.file_png(rel)
+    assert out is farm_image.file_png(rel)  # 快取：同一個檔案只轉一次
+    assert colors_of(out) <= farm_image.PANEL_COLORS
+    assert len(out) < (ASSETS / rel).stat().st_size  # 比原本 256 色的素材檔小
+    return out
+
+
 def plot(crop=None, state="empty", progress=0.0, quality="normal", mutation="none"):
     return {"crop": crop, "state": state, "progress": progress, "quality": quality, "mutation": mutation}
 
 
 def test_empty_field_uses_base_file():
-    assert farm_image.farm_png([plot()] * 4) == (ASSETS / "field/base_04.png").read_bytes()
+    assert farm_image.farm_png([plot()] * 4) == preset("field/base_04.png")
 
 
 def test_same_crop_same_stage_uses_preset():
     plots = [plot("wheat", "ready")] * 4
-    assert farm_image.farm_png(plots) == (ASSETS / "field/presets/04_wheat_ready.png").read_bytes()
+    assert farm_image.farm_png(plots) == preset("field/presets/04_wheat_ready.png")
     plots = [plot("carrot", "growing", 0.1)] * 16
-    assert farm_image.farm_png(plots) == (ASSETS / "field/presets/16_sprout.png").read_bytes()
+    assert farm_image.farm_png(plots) == preset("field/presets/16_sprout.png")
 
 
 def test_preset_with_quality_badges_is_redrawn():
     plots = [plot("wheat", "ready", quality="legendary")] + [plot("wheat", "ready")] * 3
     png = farm_image.farm_png(plots)
-    assert png != (ASSETS / "field/presets/04_wheat_ready.png").read_bytes()
-    assert size_of(png) == (512, 502)
+    assert png != preset("field/presets/04_wheat_ready.png")
+    assert size_of(png) == (512, 502) and colors_of(png) <= farm_image.PANEL_COLORS
 
 
 def test_mixed_and_unknown_crops_render():
@@ -63,8 +78,8 @@ def workshop(barn=0, mill=0, bakery=0, jam=0, busy=None):
 
 
 def test_idle_yard_uses_base_file():
-    assert farm_image.yard_png(workshop(), []) == (ASSETS / "yard/base_0_000.png").read_bytes()
-    assert farm_image.yard_png(workshop(2, 1, 0, 1), []) == (ASSETS / "yard/base_2_101.png").read_bytes()
+    assert farm_image.yard_png(workshop(), []) == preset("yard/base_0_000.png")
+    assert farm_image.yard_png(workshop(2, 1, 0, 1), []) == preset("yard/base_2_101.png")
 
 
 def test_full_yard_with_animals_and_orders():

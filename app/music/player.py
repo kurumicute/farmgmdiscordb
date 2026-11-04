@@ -938,12 +938,20 @@ async def on_wavelink_websocket_closed(payload):
                    payload.code, payload.reason, payload.by_remote)
 
 
+DROPPED_FRAMES_LOG_PCT = 1  # 掉封包達此百分比才記錄
+
+
 async def on_wavelink_stats_update(payload):
     """Lavalink 每分鐘回報一次（每個播放器平均）送出的音訊封包：正常每分鐘約 3000 個（20 ms 一個）。
     nulled＝來源（YouTube 下載／解碼）沒跟上；deficit＝Lavalink 沒送出（CPU、GC 暫停）。
-    兩者都是 0 卻仍卡頓時，問題在 Lavalink 之後（Docker 的 UDP 轉送、網路或聽眾端）。只在有掉封包時記錄。"""
+    兩者都是 0 卻仍卡頓時，問題在 Lavalink 之後（Docker 的 UDP 轉送、網路或聽眾端）。
+    只在掉封包達 1% 以上（約每分鐘 30 個，聽得出來的程度）時記錄；偶爾 ±1 是統計抖動，不記錄以免每分鐘洗版。"""
     frames = payload.frames
-    if frames is not None and (frames.nulled or frames.deficit):
+    if frames is None:
+        return
+    lost = max(0, frames.nulled or 0) + max(0, frames.deficit or 0)
+    total = max(0, frames.sent or 0) + lost
+    if lost and lost * 100 >= max(total, 1) * DROPPED_FRAMES_LOG_PCT:
         logger.warning("音訊封包（最近 1 分鐘，每個播放器平均）：送出 %s、來源不足 %s、未送出 %s",
                        frames.sent, frames.nulled, frames.deficit)
 

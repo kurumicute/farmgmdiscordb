@@ -78,6 +78,14 @@ def music_config(settings: Settings) -> music.MusicConfig:
     )
 
 
+SLOW_INTERACTION_SECONDS = 2.0  # Discord 要求 3 秒內回應；送達就超過 2 秒時記錄一行警告
+
+
+def interaction_delay_seconds(interaction: discord.Interaction, now) -> float:
+    """互動從 Discord 建立（ID 內含的時間）到現在經過的秒數。主機時鐘稍有誤差時可能為負，視為 0。"""
+    return max(0.0, (now - interaction.created_at).total_seconds())
+
+
 class FarmBot(commands.Bot):
     def __init__(self, settings: Settings, service, runner: ServiceRunner) -> None:
         prefix_enabled = music_embedded(settings) and settings.music_prefix_commands
@@ -124,6 +132,16 @@ class FarmBot(commands.Bot):
         activity = "/farm 種田" + (" ・ /play 聽歌" if music_embedded(self.settings) else "")
         await self.change_presence(activity=discord.Game(name=activity))
 
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        """互動送到 Bot 的延遲（Discord 建立互動 → Bot 收到）。超過門檻才記錄，用來分辨 10062 是網路慢還是 Bot 慢：
+        這裡的延遲大 → 網路／Discord 慢；這裡正常但仍逾時 → Bot 處理慢。只記錄，不影響互動處理。"""
+        delay = interaction_delay_seconds(interaction, discord.utils.utcnow())
+        if delay >= SLOW_INTERACTION_SECONDS:
+            data = interaction.data or {}
+            what = data.get("name") or data.get("custom_id") or "-"
+            logger.warning("互動送達延遲 %.1f 秒（類型 %s，%s，使用者 %s）", delay, interaction.type.name,
+                           str(what)[:40], interaction.user.id if interaction.user else "-")
+
     async def on_guild_join(self, guild: discord.Guild) -> None:
         try:
             group_id = await self.runner.run(self.service.ensure_guild_group, str(guild.id), guild.name)
@@ -137,7 +155,7 @@ class FarmBot(commands.Bot):
         while not self.is_closed():
             try:
                 result = await self.runner.run(self.service.run_background_settlement, "system")
-                if result and (result["rankings"] or result["competitions"]):
+                if result and (result["rankings"] or result["competitions"] or result.get("world_boss")):
                     logger.info("已自動結算：%s", result)
             except Exception as exc:  # 資料庫暫時中斷：下次再試，不中斷 Bot
                 logger.warning("自動結算失敗：%s", type(exc).__name__)

@@ -41,6 +41,7 @@
     <symbol id="i-droplet" viewBox="0 0 24 24"><path d="M12 2.7 6.3 8.4a8 8 0 1 0 11.4 0z"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
     <symbol id="i-fish" viewBox="0 0 24 24"><path d="M3 12c3-5 9-6 13-3l5-3v12l-5-3c-4 3-10 2-13-3z"/><path d="M14.5 10.5h.01"/></symbol>
+    <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 22a7 7 0 0 0 7-7c0-4-3-6-4-9-1 2-2 3-4 3 0-2-1-4-2-6-1 4-4 7-4 12a7 7 0 0 0 7 7z"/></symbol>
     <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></symbol>
   </svg>
 
@@ -70,6 +71,7 @@
         <p class="nav-group">活動管理</p>
         <button type="button" data-tab="events" title="限時活動"><svg class="icon"><use href="#i-calendar"/></svg><span>限時活動</span></button>
         <button type="button" data-tab="community" title="任務與競賽"><svg class="icon"><use href="#i-flag"/></svg><span>任務與競賽</span></button>
+        <button type="button" data-tab="worldboss" title="世界 Boss"><svg class="icon"><use href="#i-flame"/></svg><span>世界 Boss</span></button>
         <button type="button" data-tab="leaderboard" title="排行榜"><svg class="icon"><use href="#i-trophy"/></svg><span>排行榜</span></button>
         <button type="button" data-tab="rewards" title="排名獎勵"><svg class="icon"><use href="#i-gift"/></svg><span>排名獎勵</span></button>
 
@@ -669,6 +671,185 @@
                 <div><h4>個人貢獻</h4><ol id="comp-players" class="scroll-list"></ol></div>
                 <div><h4>結算獎勵</h4><ul id="comp-awards" class="scroll-list"></ul></div>
               </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- ===== 世界 Boss ===== -->
+        <div class="tab-panel" data-tab-panel="worldboss" hidden>
+          <p class="guest-hint guest-only"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>目前為檢視模式。登入管理員後可建立、暫停、結束世界 Boss 活動，並調整補給與獎勵。</p>
+          <section class="panel" aria-labelledby="wb-title">
+            <div class="panel-head">
+              <h2 id="wb-title">世界 Boss 活動</h2>
+            </div>
+            <p class="muted small">範圍選「全服」時所有伺服器的玩家都能參加；手動建立的活動每個範圍同一時間最多一場（排程產生的場次另計）。玩家捐獻物資支援前線，Boss 由系統依補給自動作戰；此頁的 HP 依同一公式即時推算（唯讀），玩家操作時才寫回資料庫。</p>
+
+            <details id="wb-form-box" class="admin-only form-box" hidden>
+              <summary>建立世界 Boss 活動</summary>
+              <p class="form-hint">標示「必填」的欄位必須填寫。補給、可捐獻物品與獎勵先套用預設值，建立後可在下方活動詳情修改。</p>
+              <div class="form-grid">
+                <label>範圍 <select id="wbf-group"></select></label>
+                <label class="req">Boss 名稱 <input id="wbf-name" type="text" maxlength="40" required></label>
+                <label class="req">HP <input id="wbf-hp" type="number" min="1" max="1000000000" step="1" required></label>
+                <label class="req">開始 <input id="wbf-start" type="datetime-local" required></label>
+                <label class="req">結束 <input id="wbf-end" type="datetime-local" required></label>
+              </div>
+              <div class="form-actions">
+                <button id="wbf-submit" type="button" class="primary">建立活動</button>
+              </div>
+            </details>
+
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="num">ID</th><th>範圍</th><th>Boss</th><th>狀態</th><th class="num">剩餘 HP</th>
+                  <th class="num">參與人數</th><th class="num">捐獻總量</th><th>期間</th><th></th></tr></thead>
+                <tbody id="wb-rows" data-page-size="15" data-filter="篩選 Boss、群組或狀態"><tr><td colspan="9" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+
+
+          <section class="panel" aria-labelledby="wbs-title">
+            <div class="panel-head"><h2 id="wbs-title">固定出現的世界 Boss（排程）</h2></div>
+            <p class="muted small">排程依台灣時間每隔幾天在固定時間出現。上一場結束後系統會立即建立下一場（列在上方活動列表，狀態「尚未開始」），
+              出現前可以個別修改那一場的出現時間、HP、補給與獎勵；修改排程只影響之後新建立的場次。</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="num">ID</th><th>Boss</th><th>範圍</th><th>出現規則</th><th class="num">HP</th>
+                  <th>下一場</th><th>之後的預計時間</th><th>狀態</th><th></th></tr></thead>
+                <tbody id="wbsch-rows"><tr><td colspan="9" class="empty is-loading">載入中…</td></tr></tbody>
+              </table>
+            </div>
+            <details id="wbsch-form-box" class="admin-only form-box" hidden>
+              <summary id="wbsch-form-title">新增排程</summary>
+              <p class="form-hint">點選上方排程可載入修改；物品格式為「代碼×數量」，多個以逗號分隔。</p>
+              <div class="form-grid">
+                <label class="req">Boss 名稱 <input id="wsc-name" type="text" maxlength="40" required></label>
+                <label>範圍 <select id="wsc-group"></select></label>
+                <label class="req">每幾天出現 <input id="wsc-interval" type="number" min="1" max="30" step="1" required></label>
+                <label class="req">出現時間（台灣） <input id="wsc-time" type="time" required></label>
+                <label class="req">起始日期 <input id="wsc-anchor" type="date" required></label>
+                <label class="req">持續分鐘 <input id="wsc-duration" type="number" min="10" max="10080" step="1" required></label>
+                <label class="req">HP <input id="wsc-hp" type="number" min="1" max="1000000000" step="1" required></label>
+                <label>啟用 <select id="wsc-enabled"><option value="1">啟用</option><option value="0">停用</option></select></label>
+                <label class="req">糧食目標 <input id="wsc-t-food" type="number" min="1" max="100000000" step="1" required></label>
+                <label class="req">醫療目標 <input id="wsc-t-medical" type="number" min="1" max="100000000" step="1" required></label>
+                <label class="req">戰鬥目標 <input id="wsc-t-combat" type="number" min="1" max="100000000" step="1" required></label>
+                <label class="req">裝備目標 <input id="wsc-t-equipment" type="number" min="1" max="100000000" step="1" required></label>
+                <label class="req">參與門檻（積分，未達沒有任何獎勵；0 = 不限） <input id="wsr-min-points" type="number" min="0" max="100000000" step="1" required></label>
+                <label class="req">勝利獎勵金幣 <input id="wsr-v-gold" type="number" min="0" max="1000000" step="1" required></label>
+                <label class="wide">勝利獎勵物品 <input id="wsr-v-items" type="text" maxlength="300"></label>
+                <label class="req">參與獎勵金幣 <input id="wsr-p-gold" type="number" min="0" max="1000000" step="1" required></label>
+                <label class="wide">參與獎勵物品 <input id="wsr-p-items" type="text" maxlength="300"></label>
+                <label class="req">貢獻達標門檻（積分，0 = 不發） <input id="wsr-b-points" type="number" min="0" max="100000000" step="1" required></label>
+                <label class="req">達標獎勵金幣 <input id="wsr-b-gold" type="number" min="0" max="1000000" step="1" required></label>
+                <label class="wide">達標獎勵物品 <input id="wsr-b-items" type="text" maxlength="300"></label>
+                <label class="wide">排名獎勵（每行一個名次：「金幣 物品…」，例如「1500 seed_moonflower×1」）
+                  <textarea id="wsr-rank" rows="5" spellcheck="false"></textarea></label>
+                <label>特殊稱號（空白 = 不發） <input id="wsr-title" type="text" maxlength="20"></label>
+                <label class="req">稱號名額（擊敗時前幾名） <input id="wsr-title-top" type="number" min="0" max="1000" step="1" required></label>
+              </div>
+              <div class="form-actions">
+                <button id="wsc-submit" type="button" class="primary">儲存排程</button>
+                <button id="wsc-new" type="button">改為新增</button>
+              </div>
+            </details>
+          </section>
+
+          <section id="wb-detail" class="panel" hidden>
+            <div class="panel-head">
+              <h2 id="wb-detail-title"></h2>
+            </div>
+            <p id="wb-detail-meta" class="muted small"></p>
+            <div class="bp-grid">
+              <div><h4>各補給類型進度</h4><ul id="wb-supplies" class="scroll-list"></ul></div>
+              <div><h4>前線與結算狀態</h4><ul id="wb-status" class="scroll-list"></ul></div>
+              <div><h4>獎勵設定</h4><ul id="wb-reward-list" class="scroll-list"></ul></div>
+            </div>
+
+            <details id="wb-basic-box" class="admin-only form-box" hidden>
+              <summary>修改這一場的名稱、HP 與出現時間</summary>
+              <p class="form-hint">已開始的活動不能修改開始時間；調整 HP 上限時，剩餘 HP 依差額增減。</p>
+              <div class="form-grid">
+                <label class="req">Boss 名稱 <input id="wbb-name" type="text" maxlength="40" required></label>
+                <label class="req">HP 上限 <input id="wbb-hp" type="number" min="1" max="1000000000" step="1" required></label>
+                <label class="req">開始 <input id="wbb-start" type="datetime-local" required></label>
+                <label class="req">結束 <input id="wbb-end" type="datetime-local" required></label>
+              </div>
+              <div class="form-actions"><button id="wbb-submit" type="button" class="primary">儲存</button></div>
+            </details>
+
+            <details id="wb-settings-box" class="admin-only form-box" hidden>
+              <summary>補給設定（目標、效果、捐獻限制與可捐獻物品）</summary>
+              <p class="form-hint">修改前會先以舊設定把傷害結算到現在。作物與漁獲依「售價 ÷ 每積分金幣」換算積分；其他物品只有列在「指定物品」才可捐獻（積分 0 = 不可捐）。</p>
+              <div class="form-grid">
+                <label class="req">每小時基礎傷害 <input id="wbs-dph" type="number" min="0" max="100000000" step="1" required></label>
+                <label class="req">每積分立即傷害 <input id="wbs-instant" type="number" min="0" max="100000" step="1" required></label>
+                <label class="req">每積分金幣價值 <input id="wbs-gpp" type="number" min="1" max="100000" step="1" required></label>
+                <label>作物補給
+                  <select id="wbs-crop"><option value="food">糧食</option><option value="medical">醫療</option><option value="combat">戰鬥</option><option value="equipment">裝備</option></select>
+                </label>
+                <label>漁獲補給
+                  <select id="wbs-fish"><option value="food">糧食</option><option value="medical">醫療</option><option value="combat">戰鬥</option><option value="equipment">裝備</option></select>
+                </label>
+                <label class="req">糧食目標 <input id="wbs-t-food" type="number" min="1" max="100000000" step="1" required></label>
+                <label class="req">醫療目標 <input id="wbs-t-medical" type="number" min="1" max="100000000" step="1" required></label>
+                <label class="req">戰鬥目標 <input id="wbs-t-combat" type="number" min="1" max="100000000" step="1" required></label>
+                <label class="req">裝備目標 <input id="wbs-t-equipment" type="number" min="1" max="100000000" step="1" required></label>
+                <label class="req">補給加成上限 % <input id="wbs-cap" type="number" min="100" max="500" step="1" required></label>
+                <label class="req">無糧食出勤率 % <input id="wbs-uptime" type="number" min="0" max="100" step="1" required></label>
+                <label class="req">醫療恢復 % <input id="wbs-medical" type="number" min="0" max="100" step="1" required></label>
+                <label class="req">戰鬥傷害加成 % <input id="wbs-combat" type="number" min="0" max="1000" step="1" required></label>
+                <label class="req">裝備傷害加成 % <input id="wbs-equipment" type="number" min="0" max="1000" step="1" required></label>
+                <label class="req">每人每種物品上限 <input id="wbs-per-item" type="number" min="1" max="100000" step="1" required></label>
+                <label class="req">單次捐獻上限 <input id="wbs-per-action" type="number" min="1" max="999" step="1" required></label>
+                <label class="wide">指定物品（每行「代碼 補給 積分」，補給為 food／medical／combat／equipment）
+                  <textarea id="wbs-items" rows="8" spellcheck="false"></textarea></label>
+              </div>
+              <p class="muted small" id="wbs-codes"></p>
+              <div class="form-actions"><button id="wbs-submit" type="button" class="primary">儲存補給設定</button></div>
+            </details>
+
+            <details id="wb-rewards-box" class="admin-only form-box" hidden>
+              <summary>這一場的獎勵與排名獎勵</summary>
+              <p class="form-hint">物品格式為「代碼×數量」，多個以逗號分隔（例如 crystal×1, gear×2）。已有玩家領獎後不能再修改。</p>
+              <div class="form-grid">
+                <label class="req">參與門檻（積分，未達沒有任何獎勵；0 = 不限） <input id="wbr-min-points" type="number" min="0" max="100000000" step="1" required></label>
+                <label class="req">勝利獎勵金幣 <input id="wbr-v-gold" type="number" min="0" max="1000000" step="1" required></label>
+                <label class="wide">勝利獎勵物品 <input id="wbr-v-items" type="text" maxlength="300"></label>
+                <label class="req">參與獎勵金幣 <input id="wbr-p-gold" type="number" min="0" max="1000000" step="1" required></label>
+                <label class="wide">參與獎勵物品 <input id="wbr-p-items" type="text" maxlength="300"></label>
+                <label class="req">貢獻達標門檻（積分，0 = 不發） <input id="wbr-b-points" type="number" min="0" max="100000000" step="1" required></label>
+                <label class="req">達標獎勵金幣 <input id="wbr-b-gold" type="number" min="0" max="1000000" step="1" required></label>
+                <label class="wide">達標獎勵物品 <input id="wbr-b-items" type="text" maxlength="300"></label>
+                <label class="wide">排名獎勵（每行一個名次：「金幣 物品…」，例如「1500 seed_moonflower×1」）
+                  <textarea id="wbr-rank" rows="4" spellcheck="false"></textarea></label>
+                <label>特殊稱號（空白 = 不發） <input id="wbr-title" type="text" maxlength="20"></label>
+                <label class="req">稱號名額（擊敗時前幾名） <input id="wbr-title-top" type="number" min="0" max="1000" step="1" required></label>
+              </div>
+              <div class="form-actions"><button id="wbr-submit" type="button" class="primary">儲存獎勵設定</button></div>
+            </details>
+
+            <h3>個人貢獻排行榜</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th class="num">名次</th><th>玩家</th><th class="num">積分</th><th class="num">捐獻數量</th><th class="num">次數</th><th>首次捐獻</th></tr></thead>
+                <tbody id="wb-rank-rows" data-page-size="20" data-filter="篩選玩家"></tbody>
+              </table>
+            </div>
+            <h3>捐獻紀錄（最近 200 筆）</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>時間</th><th>玩家</th><th>類別</th><th>物品</th><th class="num">數量</th><th>補給</th><th class="num">積分</th><th class="num">立即傷害</th></tr></thead>
+                <tbody id="wb-log-rows" data-page-size="20" data-filter="篩選玩家或物品"></tbody>
+              </table>
+            </div>
+            <h3>獎勵發放紀錄</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>領取時間</th><th>玩家</th><th class="num">名次</th><th class="num">積分</th><th>結果</th><th class="num">金幣</th><th>物品</th><th>稱號</th></tr></thead>
+                <tbody id="wb-claim-rows" data-page-size="20"></tbody>
+              </table>
             </div>
           </section>
         </div>
