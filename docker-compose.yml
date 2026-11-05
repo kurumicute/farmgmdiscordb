@@ -10,7 +10,9 @@ x-farmgm-app: &farmgm-app
   environment: &farmgm-app-env
     # 容器內以服務名稱連線；POSTGRES_PASSWORD 只能用英數字與 . _ ~ -（直接放進網址，未做編碼）
     DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-farmgm}
-    LAVALINK_URI: http://lavalink:2333
+    # 預設連同一組 compose 的 lavalink；音樂節點在別台電腦時（start_music_node.bat），
+    # 在 .env 設 LAVALINK_REMOTE_URI（例如 https://lavalink.example.com，經 Cloudflare Tunnel）
+    LAVALINK_URI: ${LAVALINK_REMOTE_URI:-http://lavalink:2333}
     APP_HOST: 0.0.0.0
     APP_PORT: "8000"
     SITE_HOST: 0.0.0.0

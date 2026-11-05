@@ -11,3 +11,6 @@ data/
 
 # 原始的 YTDiscordBot 參考程式（只留在本機，不上傳）
 YTDiscordBot-main/
+
+# 從 VPS 下載的資料庫備份（scripts/pull_vps_backup.py）
+backup/

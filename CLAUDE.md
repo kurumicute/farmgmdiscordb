@@ -71,6 +71,16 @@ node --test tests/web/connection.test.js                               # 指定�
 - 程式啟動時只檢查 DB 連線與 Migration 是否最新，**不會**自動建表。改資料結構一律新增 Alembic Migration（`migrations/versions/000N_*.py`，Migration 內寫死常數，不引用會變動的 app 常數），並在測試資料庫做 upgrade → downgrade -1 → upgrade → `alembic check`。
 - 修改開發資料庫前先 `pg_dump` 備份（容器 `farmgm-postgres-1`）；不要執行 `docker compose down -v`。
 
+## 正式環境（VPS，2026-11-05 起搬遷）
+
+- Contabo Cloud VPS 4（東京，Ubuntu 22.04，Docker／compose 已內建），專案在 `/opt/farmgm`，由 GitHub `feature/exploration-update` 分支 `git clone`；`.env` 由本機 `scp` 上傳，資料庫以 `pg_dump`／`pg_restore` 從本機搬過去。更新方式：push → VPS `git pull` → 先備份再 `docker compose run --rm web python -m alembic upgrade head` → `docker compose up -d --build --wait`。
+- IP `13.140.248.193`，主機時區 Europe/Berlin。SSH 只允許金鑰（`/etc/ssh/sshd_config.d/00-farmgm-hardening.conf`，檔名 00- 才能蓋過 `50-cloud-init.conf` 的 `PasswordAuthentication yes`），另有 fail2ban；`authorized_keys` 有 `b1700-pc`（使用者）與 `farmgm-claude`（Claude 用，本機 `~/.ssh/farmgm_vps`：`ssh -i ~/.ssh/farmgm_vps -o BatchMode=yes root@13.140.248.193 '…'`）。正式環境寫入操作可能被 auto mode 權限檢查擋下，被擋時把指令交給使用者執行，不要繞過。救援用 Contabo VNC（root 密碼，不受 sshd 設定影響）。
+- 對外連線走 Cloudflare Tunnel（遠端管理，cloudflared 以 systemd 服務跑在 VPS 主機上，不開任何防火牆 Port；ufw 只允許 OpenSSH）：`dc.kurumicute.com` → `localhost:24444`（介紹網站，公開），`addmin.kurumicute.com`（兩個 d，是使用者設定的實際名稱）→ `localhost:8000`（監控網站，前面有 Cloudflare Access，只允許使用者本人的 Email）。VPS 的 `ALLOWED_HOSTS` 必須包含 admin 網域，否則回「Invalid host header」；改網域時 Cloudflare 與 `ALLOWED_HOSTS` 要一起改，改完 `docker compose up -d --force-recreate web`。
+- 資料庫每日備份：`/opt/backup/backup.sh`（`pg_dump -Fc`，保留 14 天），root crontab 每天主機時間 21:00（≈ 台灣 04:00）執行，紀錄在 `/opt/backup/backup.log`；備份只在同一台 VPS 上。
+- 同一個 Bot Token 只能有一處執行：2026-11-05 已切換到 VPS（資料無遺漏），本機的 `bot`／`web` 容器已停止，不要在本機重新啟動它們，除非使用者要切回本機；本機 postgres 的資料停在切換當下，不再是最新資料。
+- 音樂節點在使用者的 PC：VPS（VMware）會不定時停頓（ping 本機 Docker bridge 偶爾 40ms+，CPU 閒置），在 VPS 播放會卡，所以 Lavalink＋yt-cipher 改在 PC 以 `start_music_node.bat`（compose 專案 `farmgm-music`，同一份 `docker-compose.yml`／`.env`）執行，經 PC 的 Tunnel「Kurumicute」公開成 `https://lavalink.kurumicute.com`（只靠 Lavalink 密碼保護），VPS 的 `.env` 設 `LAVALINK_REMOTE_URI` 讓 compose 的 `LAVALINK_URI` 改連它。PC 關機時只有音樂不能用（watchdog 會自動重連）。PC 上 `farmgm` 與 `farmgm-music` 的 lavalink 都綁 127.0.0.1:2333，不能同時執行。
+- 已知風險：Tunnel 到網站是 HTTP，登入 cookie 不帶 `Secure`（`app/api/auth.py` 依 `request.url.scheme`，uvicorn 沒信任 `X-Forwarded-Proto`）；機房 IP 較易被 YouTube 擋，`/play` 可能失敗。
+
 ## 架構
 
 分層：`game/`（純規則，無 DB）→ `repositories/`（SQLAlchemy 查詢）→ `services/`（交易邊界）→ `cli/`、`api/` + `web/`（介面）。
@@ -111,6 +121,7 @@ node --test tests/web/connection.test.js                               # 指定�
   畫面持有面板的鎖（`_lock()`，依事件迴圈建立），連點兩下不會交錯重繪。
 - **品質／突變與限時活動**：公式只在 `game/genetics.py`（設定版本存在 `crop_genetics_settings`）與 `game/events.py`（`game_events`，加成在播種／澆水／販售當下決定並記在 `applied_events`）。
 - **排名獎勵**：`game/ranking.py`（期間、驗證）+ `services/ranking_service.py`；背景結算 `run_background_settlement`（advisory lock，排名＋競賽；`WorldBossService` 覆寫後另外結束到期的世界 Boss 並建立排程的下一場，回傳多 `world_boss`／`world_boss_spawned`）由 `BACKGROUND_TASKS_RUNNER` 指定的網站（`main._auto_settle`，注入 `session_factory` 的測試中不啟動）或 Bot 執行，CLI／Bot 的 `leaderboard groups|rewards` 查詢時補結算，`(rule_id, period_start)` 唯一保證只發一次。
+  項目 `money` 在有期間時（本日／本週／本月與所有排名獎勵）= 期間內**作物**販售收入（使用者要求：買東西不能影響排名；動物產品、加工品、魚與獎勵不算），只有「全部期間」才是目前金幣；`net_gold`／`NET_GOLD_EXCLUDED` 仍會計算與回傳，但不再是排名分數。
 - **排行榜**：`repositories/leaderboard.py` 全部期間讀 `farm_stats`、台灣日期對齊的期間讀 `farm_daily_stats`，只有非標準期間才回退掃描交易紀錄；`tests/test_farm_stats.py` 驗證與直接加總交易紀錄的結果完全相同。
 - **網站安全**：`/api/monitor/*` 唯讀；寫入只在 `/api/admin/*`，需管理員登入（HttpOnly cookie，`app/auth.py`，記憶體 session）、`X-Farmgm-Admin: 1` 標頭與同源 Origin；`TrustedHostMiddleware` 只接受本機 Host。前端 `app.js` 一律用 `el()`／`textContent` 建 DOM（不使用 innerHTML）。WebSocket 每數秒推快照（所有連線共用 `SnapshotCache`，前端分頁在背景 30 秒後 `pause()`）；分頁資料只更新目前分頁，且使用者操作中暫停（`userBusy()`），避免表單被重建。
 - **管理網站前端**（`app/web/`，原生 JS，無建置步驟）：CSP 為 `default-src 'self'`，不能用 inline script／style 或外部資源（圖示是 `index.html` 內的 SVG sprite `<use href="#i-…">`；JS 設 `element.style` 可以）。側邊欄分頁由 `TAB_META`（標題／說明）、`data-tab`／`data-tab-panel` 與 `TAB_LOADERS`（每頁要載入的函式）三處對應，新增分頁三處都要改；舊網址 `#manage` 由 `TAB_ALIASES` 導向。管理操作一律經 `adminRequest()`（自動把最近點擊的按鈕設為送出中，防重複提交；401 會切回未登入並提示）；重要／危險操作用 `confirmDialog()`（可帶調整前後 `diff` 與必填原因），不要用 `window.confirm／prompt`；結果用 `toast()`／`setNote()`，不要用會被下一次快照清掉的 `showError()`。表單 `label.req` 標示必填，送出前呼叫 `validateForm()`；`details.form-box` 有輸入就標為 dirty（關閉頁面會提醒），成功或重設後 `clearDirty()`。`emptyRow()` 以訊息含「失敗／無法取得」判斷錯誤樣式，錯誤訊息要沿用這兩個用詞。`tests/test_monitor_api.py` 會檢查首頁含「農場即時監控」。
