@@ -1,4 +1,4 @@
-"""排行榜查詢：金幣為目前真實餘額（或期間淨賺金幣）；販售統計取自統計表（farm_stats／farm_daily_stats）。
+"""排行榜查詢：金幣為目前真實餘額（指定期間時為期間內賣出農產品（作物）的收入，不受購買影響）；販售統計取自統計表（farm_stats／farm_daily_stats）。
 
 - 全部期間：farm_stats（每座農場一列，隨販售在同一筆交易中更新），不再加總全部交易紀錄。
 - 本日／本週／本月與排名獎勵結算：期間以台灣日期切分，加總 farm_daily_stats（每座農場每天最多一列）。
@@ -19,7 +19,7 @@ from app.game.ranking import NET_GOLD_EXCLUDED
 from app.repositories import crops as crops_repo
 from app.repositories import farm_stats as farm_stats_repo
 
-# money：目前金幣（指定期間時為期間淨賺金幣）；sales：農產品（作物）販售；goods：商品總販售（作物＋動物產品＋加工品）
+# money：目前金幣（期間內為作物販售收入）；sales：農產品（作物）販售；goods：商品總販售（作物＋動物產品＋加工品）
 KINDS = ("money", "sales", "goods")
 
 
@@ -85,9 +85,13 @@ def ranking(
     net = func.coalesce(stats.c.net, 0)
     period = since is not None
     # 固定的次要排序條件，資料不變時排名穩定
-    if kind == "money":
-        score = net if period else Farm.gold
-        order = (score.desc(), Farm.gold.desc(), sold_income.desc(), Player.id.asc())
+    if kind == "money" and period:
+        # 期間金幣排名只看賣出農產品（作物）賺的錢，買種子、道具、動物等花費不影響排名
+        score = sold_income
+        order = (sold_income.desc(), sold_qty.desc(), Farm.gold.desc(), Player.id.asc())
+    elif kind == "money":
+        score = Farm.gold
+        order = (score.desc(), sold_income.desc(), Player.id.asc())
     elif kind == "goods":
         # 商品單價差異大（雞蛋 vs 麵包），總販售依收入排名，再比數量
         score = sold_income
@@ -144,9 +148,12 @@ def group_ranking(
     qty = func.coalesce(func.sum(stats.c.qty), 0)
     income = func.coalesce(func.sum(stats.c.income), 0)
     net = func.coalesce(func.sum(stats.c.net), 0)
-    if kind == "money":
-        score = net if since is not None else gold
-        order = (score.desc(), gold.desc(), Group.id.asc())
+    if kind == "money" and since is not None:
+        score = income
+        order = (income.desc(), qty.desc(), gold.desc(), Group.id.asc())
+    elif kind == "money":
+        score = gold
+        order = (gold.desc(), Group.id.asc())
     elif kind == "goods":
         score = income
         order = (income.desc(), qty.desc(), Group.id.asc())

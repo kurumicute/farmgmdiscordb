@@ -1112,7 +1112,7 @@ class CommandHandler:
         rows = self.service.group_leaderboard(kind, period)
         metric = ranking_rules.METRICS[kind]
         if kind == "money":
-            metric = "目前金幣加總" if period == "all" else "期間淨賺金幣"
+            metric = "目前金幣加總" if period == "all" else "期間農產品販售收入"
         lines = [
             f"===== 群組總排行：{metric}（{ranking_rules.VIEW_PERIODS[period]}）=====",
             "排名  群組                成員   分數        目前金幣",

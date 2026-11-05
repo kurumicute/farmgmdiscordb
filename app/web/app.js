@@ -1560,7 +1560,7 @@ if (typeof document !== "undefined") {
     let cols;
     if (extra.lbKind === "money") {
       cols = period
-        ? [["排名", "num"], ...who, [`${LB_PERIODS[extra.lbPeriod]}淨賺金幣`, "num"], [groups ? "目前金幣加總" : "目前金幣", "num"]]
+        ? [["排名", "num"], ...who, [`${LB_PERIODS[extra.lbPeriod]}農產品販售收入`, "num"], [groups ? "目前金幣加總" : "目前金幣", "num"]]
         : [["排名", "num"], ...who, ...(groups ? [] : [["農場等級", "num"]]), [groups ? "目前金幣加總" : "目前金幣", "num"]];
     } else {
       const span = period ? LB_PERIODS[extra.lbPeriod] : "累積";
@@ -1576,7 +1576,7 @@ if (typeof document !== "undefined") {
     const who = extra.lbScope === "groups"
       ? [td(`#${r.group_id} ${r.group_name}`), td(r.member_count, "num")] : [td(r.player_name)];
     if (extra.lbKind === "money") {
-      if (period) return [td(r.rank, "num"), ...who, goldCell(r.net_gold), td(fmtNum(r.gold), "num")];
+      if (period) return [td(r.rank, "num"), ...who, td(fmtNum(r.sales_income), "num"), td(fmtNum(r.gold), "num")];
       return [td(r.rank, "num"), ...who, ...(extra.lbScope === "groups" ? [] : [td(r.level, "num")]), td(fmtNum(r.gold), "num")];
     }
     return [td(r.rank, "num"), ...who, td(fmtNum(r.sold_quantity), "num"), td(fmtNum(r.sales_income), "num"),
@@ -1587,8 +1587,8 @@ if (typeof document !== "undefined") {
     const span = renderLeaderboardHead();
     $("lb-group").hidden = extra.lbScope !== "group";
     $("lb-note").textContent = extra.lbScope === "groups"
-      ? "群組總排行：主要所屬群組為該群組的成員加總後排名（每座農場只計入一個群組）。期間以台灣時間計算；金幣在期間內為淨賺金幣（不含建立農場、管理員調整與獎勵）。顯示前 100 名。"
-      : "顯示前 100 名。期間以台灣時間計算；金幣在期間內為淨賺金幣（不含建立農場、管理員調整與獎勵）。";
+      ? "群組總排行：主要所屬群組為該群組的成員加總後排名（每座農場只計入一個群組）。期間以台灣時間計算；金幣在期間內為賣出農產品（作物）的收入（買東西不影響）。顯示前 100 名。"
+      : "顯示前 100 名。期間以台灣時間計算；金幣在期間內為賣出農產品（作物）的收入（買東西不影響）。";
     if (extra.lbScope === "group" && !extra.lbGroupId) {
       replaceRows($("lb-rows"), [], "請先選擇群組（群組內排行只包含該群組成員）", span);
       return;

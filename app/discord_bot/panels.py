@@ -1685,7 +1685,7 @@ class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
             name = r.get("group_name") or r.get("player_name")
             if b["kind"] == "money":
                 net = b["period"] != "all" and b["scope"] != "group"
-                value = f"{money(r['score'])} 金" + ("（淨賺）" if net else "")
+                value = f"{money(r['score'])} 金" + ("（賣農產品收入）" if net else "")
             elif b["kind"] == "sales":
                 value = f"{money(r['sold_quantity'])} 個（{money(r['sales_income'])} 金）"
             else:

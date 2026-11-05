@@ -194,7 +194,7 @@ async def get_leaderboard(
     period: Annotated[Literal["all", "day", "week", "month"], Query()] = "all",
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> dict:
-    """scope=groups 為群組總排行（各群組成員加總）；period 為台灣時間的本日／本週／本月（money 改為期間淨賺金幣）。"""
+    """scope=groups 為群組總排行（各群組成員加總）；period 為台灣本日／本週／本月（money 改為期間作物販售收入）。"""
     if scope == "group" and group_id is None:
         raise HTTPException(status_code=422, detail="群組排行榜必須指定群組。")
     if scope != "group":

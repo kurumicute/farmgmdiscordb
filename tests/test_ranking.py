@@ -106,9 +106,9 @@ def test_group_leaderboard_sums_members(admin, world, clock):
     assert [(r["group_name"], r["score"]) for r in goods] == [("北區", 250), ("南區", 90)]
     money = admin.group_leaderboard("money")
     assert money[0]["score"] == gold(admin, world["a"]) + gold(admin, world["b"])
-    # 期間：本週淨賺金幣不含建立農場的初始金幣（北區：賣 250 − 種子 120）
+    # 期間：本週金幣只算賣出農產品的收入，買種子的花費不扣分（北區：賣 250）
     week = admin.group_leaderboard("money", "week")
-    assert {r["group_name"]: r["score"] for r in week} == {"北區": 250 - 120, "南區": 90 - 30}
+    assert {r["group_name"]: r["score"] for r in week} == {"北區": 250, "南區": 90}
     # 下週還沒有任何操作
     clock.advance(WEEK_END + GRACE)
     assert [r["score"] for r in admin.group_leaderboard("sales", "week")] == [0, 0]
@@ -157,9 +157,18 @@ def test_weekly_group_and_individual_rewards(admin, world, clock, session_factor
 
 
 def test_reward_money_excludes_rewards_and_admin_adjust(admin, world, clock):
-    admin.set_farm_values(ACTOR, world["c"], gold=999_999)  # 管理員調整不算淨賺
+    admin.set_farm_values(ACTOR, world["c"], gold=999_999)  # 管理員調整不算
     rows = admin.period_leaderboard("money", "week")
-    assert rows[0]["player_name"] in ("甲", "乙") and rows[0]["score"] == 125 - 60
+    assert rows[0]["player_name"] in ("甲", "乙") and rows[0]["score"] == 125
+
+
+def test_reward_money_not_affected_by_buying(admin, world):
+    before = {r["player_name"]: r["score"] for r in admin.period_leaderboard("money", "week")}
+    admin.buy_seeds(world["a"], "wheat", 10)  # 甲花錢買種子，排名分數不變
+    after = {r["player_name"]: r["score"] for r in admin.period_leaderboard("money", "week")}
+    assert after == before == {"甲": 125, "乙": 125, "丙": 90}
+    groups = {r["group_name"]: r["score"] for r in admin.group_leaderboard("money", "week")}
+    assert groups == {"北區": 250, "南區": 90}
 
 
 def test_disabled_rule_not_backfilled_and_daily_period(admin, world, clock):

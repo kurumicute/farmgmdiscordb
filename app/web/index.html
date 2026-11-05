@@ -925,7 +925,7 @@
             </div>
             <p class="muted small">每日、每週（週一 00:00 起）、每月（1 日 00:00 起）以台灣時間結算；期間結束 1 分鐘後由網頁服務自動結算並發獎（CMD 查詢排行時也會補結算）。
               群組排名＝主要所屬群組為該群組的成員加總，獎勵發給該群組全體成員；個人排名只發給該玩家。只有分數大於 0 才會得獎，同分時依次要條件與 ID 排序。
-              金幣排名在期間內計算「淨賺金幣」（不含建立農場、管理員調整與各種獎勵）。修改獎勵從下一次結算起生效；停用或改週期後從現在起算，不回溯補發。</p>
+              金幣排名在期間內計算「賣出農產品（作物）的收入」（買東西不影響排名）。修改獎勵從下一次結算起生效；停用或改週期後從現在起算，不回溯補發。</p>
             <div class="table-wrap">
               <table>
                 <thead><tr><th class="num">ID</th><th>名稱</th><th>對象</th><th>項目</th><th>週期</th><th>獎勵</th><th>本期</th><th>下次結算</th><th>狀態</th><th class="admin-only" hidden></th></tr></thead>
@@ -940,7 +940,7 @@
                   <select id="rr-scope"><option value="group">群組（獎勵發給群組全體成員）</option><option value="individual">個人</option></select>
                 </label>
                 <label>排名項目
-                  <select id="rr-metric"><option value="money">金幣（期間淨賺）</option><option value="sales">農產品販售（數量）</option><option value="goods">商品總販售（收入）</option></select>
+                  <select id="rr-metric"><option value="money">金幣（期間農產品販售收入）</option><option value="sales">農產品販售（數量）</option><option value="goods">商品總販售（收入）</option></select>
                 </label>
                 <label>結算週期
                   <select id="rr-period"><option value="daily">每日</option><option value="weekly" selected>每週</option><option value="monthly">每月</option></select>
