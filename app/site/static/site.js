@@ -184,6 +184,11 @@
     setText("g-pet-pct", String(p.pct_per_level));
     setText("g-pet-max", String(p.max_level));
     fillRows("g-pets", p.pets.map((x) => [x.name, x.role, x.effect]));
+    if (p.cat_odds) {
+      fillRows("g-cat-odds", p.cat_odds.length
+        ? p.cat_odds.map((c) => [`${c.name}（每格 ${c.quantity} 個）`, ...c.levels])
+        : [["目前沒有開放種植的作物", ...Array(p.max_level).fill("")]]);
+    }
   }
 
   // 特賣與升級：溫室價格、本週特賣（所有玩家相同）、稱號商店

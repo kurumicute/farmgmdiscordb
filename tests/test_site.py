@@ -209,3 +209,7 @@ def test_guide_has_pets(session_factory):
     p = c.get("/api/guide").json()["pets"]
     assert p["buy_price"] == pets.BUY_PRICE and p["upgrade_prices"] == list(pets.UPGRADE_PRICES)
     assert len(p["pets"]) == len(pets.PETS)
+    assert 'id="g-cat-odds"' in page and "40% 機率 +1" in page  # 預設表格：小麥滿級
+    wheat = next(c for c in p["cat_odds"] if c["name"] == "小麥")
+    assert len(wheat["levels"]) == pets.MAX_LEVEL
+    assert wheat["levels"][-1] == pets.odds_text(wheat["quantity"], pets.bonus_pct(pets.MAX_LEVEL))

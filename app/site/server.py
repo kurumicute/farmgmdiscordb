@@ -248,9 +248,15 @@ def build_progress() -> dict:
     }
 
 
-def build_pets() -> dict:
-    """寵物規則（固定設定）。"""
+def build_pets(crops) -> dict:
+    """寵物規則；cat_odds：每種啟用中的作物在貓咪 Lv1～最高級時，每格實際多收多少（與遊戲相同算法）。"""
+    levels = range(1, pets.MAX_LEVEL + 1)
     return {
+        "cat_odds": [
+            {"name": c.name, "quantity": c.harvest_quantity,
+             "levels": [pets.odds_text(c.harvest_quantity, pets.bonus_pct(lv)) for lv in levels]}
+            for c in crops
+        ],
         "buy_price": pets.BUY_PRICE, "upgrade_prices": list(pets.UPGRADE_PRICES),
         "pct_per_level": pets.PCT_PER_LEVEL, "max_level": pets.MAX_LEVEL,
         "pets": [{"name": f"{p.emoji} {p.name}", "role": p.role, "effect": p.effect.format(pct="X")}
@@ -382,7 +388,7 @@ def build_guide(session: Session, now: datetime) -> dict:
         "world_boss": build_world_boss(session, catalog_repo.item_names(session), now),
         "progress": build_progress(),
         "special_shop": build_special_shop(session, now),
-        "pets": build_pets(),
+        "pets": build_pets(crops),
         "qualities": [
             {"name": label, "chance_pct": _pct(g["quality_bp"][code]), "price_mul": g["quality_price_pct"][code] / 100}
             for code, label in balance.QUALITIES.items()
