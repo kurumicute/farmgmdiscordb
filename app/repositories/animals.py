@@ -3,6 +3,7 @@
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.db import txcache
 from app.db.models import AnimalType
 
 
@@ -10,7 +11,7 @@ def list_all(session: Session, *, active_only: bool = False) -> list[AnimalType]
     stmt = select(AnimalType).order_by(AnimalType.price, AnimalType.id)
     if active_only:
         stmt = stmt.where(AnimalType.active.is_(True))
-    return list(session.scalars(stmt))
+    return txcache.read_memo(session, ("animals", active_only), lambda: list(session.scalars(stmt)))
 
 
 def by_code(session: Session) -> dict[str, AnimalType]:

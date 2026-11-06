@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.db import txcache
 from app.db.models import CraftOrder, Farm, FarmAnimal, FarmBuilding, Player
 
 # ---------- 建築 ----------
@@ -16,12 +17,12 @@ def list_buildings(session: Session, farm_id: int) -> list[FarmBuilding]:
         .where(FarmBuilding.farm_id == farm_id)
         .order_by(FarmBuilding.building_code, FarmBuilding.slot)
     )
-    return list(session.scalars(stmt))
+    return txcache.read_memo(session, ("buildings", farm_id), lambda: list(session.scalars(stmt)))
 
 
 def count_buildings(session: Session, farm_id: int, building_code: str) -> int:
     stmt = select(func.count()).where(FarmBuilding.farm_id == farm_id, FarmBuilding.building_code == building_code)
-    return session.scalar(stmt) or 0
+    return txcache.read_memo(session, ("building_count", farm_id, building_code), lambda: session.scalar(stmt) or 0)
 
 
 def add_building(session: Session, farm_id: int, building_code: str, slot: int, now: datetime) -> FarmBuilding:
@@ -103,7 +104,10 @@ def list_orders(
         stmt = stmt.where(CraftOrder.farm_id == farm_id)
     if not include_collected:
         stmt = stmt.where(CraftOrder.status == "in_progress")
-    return [(o, farm_name, pid, pname) for o, farm_name, pid, pname in session.execute(stmt)]
+    return txcache.read_memo(
+        session, ("orders", farm_id, include_collected, limit),
+        lambda: [(o, farm_name, pid, pname) for o, farm_name, pid, pname in session.execute(stmt)],
+    )
 
 
 # ---------- 監控 ----------

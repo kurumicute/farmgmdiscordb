@@ -5,12 +5,13 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.db import txcache
 from app.db.models import FarmEffect, FarmTool
 
 
 def get_tool(session: Session, farm_id: int, tool_code: str) -> FarmTool | None:
-    stmt = select(FarmTool).where(FarmTool.farm_id == farm_id, FarmTool.tool_code == tool_code)
-    return session.scalars(stmt).first()
+    tools = {t.tool_code: t for t in list_tools(session, farm_id)}  # 工具很少：讀一次全部（讀取整頁時共用）
+    return tools.get(tool_code)
 
 
 def add_tool(session: Session, farm_id: int, tool_code: str, now: datetime) -> FarmTool:
@@ -21,7 +22,8 @@ def add_tool(session: Session, farm_id: int, tool_code: str, now: datetime) -> F
 
 
 def list_tools(session: Session, farm_id: int) -> list[FarmTool]:
-    return list(session.scalars(select(FarmTool).where(FarmTool.farm_id == farm_id).order_by(FarmTool.id)))
+    stmt = select(FarmTool).where(FarmTool.farm_id == farm_id).order_by(FarmTool.id)
+    return txcache.read_memo(session, ("tools", farm_id), lambda: list(session.scalars(stmt)))
 
 
 def tool_enabled(session: Session, farm_id: int, tool_code: str) -> bool:

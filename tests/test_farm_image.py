@@ -94,16 +94,24 @@ def test_full_yard_with_animals_and_orders():
     assert size_of(farm_image.yard_png(workshop(1), animals)) == (640, 640)
 
 
+def same_scene(png: bytes, rel: str) -> bool:
+    """固定場景圖：尺寸與原檔相同，且上傳的內容不會比原檔大（轉成 256 色並最佳化壓縮）。"""
+    original = ASSETS / rel
+    return size_of(png) == Image.open(original).size and len(png) <= original.stat().st_size
+
+
 def test_shop_is_fixed_file():
-    assert farm_image.shop_png() == (ASSETS / "scenes/shop.png").read_bytes()
+    assert same_scene(farm_image.shop_png(), "scenes/shop.png")
+    assert farm_image.shop_png() is farm_image.shop_png()  # 只轉換一次（快取）
 
 
 def test_casino_and_explore_scenes():
     from app.game import exploration
 
-    assert farm_image.casino_png() == (ASSETS / "scenes/casino.png").read_bytes()
+    assert same_scene(farm_image.casino_png(), "scenes/casino.png")
+    assert len(farm_image.casino_png()) < (ASSETS / "scenes/casino.png").stat().st_size  # 原檔沒有壓縮好
     for code in exploration.AREA_ORDER:  # 每個探險區域都有自己的圖
-        assert farm_image.explore_png(code) == (ASSETS / f"scenes/explore_{code}.png").read_bytes()
+        assert same_scene(farm_image.explore_png(code), f"scenes/explore_{code}.png")
     assert farm_image.explore_png("unknown_area") is None
 
 

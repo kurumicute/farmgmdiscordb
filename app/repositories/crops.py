@@ -1,6 +1,7 @@
 from sqlalchemy import func, or_, select, union
 from sqlalchemy.orm import Session
 
+from app.db import txcache
 from app.db.models import CropType
 
 
@@ -8,7 +9,7 @@ def list_all(session: Session, *, active_only: bool = False) -> list[CropType]:
     stmt = select(CropType).order_by(CropType.seed_price, CropType.id)
     if active_only:
         stmt = stmt.where(CropType.active.is_(True))
-    return list(session.scalars(stmt))
+    return txcache.read_memo(session, ("crops", active_only), lambda: list(session.scalars(stmt)))
 
 
 def find(session: Session, key: str) -> CropType | None:

@@ -899,7 +899,7 @@ def test_panel_boss_image_only_in_intro_area(cmds, game, clock):
     from app.discord_bot import farm_image
     from tests.test_discord_panel import last_edit, make_player, run
 
-    assert farm_image.world_boss_png() == (farm_image.ASSETS / "scenes/world_boss.png").read_bytes()
+    assert farm_image.world_boss_png() == farm_image.scene_png("world_boss")  # 固定圖（256 色快取）
     p = make_player(cmds, ALICE, GUILD_A)
     make_boss(game, clock, game.get_group_by_guild(str(GUILD_A)).id)
     existing = SimpleNamespace(filename="farm.png")

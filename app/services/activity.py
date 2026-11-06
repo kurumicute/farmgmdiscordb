@@ -10,10 +10,10 @@
 
 from sqlalchemy.orm import Session
 
+from app.db import txcache
 from app.db.models import Farm, GameTransaction
 from app.game import rules
 from app.repositories import community as community_repo
-from app.services import txcache
 
 # 可能影響任務或競賽的事件類型；其他事件直接略過，不做額外查詢
 SCORING_EVENTS = {"harvest", "sell", "upgrade", "build", "collect_animal", "defended"}

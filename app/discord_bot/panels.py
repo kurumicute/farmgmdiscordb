@@ -286,12 +286,16 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         async with self._lock():
             return await self._render(notice)
 
-    async def _render(self, notice: str | None) -> discord.Embed:
+    async def _render(self, notice: str | None, prepared: tuple | None = None) -> discord.Embed:
+        """prepared：act() 在同一次執行緒工作中預先讀好的 (頁面, _prepare 的結果)；頁面已改變時不使用。"""
         self.clear_items()
         self.files, self.image_digest = [], None  # 換頁時舊圖片也要移除
         try:
-            notes, data, error = await self.run(self._prepare, getattr(self, f"_load_{self.page}"),
-                                                self.page != "welcome")
+            if prepared is not None and prepared[0] == self.page:
+                notes, data, error = prepared[1]
+            else:
+                notes, data, error = await self.run(self._prepare, getattr(self, f"_load_{self.page}"),
+                                                    self.page != "welcome")
             for note in notes:
                 if note:
                     notice = f"{notice}\n{note}" if notice else note
@@ -387,7 +391,8 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
             await interaction.response.edit_message(embed=embed, view=self, attachments=attachments)
 
     async def refresh(
-        self, interaction: discord.Interaction, notice: str | None = None, *, budget: float | None = None
+        self, interaction: discord.Interaction, notice: str | None = None, *, budget: float | None = None,
+        prepared: tuple | None = None,
     ) -> None:
         # 重繪到送出畫面整段持有鎖：重繪會改寫面板共用的元件與圖片狀態（files／image_digest），
         # 連點時另一次重繪不能夾在這次「重繪完、送出前」之間（否則圖片會被拿掉再重新上傳）。
@@ -397,7 +402,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         async def locked_render() -> discord.Embed:
             await lock.acquire()
             try:
-                return await self._render(notice)
+                return await self._render(notice, prepared)
             except BaseException:
                 lock.release()
                 raise
@@ -444,16 +449,18 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         self.confirm = None
         loop = asyncio.get_running_loop()
         started = loop.time()
+        target = page or self.page
 
-        async def perform() -> tuple[str | None, str | None]:
+        async def perform() -> tuple[str | None, str | None, tuple | None]:
             try:
-                return f"{prefix}{clean_message(await self.run(work))}", None
+                text, prepared = await self.run(self._work_then_prepare, work, target)
+                return f"{prefix}{clean_message(text)}", None, prepared
             except Exception as exc:
                 if not isinstance(exc, GameError):
                     logger.exception("面板操作失敗（玩家 #%s）", self.player_id)
-                return None, clean_message(player_message(exc))
+                return None, clean_message(player_message(exc)), None
 
-        notice, error = await self._in_time(interaction, perform())
+        notice, error, prepared = await self._in_time(interaction, perform())
         if error is not None:
             await self.show_error(interaction, error)
             return
@@ -462,7 +469,14 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         if page:
             self.page = page
         # 操作與重新讀取共用同一段直接回覆的時間
-        await self.refresh(interaction, cut(notice, 1500), budget=DIRECT_REPLY_SECONDS - (loop.time() - started))
+        await self.refresh(interaction, cut(notice, 1500), budget=DIRECT_REPLY_SECONDS - (loop.time() - started),
+                           prepared=prepared)
+
+    def _work_then_prepare(self, work: Callable[[], str], page: str) -> tuple[str, tuple]:
+        """在執行緒中：執行操作後接著讀取新畫面（一次排隊；原本操作與重讀各排隊一次）。
+        操作失敗時例外直接往外丟（不讀取畫面）；讀取頁面需要的面板狀態都不會在操作之後才改變。"""
+        text = work()
+        return text, (page, self._prepare(getattr(self, f"_load_{page}"), page != "welcome"))
 
     async def show_error(self, interaction: discord.Interaction, message: str) -> None:
         async with self._lock():  # 與 refresh 相同：改寫元件到送出畫面之間不讓其他重繪插進來

@@ -38,6 +38,7 @@ def reset_cache() -> None:
     world_boss_png.cache_clear()
     file_png.cache_clear()
     preset_with_pets_png.cache_clear()
+    scene_png.cache_clear()
 
 
 def img(rel: str) -> Image.Image:
@@ -266,9 +267,17 @@ def yard_png(workshop: dict, animals: list[dict]) -> bytes:
     return encode(canvas)
 
 
+@functools.lru_cache(maxsize=32)
 def scene_png(name: str) -> bytes:
-    """固定場景圖（manifest 的 scenes），直接上傳檔案。"""
-    return (ASSETS / manifest()["scenes"][name]).read_bytes()
+    """固定場景圖（manifest 的 scenes）：第一次轉成 256 色並最佳化壓縮後快取，之後不再讀檔。
+
+    像素風畫面在 256 色下幾乎看不出差別，上傳量明顯變小（賭場 332→200 KB）；轉換後沒有比較小時沿用原檔。"""
+    path = ASSETS / manifest()["scenes"][name]
+    raw = path.read_bytes()
+    buf = io.BytesIO()
+    img(manifest()["scenes"][name]).quantize(256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE).save(
+        buf, "PNG", optimize=True)
+    return buf.getvalue() if buf.tell() < len(raw) else raw
 
 
 def shop_png() -> bytes:

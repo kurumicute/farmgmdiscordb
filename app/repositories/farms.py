@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
+from app.db import txcache
 from app.db.models import Farm, FarmPlot
 
 
@@ -33,7 +34,9 @@ def get_by_player(session: Session, player_id: int, *, for_update: bool = False)
     if for_update:
         # 所有會改變資產的操作都先鎖定農場資料列，使同一農場的操作序列化
         stmt = stmt.with_for_update()
-    return session.scalars(stmt).first()
+        return session.scalars(stmt).first()
+    # 不加鎖的讀取：讀取整頁時同一筆交易只查一次（txcache.read_memo，有寫入就清空）
+    return txcache.read_memo(session, ("farm_by_player", player_id), lambda: session.scalars(stmt).first())
 
 
 def list_plots(session: Session, farm_id: int, *, for_update: bool = False) -> list[FarmPlot]:

@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.clock import TAIPEI_TZ, Clock, SystemClock
+from app.db import txcache
 from app.db.models import CropType, Farm, FarmEffect
 from app.game import balance, exploration, genetics, pets, rules, special_shop
 from app.game import events as event_rules
@@ -51,7 +52,7 @@ from app.repositories import pets as pets_repo
 from app.repositories import players as players_repo
 from app.repositories import steals as steals_repo
 from app.repositories import transactions as tx_repo
-from app.services import activity, txcache
+from app.services import activity
 from app.services.dto import (
     ActionResult,
     Backpack,
@@ -153,7 +154,7 @@ class GameService:
         if registry is None:
             registry = _batches.by_factory = {}
         key = id(self._session_factory)
-        with self._session_factory.begin() as session:
+        with self._session_factory.begin() as session, txcache.read_scope(session):
             registry[key] = batch = _Batch(session)
             try:
                 result = fn()
