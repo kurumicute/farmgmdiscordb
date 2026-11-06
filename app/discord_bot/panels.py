@@ -30,7 +30,7 @@ from app.discord_bot.progress_panel import ProgressPages
 from app.discord_bot.runner import player_message
 from app.discord_bot.special_shop_panel import SpecialShopPages
 from app.discord_bot.world_boss_panel import WorldBossPages
-from app.game import balance, exploration, rules
+from app.game import balance, exploration, pets, rules
 from app.game.errors import GameError, ValidationError
 from app.game.rules import EVENT_TYPE_LABELS, PlotState
 from app.services.game_service import genetics_label, long_duration
@@ -139,6 +139,13 @@ def plot_line(p, *, owner: bool = True) -> str:
     else:
         tail = "已乾枯，請清除" if owner else "已乾枯"
     return f"{emoji} `#{p.plot_number:>2}` {name} · {tail}"
+
+
+def pet_line(x: dict) -> str:
+    """寵物一行說明（動物頁與寵物頁共用）。"""
+    if not x["owned"]:
+        return f"{x['emoji']} **{x['name']}**　🔒 還沒有領養"
+    return f"{x['emoji']} **{x['name']}**　Lv **{x['level']}/{x['max_level']}**　✨ {x['effect']}"
 
 
 def summary_counts(plots) -> str:
@@ -1168,7 +1175,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
     def _load_animals(self):
         svc, pid = self.svc, self.player_id
         d = {"animals": svc.list_animals(pid), "status": svc.animal_status(pid), "types": svc.animal_types(),
-             "workshop": svc.workshop_status(pid)}
+             "workshop": svc.workshop_status(pid), "pets": svc.pet_status(pid)}
         d["image"] = self._yard_image(d["workshop"], d["animals"])
         return d
 
@@ -1208,6 +1215,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         e = discord.Embed(title=f"🐔 ✦ 動物（{st['used']}/{st['capacity']}）✦", color=GREEN, description=sections(
             f"🏚️ {bname} **{barns}/{bmax}** 座（每座 {balance.BARN_SLOTS} 個欄位，{bprice} 金）",
             ("我的動物", lines) if lines else empty,
+            ("🐾 寵物（顯示在農場上，不佔畜舍）", [pet_line(x) for x in d["pets"]]),
             ("🛒 動物商店", shop, "\n\n"),
         ))
         if self.picker:
@@ -1227,6 +1235,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
                     style=discord.ButtonStyle.primary)
         self.button("收集全部", collect, emoji="🧺", row=0, disabled=not c["ready"], style=discord.ButtonStyle.success)
         self.button(f"建造{bname}（{bprice} 金）", build_barn, emoji="🏚️", row=0, disabled=barns >= bmax)
+        self.nav("寵物（貓狗）", "pets", emoji="🐾", row=0, style=discord.ButtonStyle.primary)
 
         async def pick(interaction, code):
             t = next(x for x in d["types"] if x["code"] == code)
@@ -1265,6 +1274,57 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
 
             self.button(f"確認放生 #{releasing}", release, emoji="🕊️", row=4, style=discord.ButtonStyle.danger)
         self._nav_back()
+        self.attach_image(e, d["image"])
+        return e
+
+    # ======================================================================
+    # 寵物（貓、狗）：動物頁的子頁，購買與升級都要再按一次確認
+    # ======================================================================
+
+    def _load_pets(self):
+        status = self.svc.get_farm_status(self.player_id)
+        return {"pets": self.svc.pet_status(self.player_id), "gold": status.gold, "image": self._farm_image(status)}
+
+    def _build_pets(self, d):
+        blocks = []
+        for x in d["pets"]:
+            if x["next_price"] is None:
+                step = "✅ 已達最高等級"
+            elif not x["owned"]:
+                step = f"🛒 領養 **{money(x['next_price'])}** 金（Lv0，升到 Lv1 後才有加成）"
+            else:
+                step = f"⬆️ 升到 Lv{x['level'] + 1}：**{money(x['next_price'])}** 金 → {x['next_pct']}%"
+            blocks.append(f"{pet_line(x)}\n　📝 {x['role']}\n　{step}")
+        ladder = " → ".join(money(v) for v in pets.UPGRADE_PRICES)
+        e = discord.Embed(title="🐾 ✦ 寵物 ✦", color=GREEN, description=sections(
+            f"💰 你的金幣：**{money(d['gold'])}**",
+            ("", blocks, "\n\n"),
+            f"領養 {money(pets.BUY_PRICE)} 金（Lv0）；升級 {ladder} 金，每級 +{pets.PCT_PER_LEVEL}%，"
+            f"最高 Lv{pets.MAX_LEVEL}。寵物會出現在農場圖的左上（狗）與右上（貓），不佔畜舍欄位。",
+        ))
+        pending = self.confirm.split(":", 1)[1] if (self.confirm or "").startswith("pet:") else None
+        for x in d["pets"]:
+            if x["next_price"] is None:
+                continue
+            verb = "領養" if not x["owned"] else f"升級 Lv{x['level'] + 1}"
+            if pending == x["code"]:
+                async def confirm(interaction, x=x):
+                    pid, code = self.player_id, x["code"]
+                    work = self.svc.upgrade_pet if x["owned"] else self.svc.buy_pet
+                    await self.act(interaction, lambda: work(pid, code).message)
+
+                self.button(f"確認{verb}{x['name']}（{money(x['next_price'])} 金）", confirm, emoji="✅", row=0,
+                            style=discord.ButtonStyle.success)
+            else:
+                async def ask(interaction, x=x, verb=verb):
+                    self.confirm = f"pet:{x['code']}"
+                    await self.refresh(interaction, f"{x['emoji']} 確定要花 {money(x['next_price'])} 金幣{verb}"
+                                                    f"{x['name']}嗎？再按一次「確認」。")
+
+                self.button(f"{verb}{x['name']}（{money(x['next_price'])} 金）", ask, emoji=x["emoji"], row=0,
+                            disabled=d["gold"] < x["next_price"])
+        self.nav("回動物", "animals", emoji="🐔", row=1)
+        self._nav_back(row=1)
         self.attach_image(e, d["image"])
         return e
 
@@ -1384,7 +1444,8 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         svc, pid = self.svc, self.player_id
         bp = svc.get_backpack(pid)
         tickets = next((x.quantity for x in bp.consumables if x.code == balance.ITEM_PATROL_TICKET), 0)
-        return {"status": svc.defense_status(pid), "tickets": tickets}
+        dog = next(x for x in svc.pet_status(pid) if x["code"] == pets.DOG)
+        return {"status": svc.defense_status(pid), "tickets": tickets, "dog": dog}
 
     def _build_defense(self, d):
         st = d["status"]
@@ -1400,6 +1461,9 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         e = discord.Embed(title="🛡️ ✦ 防守 ✦", color=BLUE, description=sections(
             ("已設置的設施", devices) if devices else "還沒有防守設施。",
             ("各農田阻止機率", [chances]),
+            ("🐶 狗狗", [f"Lv{d['dog']['level']}：設施沒擋住時，再有 **{d['dog']['pct']}%** 機率擋下（所有農田，"
+                        "不受設施整體上限限制）" if d["dog"]["owned"]
+                        else "還沒有狗狗。到「🐔 動物 → 🐾 寵物」領養，升級後能在設施沒擋住時再擋一次。"]),
             ("🛒 防守商店", shop, "\n\n"),
             f"🔦 巡查券：**{d['tickets']}** 張（可查看近 {balance.PATROL_DAYS} 天誰來偷過菜）",
         ))
@@ -2198,7 +2262,9 @@ def help_embed() -> discord.Embed:
         f"蚯蚓讓之後澆水的作物生長時間 ×{balance.EARTHWORM_GROW_MULTIPLIER}；"
         "自動澆水器種下就澆水。溫室每一級讓生長時間再少一些（商店購買）。"))
     e.add_field(name="🐔 養殖與加工", inline=False, value=(
-        "先建造畜舍再買動物，餵食後等待生產再收集。磨坊、烘焙坊、果醬工坊可以把作物加工成更值錢的商品。"))
+        "先建造畜舍再買動物，餵食後等待生產再收集。磨坊、烘焙坊、果醬工坊可以把作物加工成更值錢的商品。\n"
+        f"「🐾 寵物」可以領養貓咪（收成數量增加）和狗狗（多擋一次偷菜），領養 {pets.BUY_PRICE:,} 金，"
+        f"升級後每級 +{pets.PCT_PER_LEVEL}%，最高 Lv{pets.MAX_LEVEL}；寵物會出現在農場圖上，不佔畜舍。"))
     e.add_field(name="🥷 偷菜與防守", inline=False, value=(
         "可以偷同一伺服器成員已成熟的作物：在「🥷 偷菜」選一位玩家打開他的農田，再選要偷哪一格；"
         f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田，每人每天最多被 "

@@ -198,3 +198,14 @@ def test_guide_has_special_shop(session_factory):
     assert [t["title"] for t in sp["titles"]] == [t for t, _p in special_shop.TITLE_SHOP]
     offers = sp["weekly"]["offers"]
     assert len(offers) == special_shop.NORMAL_DEALS_PER_WEEK + 1 and sum(o["rare"] for o in offers) == 1
+
+
+def test_guide_has_pets(session_factory):
+    from app.game import pets
+
+    c = client(session_factory)
+    page = c.get("/").text
+    assert 'id="g-pets"' in page and 'id="g-pet-ladder"' in page and "寵物（貓狗）" in page
+    p = c.get("/api/guide").json()["pets"]
+    assert p["buy_price"] == pets.BUY_PRICE and p["upgrade_prices"] == list(pets.UPGRADE_PRICES)
+    assert len(p["pets"]) == len(pets.PETS)

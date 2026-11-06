@@ -70,6 +70,7 @@ class FarmStatus:
     plots: list[PlotInfo]
     now: datetime
     title: str | None = None  # 目前選用的稱號
+    pets: dict = field(default_factory=dict)  # 寵物代碼 → 等級（農場圖左上、右上顯示）
 
     @property
     def empty_plots(self) -> int:

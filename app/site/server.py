@@ -32,7 +32,7 @@ from app.db.models import (
     WorldBossEvent,
     WorldBossSchedule,
 )
-from app.game import achievements, balance, checkin, exploration, fishing, special_shop
+from app.game import achievements, balance, checkin, exploration, fishing, pets, special_shop
 from app.game import events as event_rules
 from app.game import ranking as ranking_rules
 from app.game import world_boss as wb
@@ -248,6 +248,16 @@ def build_progress() -> dict:
     }
 
 
+def build_pets() -> dict:
+    """寵物規則（固定設定）。"""
+    return {
+        "buy_price": pets.BUY_PRICE, "upgrade_prices": list(pets.UPGRADE_PRICES),
+        "pct_per_level": pets.PCT_PER_LEVEL, "max_level": pets.MAX_LEVEL,
+        "pets": [{"name": f"{p.emoji} {p.name}", "role": p.role, "effect": p.effect.format(pct="X")}
+                 for p in pets.PETS.values()],
+    }
+
+
 def build_special_shop(session: Session, now: datetime) -> dict:
     """商店「特賣與升級」：溫室價格、本週特賣（所有玩家相同）與稱號商店（沒有玩家資料）。"""
     start = special_shop.week_start(now)
@@ -372,6 +382,7 @@ def build_guide(session: Session, now: datetime) -> dict:
         "world_boss": build_world_boss(session, catalog_repo.item_names(session), now),
         "progress": build_progress(),
         "special_shop": build_special_shop(session, now),
+        "pets": build_pets(),
         "qualities": [
             {"name": label, "chance_pct": _pct(g["quality_bp"][code]), "price_mul": g["quality_price_pct"][code] / 100}
             for code, label in balance.QUALITIES.items()

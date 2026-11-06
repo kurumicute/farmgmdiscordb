@@ -1352,3 +1352,18 @@ class WeeklyShopPurchase(Base):
     week_start: Mapped[date] = mapped_column(Date, primary_key=True)
     item_code: Mapped[str] = mapped_column(String(64), primary_key=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class FarmPet(Base):
+    """農場的寵物（貓、狗）：購買後 Lv0，最高 Lv4；每種寵物每座農場一隻。數值在 game/pets.py。"""
+
+    __tablename__ = "farm_pets"
+    __table_args__ = (
+        CheckConstraint("pet_code IN ('cat', 'dog')", name="pet_code_valid"),
+        CheckConstraint("level BETWEEN 0 AND 10", name="level_valid"),
+    )
+
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True)
+    pet_code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    level: Mapped[int] = mapped_column(Integer, nullable=False)
+    bought_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

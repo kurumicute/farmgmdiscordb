@@ -20,7 +20,7 @@ PAGES = ("main", "plots", "backpack", "shop", "prices", "genetics", "sell", "ani
          "cave", "cave_area", "cave_log", "machines", "defense", "steal",
          "board", "rewards", "quests", "history", "group", "log", "help",
          "fishing", "fish_shop", "fish_basket", "fish_codex", "fish_rank",
-         "progress", "codex", "achievements", "titles", "shop_special")
+         "progress", "codex", "achievements", "titles", "shop_special", "pets")
 
 
 def run(coro):

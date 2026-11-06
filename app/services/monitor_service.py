@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.clock import TAIPEI_TZ, Clock, SystemClock
 from app.db.models import RankingAward, RankingRewardRule, RankingSettlement, WorldBossEvent, WorldBossSchedule
-from app.game import balance, fishing, rules
+from app.game import balance, fishing, pets, rules
 from app.game import events as event_rules
 from app.repositories import animals as animals_repo
 from app.repositories import catalog as catalog_repo
@@ -218,7 +218,7 @@ class MonitorService:
                 until=until,
             )
         for r in rows:
-            r["blocked_by_name"] = balance.DEFENSES[r["blocked_by"]][0] if r["blocked_by"] else None
+            r["blocked_by_name"] = pets.blocker_name(r["blocked_by"]) if r["blocked_by"] else None
             r.pop("block_chance", None)  # 機率與亂數只留在資料庫供稽核
         return rows
 

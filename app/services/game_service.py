@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.clock import TAIPEI_TZ, Clock, SystemClock
 from app.db.models import CropType, Farm, FarmEffect
-from app.game import balance, exploration, genetics, rules, special_shop
+from app.game import balance, exploration, genetics, pets, rules, special_shop
 from app.game import events as event_rules
 from app.game.errors import (
     AlreadyExistsError,
@@ -47,6 +47,7 @@ from app.repositories import genetics as genetics_repo
 from app.repositories import groups as groups_repo
 from app.repositories import inventory as inventory_repo
 from app.repositories import items as items_repo
+from app.repositories import pets as pets_repo
 from app.repositories import players as players_repo
 from app.repositories import steals as steals_repo
 from app.repositories import transactions as tx_repo
@@ -110,6 +111,8 @@ class GameService:
         self._dice = dice or (lambda: random.SystemRandom().randint(balance.GAMBLE_MIN, balance.GAMBLE_MAX))
         # 山洞探索掉落判定（回傳 [0, 1)）；測試可注入固定值
         self._explore_rng = explore_rng or random.SystemRandom().random
+        # 貓的收成加成：小數部分是否多 1 個（回傳 [0, 1)）；測試可直接指定 _pet_rng
+        self._pet_rng = random.SystemRandom().random
         self._context_group_id: int | None = None
 
     def in_group_context(self, group_id: int | None) -> "GameService":
@@ -520,6 +523,7 @@ class GameService:
             plots=plots,
             now=now,
             title=farm.title,
+            pets=pets_repo.levels(session, farm.id),
         )
 
     def get_farm_status(self, player_id: int) -> FarmStatus:
@@ -734,6 +738,10 @@ class GameService:
         wind = event_rules.bonus(self._active_events(session), "harvest_loss", crop.id)
         lost = min(wind.value, max(0, plot.remaining_quantity - 1))
         quantity = plot.remaining_quantity - lost
+        # 貓咪趕走偷吃的老鼠：收成數量 +X%（只有主人收成時；被偷走的部分不會補回）
+        cat_bonus = pets.bonus_quantity(quantity, pets.bonus_pct(pets_repo.level(session, farm.id, pets.CAT)),
+                                        self._pet_rng())
+        quantity += cat_bonus
         auto_sell = items_repo.tool_enabled(session, farm.id, balance.TOOL_AUTO_SELLER)
         if not auto_sell:
             # 倉庫空間不足時拒絕收成，作物保留在土地上，不會遺失（自動販售會立即賣出，不佔倉庫）
@@ -748,6 +756,8 @@ class GameService:
         note = f"（已被偷走 {stolen} 個）" if stolen > 0 else ""
         if lost:
             note += f"（大風颳走 {lost} 個）"
+        if cat_bonus:
+            note += f"（🐱 貓咪趕走老鼠 +{cat_bonus} 個）"
         self._record(
             session,
             farm,

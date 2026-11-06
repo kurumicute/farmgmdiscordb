@@ -8,7 +8,7 @@ import shlex
 from collections.abc import Callable
 
 from app.clock import TAIPEI_TZ
-from app.game import balance, genetics, rules
+from app.game import balance, genetics, pets, rules
 from app.game import ranking as ranking_rules
 from app.game.errors import GameError, ValidationError
 from app.game.rules import EVENT_TYPE_LABELS, PLOT_STATE_LABELS, PlotState
@@ -898,7 +898,7 @@ class CommandHandler:
             return "目前沒有被阻止的偷菜紀錄。"
         lines = ["===== 防守紀錄（被阻止的偷菜；偷菜者需使用巡查券查看）====="]
         for r in rows:
-            device = balance.DEFENSES[r["blocked_by"]][0]
+            device = pets.blocker_name(r["blocked_by"])
             lines.append(
                 f"{_local(r['created_at'])}  第 {r['plot_number']} 格 {r['crop_name']}  "
                 f"有人想偷 {r['quantity']} 個，被{device}阻止"
@@ -916,7 +916,7 @@ class CommandHandler:
             if r["outcome"] == "success":
                 result = f"偷走 {r['quantity']} 個"
             else:
-                result = f"想偷 {r['quantity']} 個，被{balance.DEFENSES[r['blocked_by']][0]}阻止"
+                result = f"想偷 {r['quantity']} 個，被{pets.blocker_name(r['blocked_by'])}阻止"
             lines.append(
                 f"{_local(r['created_at'])}  {r['thief_name']}（ID {r['thief_player_id']}）"
                 f"［{r['group_name']}］第 {r['plot_number']} 格 {r['crop_name']}：{result}"

@@ -6,7 +6,8 @@
 
 from datetime import timedelta
 
-from app.game import balance, exploration, genetics, rules
+from app.db.models import FarmPet
+from app.game import balance, exploration, genetics, pets, rules
 from app.game.errors import (
     AlreadyExistsError,
     InsufficientGoldError,
@@ -19,6 +20,7 @@ from app.game.rules import AnimalState, CraftState, EventType
 from app.repositories import animals as animals_repo
 from app.repositories import catalog as catalog_repo
 from app.repositories import inventory as inventory_repo
+from app.repositories import pets as pets_repo
 from app.repositories import ranch as ranch_repo
 from app.services.dto import ActionResult
 from app.services.game_service import GameService
@@ -616,3 +618,70 @@ class RanchService(GameService):
                 raise ValidationError("動物產品與加工品沒有品質或突變，不需要指定。")
             return self.sell_goods(player_id, key, quantity)
         return self.sell_crop(player_id, key, quantity, quality, mutation)
+
+    # ---------- 寵物（貓、狗） ----------
+
+    def pet_status(self, player_id: int) -> list[dict]:
+        """貓與狗的狀態：是否擁有、等級、目前效果與下一步（購買／升級）的價格。只讀取不鎖。"""
+        with self._transaction() as session:
+            farm = self._farm_for_read(session, player_id)
+            owned = pets_repo.levels(session, farm.id)
+            out = []
+            for code, pet in pets.PETS.items():
+                level = owned.get(code)
+                nxt = pets.BUY_PRICE if level is None else pets.upgrade_price(level)
+                out.append({
+                    "code": code, "name": pet.name, "emoji": pet.emoji, "role": pet.role, "owned": level is not None,
+                    "level": level, "max_level": pets.MAX_LEVEL, "pct": pets.bonus_pct(level),
+                    "effect": pets.effect_text(code, level),
+                    "next_price": nxt, "next_pct": pets.bonus_pct(0 if level is None else level + 1),
+                })
+            return out
+
+    def buy_pet(self, player_id: int, pet_code: str) -> ActionResult:
+        """購買寵物（Lv0）；已經有了就改為升級。"""
+        pet = pets.PETS.get(pet_code)
+        if pet is None:
+            raise NotFoundError(f"沒有「{pet_code}」這種寵物。")
+        with self._transaction() as session:
+            farm = self._locked_farm(session, player_id)
+            if pets_repo.get(session, farm.id, pet_code) is not None:
+                raise AlreadyExistsError(f"你已經有{pet.name}了，可以幫牠升級。")
+            price = pets.BUY_PRICE
+            if farm.gold < price:
+                raise InsufficientGoldError(f"金幣不足：{pet.name}需要 {price:,}，目前只有 {farm.gold:,}。")
+            farm.gold -= price
+            session.add(FarmPet(farm_id=farm.id, pet_code=pet_code, level=0, bought_at=self._clock.now()))
+            session.flush()  # 主鍵 (farm_id, pet_code)：同時購買兩次在這裡失敗並整筆回滾
+            self._record(session, farm, EventType.BUY_ITEM, f"領養寵物{pet.name}，金幣 -{price}",
+                         item_code=pets.item_code(pet_code), quantity=1, gold_delta=-price)
+            nxt = pets.upgrade_price(0)
+            return ActionResult(
+                f"{pet.emoji} 領養了{pet.name}！牠會出現在農場上。現在是 Lv0（還沒有加成），"
+                f"升到 Lv1 需要 {nxt:,} 金幣：{pets.effect_text(pet_code, 1)}。",
+                farm.gold, -price, pets.item_code(pet_code), 1,
+            )
+
+    def upgrade_pet(self, player_id: int, pet_code: str) -> ActionResult:
+        pet = pets.PETS.get(pet_code)
+        if pet is None:
+            raise NotFoundError(f"沒有「{pet_code}」這種寵物。")
+        with self._transaction() as session:
+            farm = self._locked_farm(session, player_id)
+            row = pets_repo.get(session, farm.id, pet_code)
+            if row is None:
+                raise NotFoundError(f"你還沒有{pet.name}，先領養（{pets.BUY_PRICE:,} 金幣）。")
+            price = pets.upgrade_price(row.level)
+            if price is None:
+                raise ValidationError(f"{pet.name}已經是最高等級 Lv{pets.MAX_LEVEL}。")
+            if farm.gold < price:
+                raise InsufficientGoldError(f"金幣不足：升級需要 {price:,}，目前只有 {farm.gold:,}。")
+            farm.gold -= price
+            row.level += 1
+            effect = pets.effect_text(pet_code, row.level)
+            self._record(session, farm, EventType.BUY_ITEM, f"{pet.name}升到 Lv{row.level}（{effect}），金幣 -{price}",
+                         item_code=pets.item_code(pet_code), quantity=1, gold_delta=-price)
+            nxt = pets.upgrade_price(row.level)
+            tail = f"下一級需要 {nxt:,} 金幣。" if nxt else "已達最高等級。"
+            return ActionResult(f"{pet.emoji} {pet.name}升到 Lv{row.level}：{effect}。{tail}", farm.gold, -price,
+                                pets.item_code(pet_code), 1)

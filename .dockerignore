@@ -27,3 +27,6 @@ YTDiscordBot-main/
 
 # 世界 Boss 示意圖：只在開發時參考，執行時不需要
 dragon.png
+
+# 寵物原圖：素材已切成 app/discord_bot/farm/pets/，執行時不需要
+dogcat.png

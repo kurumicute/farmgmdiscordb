@@ -174,6 +174,16 @@
     if (g.world_boss) renderWorldBoss(g.world_boss);
     if (g.progress) renderProgress(g.progress);
     if (g.special_shop) renderSpecialShop(g.special_shop);
+    if (g.pets) renderPets(g.pets);
+  }
+
+  // 寵物：領養與升級價格、每級加成（固定規則）
+  function renderPets(p) {
+    setText("g-pet-buy", num.format(p.buy_price));
+    setText("g-pet-ladder", p.upgrade_prices.map((v) => num.format(v)).join(" → "));
+    setText("g-pet-pct", String(p.pct_per_level));
+    setText("g-pet-max", String(p.max_level));
+    fillRows("g-pets", p.pets.map((x) => [x.name, x.role, x.effect]));
   }
 
   // 特賣與升級：溫室價格、本週特賣（所有玩家相同）、稱號商店

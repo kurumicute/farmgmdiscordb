@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.clock import TAIPEI_TZ
 from app.db.models import Group, Player
-from app.game import balance, genetics, rules
+from app.game import balance, genetics, pets, rules
 from app.game.errors import (
     AlreadyExistsError,
     AlreadyStolenError,
@@ -37,6 +37,7 @@ from app.repositories import groups as groups_repo
 from app.repositories import inventory as inventory_repo
 from app.repositories import items as items_repo
 from app.repositories import leaderboard as leaderboard_repo
+from app.repositories import pets as pets_repo
 from app.repositories import players as players_repo
 from app.repositories import steals as steals_repo
 from app.services.dto import ActionResult, ExternalContext, FarmStatus, GroupInfo, StealFarmView, StealTarget
@@ -408,9 +409,16 @@ class SocialService(FishingService):
             if active:
                 roll = self._rng()
                 blocked_by, chance = rules.resolve_defense(active, roll)
+            if blocked_by is None:
+                # 狗狗：設施都沒擋住時再判定一次（不受設施的整體上限限制）
+                dog = pets.bonus_pct(pets_repo.level(session, victim_farm.id, pets.DOG))
+                if dog:
+                    dog_roll = self._rng()
+                    if dog_roll < dog / 100:
+                        blocked_by, chance, roll = pets.DOG_BLOCKER, dog / 100, dog_roll
             if blocked_by is not None:
                 # 被阻止：雙方作物與物品都不變；紀錄同樣受唯一限制保護，同一株作物不會再次判定
-                device = balance.DEFENSES[blocked_by][0]
+                device = pets.blocker_name(blocked_by)
                 steals_repo.add(
                     session,
                     group_id=group_id,

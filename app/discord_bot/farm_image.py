@@ -148,27 +148,49 @@ def preset_for(plots: list[dict]) -> tuple[str, bool] | None:
     return presets[crop][stage], stage == "ready" and any(attr_badges(p) for p in plots)
 
 
-def farm_png(plots: list[dict]) -> bytes:
-    """plots 依 plot_number 排序（plots_from_status 的結果）。回傳要上傳的 PNG 內容。"""
+def farm_png(plots: list[dict], pets: dict | None = None) -> bytes:
+    """plots 依 plot_number 排序（plots_from_status 的結果）；pets：寵物代碼 → 等級（有寵物時畫在上方草地）。
+    回傳要上傳的 PNG 內容。"""
     field = manifest()["field"]
     plots = plots[:field["slots"]]  # 最多畫 16 格（超過上限的舊農場只畫前 16 格）
     hit = preset_for(plots)
-    if hit and not hit[1]:
+    if hit and not hit[1] and not pets:
         return file_png(hit[0])
-    if hit:  # 預先產生的圖 + 補標記
+    if hit:  # 預先產生的圖（+ 補標記）
         canvas = img(hit[0]).copy()
-        for k, plot in enumerate(plots):
-            draw_attr_badges(canvas, field["cells"][k]["rect"], plot)
-        return encode(canvas)
-    n = min(max(len(plots), field["min_plots"]), field["slots"])  # 底圖 4～16
-    canvas = img(field["bases"][str(n)]).copy()
-    for k, plot in enumerate(plots):  # 第 k 塊土地放第 k 格（plot_number 可能不連續）
-        draw_plot(canvas, field["cells"][k]["rect"], plot)
-    return encode(canvas)
+        if hit[1]:
+            for k, plot in enumerate(plots):
+                draw_attr_badges(canvas, field["cells"][k]["rect"], plot)
+    else:
+        n = min(max(len(plots), field["min_plots"]), field["slots"])  # 底圖 4～16
+        canvas = img(field["bases"][str(n)]).copy()
+        for k, plot in enumerate(plots):  # 第 k 塊土地放第 k 格（plot_number 可能不連續）
+            draw_plot(canvas, field["cells"][k]["rect"], plot)
+    return encode(with_pets(canvas, pets) if pets else canvas)
+
+
+def with_pets(field_canvas: Image.Image, pets: dict) -> Image.Image:
+    """在農田圖上方加一條草地，狗在左上、貓在右上（站在欄杆外的草地上，不壓到欄杆與農田）。"""
+    cfg = manifest()["pets"]
+    band = cfg["band_height"]
+    w, h = field_canvas.size
+    canvas = Image.new("RGBA", (w, h + band))
+    tile = img(cfg["band_tile"])
+    for x in range(0, w, tile.width):
+        for y in range(0, band, tile.height):
+            canvas.alpha_composite(tile, (x, y))
+    canvas.alpha_composite(field_canvas, (0, band))
+    for code, sprite_cfg in cfg["sprites"].items():
+        if code not in pets:
+            continue
+        sprite = img(sprite_cfg["file"])
+        x = sprite_cfg["margin"] if sprite_cfg["anchor"] == "left" else w - sprite.width - sprite_cfg["margin"]
+        canvas.alpha_composite(sprite, (x, band - sprite.height + sprite_cfg["bottom"]))
+    return canvas
 
 
 def farm_png_from_status(status) -> bytes:
-    return farm_png(plots_from_status(status))
+    return farm_png(plots_from_status(status), getattr(status, "pets", None))
 
 
 # ---------- 建築畫面 ----------

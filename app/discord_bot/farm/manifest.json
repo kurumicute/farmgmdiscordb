@@ -872,5 +872,24 @@
     "animal": "animals.<code>（未知用 _generic）；上方放 badges.bubble，內放 hungry／timer／products.<產品代碼>",
     "building": "128×128 佔 2×2 格，貼齊底部；加工中在泡泡放 timer，待領取放 goods.<成品代碼>",
     "fallback": "資料庫新增、沒有專屬素材的作物用 crops._generic，動物用 animals._generic，建築用 buildings._generic"
+  },
+  "pets": {
+    "band_height": 100,
+    "band_tile": "tiles/grass.png",
+    "sprites": {
+      "dog": {
+        "file": "pets/dog.png",
+        "anchor": "left",
+        "margin": 28,
+        "bottom": 4
+      },
+      "cat": {
+        "file": "pets/cat.png",
+        "anchor": "right",
+        "margin": 28,
+        "bottom": 2
+      }
+    },
+    "note": "有寵物時在農田圖上方加一條草地（band_height），狗在左上、貓在右上，不壓到欄杆；素材由根目錄 dogcat.png 切出縮小（64 色）"
   }
 }
