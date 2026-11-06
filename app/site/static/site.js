@@ -172,6 +172,15 @@
 
     if (g.rankings) renderRankings(g.rankings);
     if (g.world_boss) renderWorldBoss(g.world_boss);
+    if (g.progress) renderProgress(g.progress);
+  }
+
+  // 每日簽到、成就與圖鑑（固定規則，沒有玩家資料）
+  function renderProgress(p) {
+    fillRows("g-checkin", p.checkin.map((c) => [`第 ${c.day} 天`, c.reward]));
+    fillRows("g-achievements", p.achievements.map((a) => [a.category, a.name, a.description, a.reward]));
+    setText("g-codex-cats", p.codex.join("、"));
+    setText("c-achievements", String(p.achievements.length));
   }
 
   // 世界 Boss：補給、指定物品、積分規則與預設獎勵（只有規則，沒有任何伺服器或玩家資料）

@@ -37,9 +37,7 @@ class ProgressPages:
     # ======================================================================
 
     def _load_progress(self):
-        pid = self.player_id
-        return {"codex": self.svc.codex(pid), "checkin": self.svc.checkin_status(pid),
-                "achievements": self.svc.achievements(pid), "titles": self.svc.titles(pid)}
+        return self.svc.progress_overview(self.player_id)
 
     def _build_progress(self, d):
         c, k, a, t = d["codex"], d["checkin"], d["achievements"], d["titles"]

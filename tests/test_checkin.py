@@ -91,9 +91,12 @@ def test_no_farm_returns_none(admin):
 def test_panel_auto_checkin_once(cmds, monkeypatch, session_factory):  # noqa: F811
     monkeypatch.setattr(FarmPanel, "auto_checkin", True)
     p = make_player(cmds, ALICE)
-    assert "每日簽到成功" in p.text and "連續第 **1** 天" in p.text and "今天已簽到" in p.text
+    assert "每日簽到成功" in p.text and "連續第 **1** 天" in p.text
+    assert "每日簽到" not in p.text.split("每日簽到成功", 1)[1]  # 總覽不再有簽到欄位（移到成就圖鑑）
     p.go("plots")
     p.go("main")
-    assert "每日簽到成功" not in p.text and "今天已簽到" in p.text
+    assert "每日簽到成功" not in p.text
+    p.click("成就圖鑑")
+    assert "今天已簽到" in p.text and "連續 **1** 天" in p.text
     with session_factory() as s:
         assert s.scalar(select(func.count()).select_from(DailyCheckin)) == 1

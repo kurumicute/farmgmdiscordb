@@ -32,7 +32,7 @@ from app.db.models import (
     WorldBossEvent,
     WorldBossSchedule,
 )
-from app.game import balance, exploration, fishing
+from app.game import achievements, balance, checkin, exploration, fishing
 from app.game import events as event_rules
 from app.game import ranking as ranking_rules
 from app.game import world_boss as wb
@@ -234,6 +234,20 @@ def _boss_source(session: Session, now: datetime) -> tuple[dict, dict, int, dict
             {"kind": "default", "name": None})
 
 
+def build_progress() -> dict:
+    """每日簽到、成就與圖鑑的規則（只有固定設定，沒有玩家資料）。"""
+    cats = {key: (emoji, name) for key, emoji, name in achievements.CATEGORIES}
+    return {
+        "checkin": [{"day": i, "reward": checkin.reward_text(r)} for i, r in enumerate(checkin.REWARDS, 1)],
+        "achievements": [
+            {"category": f"{cats[a.category][0]} {cats[a.category][1]}", "name": f"{a.emoji} {a.name}",
+             "description": a.description, "reward": achievements.reward_text(a), "title": a.title}
+            for a in achievements.ACHIEVEMENTS
+        ],
+        "codex": ["作物（含珍稀變種）", "動物產品", "加工品", "山洞素材", "魚類"],
+    }
+
+
 def build_world_boss(session: Session, names: dict[str, str], now: datetime) -> dict:
     """世界 Boss 手冊：補給類型與效果、捐獻類別、積分規則、限制、獎勵、本場全服活動狀態，以及啟用中的固定出現排程
     （名稱、全服或伺服器、出現時間與獎勵；不含伺服器名稱或任何玩家資料）。
@@ -339,6 +353,7 @@ def build_guide(session: Session, now: datetime) -> dict:
         "exploration": build_exploration(names),
         "fishing": build_fishing(session),
         "world_boss": build_world_boss(session, catalog_repo.item_names(session), now),
+        "progress": build_progress(),
         "qualities": [
             {"name": label, "chance_pct": _pct(g["quality_bp"][code]), "price_mul": g["quality_price_pct"][code] / 100}
             for code, label in balance.QUALITIES.items()

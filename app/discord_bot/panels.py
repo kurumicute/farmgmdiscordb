@@ -340,7 +340,8 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, discord.ui.View):
         self.checkin_next_at = result["next_at"]
         if not result["new"]:
             return notice
-        note = f"📅 每日簽到成功！連續第 **{result['streak']}** 天，獲得 {result['reward_text']}。"
+        note = (f"📅 每日簽到成功！連續第 **{result['streak']}** 天，獲得 {result['reward_text']}。"
+                "（簽到紀錄在「🏅 成就圖鑑」）")
         if result["converted"]:
             note += "（倉庫已滿，道具改發等值金幣）"
         return f"{note}\n{notice}" if notice else note
@@ -611,7 +612,6 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, discord.ui.View):
             "orders": svc.craft_orders(pid),
             "home": svc.get_home_group(pid),
             "events": svc.active_events(),
-            "checkin": svc.checkin_status(pid),
         }
 
     def _build_main(self, d):
@@ -648,12 +648,6 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, discord.ui.View):
         craft = [f"✅ {done} 張可領取"] if done else []
         craft += [f"⚙️ {o['recipe_name']} {ts(o['ready_at'])}" for o in busy[:3]]
         e.add_field(name="🏭 加工", value="\n".join(craft) or "💤 閒置")
-        c = d["checkin"]
-        if c["checked_today"]:
-            sign = f"✅ 今天已簽到｜連續 **{c['streak']}** 天\n🎁 明天：{c['next_reward_text']}"
-        else:
-            sign = f"🎁 今天：{c['next_reward_text']}\n（開啟面板自動簽到）"
-        e.add_field(name="📅 每日簽到", value=sign)
         events = [
             f"🔥 **{ev['name']}**{'（限' + ev['crop_name'] + '）' if ev['crop_name'] else ''}\n"
             f"　✨ 效果：{ev['effects_text']}" + (f"\n　📝 {ev['description']}" if ev["description"] else "")

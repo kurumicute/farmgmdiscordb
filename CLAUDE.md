@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 農場經營遊戲：Discord Bot（主要介面）+ CMD（開發維護）+ PostgreSQL（唯一資料來源）+ FastAPI 即時監控／管理網站。程式註解、訊息與文件皆為繁體中文，新程式碼請沿用。
 
-`discordbot.txt` 是移植到其他電腦的安裝指南（需要的軟體、套件版本、步驟與常見問題；改依賴或部署方式時要同步更新）。`discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求；已實作（`app/discord_bot/`、Migration 0010；0011 為作物時間與每日活動，0012 為賭場，0013 為作物價格調整，0014 為山洞冒險，0015 改為一次一趟的探險，0016 為釣魚，0017 讓魚的售價不受稀有度限制，0018 為放生動物，0019 為世界 Boss，0020 為全服世界 Boss 與固定排程（深淵魔龍），0021 讓釣到的魚售價跟隨魚種、不再限 1–200，0022 為世界 Boss 參與門檻 min_points，0023 為農場改名（交易類型 rename_farm），0024 為每日簽到（`daily_checkins`、交易類型 checkin_reward），0025 為圖鑑（`farm_codex`，從歷史補建），0026 為成就與稱號（`farm_achievements`、`farm_titles`、`farms.title`、交易類型 achievement_reward，匯入既有世界 Boss 稱號）），README「Discord Bot」一節是操作與故障排查文件。
+`discordbot.txt` 是移植到其他電腦的安裝指南（需要的軟體、套件版本、步驟與常見問題；改依賴或部署方式時要同步更新）。`discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求；已實作（`app/discord_bot/`、Migration 0010；0011 為作物時間與每日活動，0012 為賭場，0013 為作物價格調整，0014 為山洞冒險，0015 改為一次一趟的探險，0016 為釣魚，0017 讓魚的售價不受稀有度限制，0018 為放生動物，0019 為世界 Boss，0020 為全服世界 Boss 與固定排程（深淵魔龍），0021 讓釣到的魚售價跟隨魚種、不再限 1–200，0022 為世界 Boss 參與門檻 min_points，0023 為農場改名（交易類型 rename_farm），0024 為每日簽到（`daily_checkins`、交易類型 checkin_reward），0025 為圖鑑（`farm_codex`，從歷史補建），0026 為成就與稱號（`farm_achievements`、`farm_titles`、`farms.title`、交易類型 achievement_reward，匯入既有世界 Boss 稱號），0027 為 `farm_stats` 的偷菜／防守／賭場次數（成就進度用）），README「Discord Bot」一節是操作與故障排查文件。
 尚未在真實 Discord 驗證（需要使用者提供 Bot Token 與測試伺服器），包括 Lavalink 實際語音播放與 DAVE 語音加密；舊玩家清除腳本尚未對開發資料庫執行。
 
 ## 協作規範（使用者的固定要求）
@@ -30,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    `.env` 必須有 `COMPOSE_PROJECT_NAME=farmgm`（`.env.example` 沒列）：否則 compose 以資料夾名稱建立另一組專案與**空的** Volume，看不到原本的資料。
 2. `docker compose up -d postgres lavalink yt-cipher`：啟動 PostgreSQL、Lavalink 與 YouTube 簽章服務（`LAVALINK_PASSWORD`／`YT_CIPHER_TOKEN` 未設定時 compose 會直接報錯；網站與 Bot 要等 Migration 完成再啟動）。第一次啟動時 `docker/initdb` 會建立 `farmgm` 與 `farmgm_test`（只在 Volume 為空時執行；若測試資料庫不存在需手動 `CREATE DATABASE farmgm_test`）；Lavalink 每次建立容器都會從網路下載插件。
 3. `python -m venv .venv` → `.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt`。
-4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0026）。
+4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0027）。
 5. 驗證：`pytest`、`ruff check app tests migrations scripts`、`node --test tests/web/connection.test.js` 都應通過。
 6. 若要搬移舊電腦的資料（PowerShell 的 `>` 會破壞二進位檔，一律在容器內產生檔案再 `docker cp`）：
    - 舊電腦：`docker exec farmgm-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" -Fc -f /tmp/farmgm.dump farmgm'`，再 `docker cp farmgm-postgres-1:/tmp/farmgm.dump .`
@@ -122,11 +122,12 @@ node --test tests/web/connection.test.js                               # 指定�
 - **每日簽到**：規則與獎勵只在 `game/checkin.py`（台灣日期、7 天一輪、連續天數中斷歸 1）；服務 `services/progress_service.py`
   （`ProgressService.daily_checkin`，`(farm_id, day)` 唯一，先不鎖檢查、要發獎時才鎖農場並再確認；道具放不進倉庫改發等值金幣）。
   面板 `_render` 在 `_run_machines` 後呼叫 `_auto_checkin`（開啟或換頁就簽到，結果顯示在頂端；台灣隔天 00:00 前不再查詢），
-  總覽有「📅 每日簽到」欄位。`checkin_reward` 列入 `ranking.NET_GOLD_EXCLUDED`。測試預設關閉（conftest 的 `no_auto_checkin`），
+  連續天數顯示在「🏅 成就圖鑑」（總覽不顯示）。`checkin_reward` 列入 `ranking.NET_GOLD_EXCLUDED`。測試預設關閉（conftest 的 `no_auto_checkin`），
   簽到測試以 `monkeypatch.setattr(FarmPanel, "auto_checkin", True)` 開啟。
 - **圖鑑／成就／稱號**：圖鑑 `farm_codex` 由 `_record()` 在 `codex_repo.CODEX_EVENTS`（收成、偷菜、收集動物產品、領取加工品）時 upsert，
   山洞素材在 `claim_exploration` 登記，魚類用 `farm_fish`。成就定義只在 `game/achievements.py`（代碼上線後不可改），進度由
-  `ProgressService._achievement_metrics` 從既有資料即時計算（含歷史），只有已領取存 `farm_achievements`；簽到與成就獎勵共用
+  `ProgressService._achievement_metrics` 從既有資料即時計算（含歷史；每個查詢都走農場／玩家索引，偷菜／防守／賭場次數讀 `farm_stats` 的
+  `*_count` 欄位，由 `farm_stats.on_transaction` 遞增、`rebuild`／`check` 一併重算比對，不要改回掃描交易紀錄），只有已領取存 `farm_achievements`；簽到與成就獎勵共用
   `_grant_reward`（道具放不進倉庫改發等值金幣）。稱號存在 `farm_titles`（成就與世界 Boss 領獎時 `titles_repo.grant`），
   `farms.title` 是選用的稱號，顯示在總覽、排行榜與世界 Boss 排行（`player_titles`）。面板頁面在 `discord_bot/progress_panel.py`
   （`ProgressPages` mixin：progress／achievements／titles／codex），總覽「🏅 成就圖鑑」進入。

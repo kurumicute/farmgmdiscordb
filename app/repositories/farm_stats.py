@@ -17,6 +17,8 @@ from app.db.models import CropType, Farm, FarmDailyStats, FarmStats, GameTransac
 from app.game.ranking import NET_GOLD_EXCLUDED
 
 STAT_COLUMNS = ("crop_sold_quantity", "crop_sales_income", "goods_sold_quantity", "goods_sales_income")
+# 只累計在 farm_stats 的次數（成就進度用）：交易類型 → 欄位
+COUNT_COLUMNS = {"steal": "steal_count", "defended": "defended_count", "gamble": "gamble_count"}
 
 
 def taipei_day(at: datetime) -> date:
@@ -47,7 +49,8 @@ def on_transaction(session: Session, farm: Farm, tx: GameTransaction) -> None:
     """依一筆交易紀錄遞增統計；與交易紀錄在同一筆資料庫交易中提交或回滾。"""
     is_sell = tx.event_type == "sell"
     non_operating = tx.event_type in NET_GOLD_EXCLUDED
-    if not is_sell and not tx.gold_delta:
+    counter = COUNT_COLUMNS.get(tx.event_type)
+    if not is_sell and not tx.gold_delta and not counter:
         return
     sales = {}
     if is_sell:
@@ -55,6 +58,8 @@ def on_transaction(session: Session, farm: Farm, tx: GameTransaction) -> None:
         if is_crop_produce(session, tx.item_code):
             sales |= {"crop_sold_quantity": tx.quantity, "crop_sales_income": tx.gold_delta}
     totals = dict(sales)
+    if counter:
+        totals[counter] = 1
     if non_operating:
         totals["non_operating_gold"] = tx.gold_delta
     _upsert(session, FarmStats, {"farm_id": farm.id, "player_id": farm.player_id}, totals)
@@ -82,7 +87,10 @@ SELECT f.id AS farm_id, f.player_id,
        coalesce(sum(t.gold_delta) FILTER (WHERE {_CROP_SELL}), 0) AS crop_sales_income,
        coalesce(sum(t.quantity) FILTER (WHERE t.event_type = 'sell'), 0) AS goods_sold_quantity,
        coalesce(sum(t.gold_delta) FILTER (WHERE t.event_type = 'sell'), 0) AS goods_sales_income,
-       coalesce(sum(t.gold_delta) FILTER (WHERE t.event_type IN {_EXCLUDED}), 0) AS non_operating_gold
+       coalesce(sum(t.gold_delta) FILTER (WHERE t.event_type IN {_EXCLUDED}), 0) AS non_operating_gold,
+       count(t.id) FILTER (WHERE t.event_type = 'steal') AS steal_count,
+       count(t.id) FILTER (WHERE t.event_type = 'defended') AS defended_count,
+       count(t.id) FILTER (WHERE t.event_type = 'gamble') AS gamble_count
 FROM farms f
 LEFT JOIN game_transactions t ON t.farm_id = f.id
 GROUP BY f.id, f.player_id
@@ -100,7 +108,7 @@ WHERE t.event_type = 'sell' OR (t.gold_delta <> 0 AND t.event_type NOT IN {_EXCL
 GROUP BY 1, 2
 """
 
-TOTAL_COLUMNS = STAT_COLUMNS + ("non_operating_gold",)
+TOTAL_COLUMNS = STAT_COLUMNS + ("non_operating_gold",) + tuple(COUNT_COLUMNS.values())
 DAILY_COLUMNS = STAT_COLUMNS + ("net_gold",)
 
 

@@ -217,6 +217,7 @@ class FarmStats(Base):
 
     可由 game_transactions 重算（repositories/farm_stats.rebuild），並以 check 比對一致性。
     non_operating_gold：建立農場、管理員調整與各種獎勵的金幣加總；全部期間淨賺金幣 = 目前金幣 - 此值。
+    steal_count／defended_count／gamble_count：偷菜成功、防守成功、賭場的次數（成就進度用，不必掃描交易紀錄）。
     """
 
     __tablename__ = "farm_stats"
@@ -242,6 +243,9 @@ class FarmStats(Base):
     goods_sold_quantity: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     goods_sales_income: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     non_operating_gold: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    steal_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    defended_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    gamble_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
 
 
 class FarmDailyStats(Base):

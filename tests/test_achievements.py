@@ -135,3 +135,23 @@ def test_auto_checkin_feeds_streak_achievement(cmds, monkeypatch, admin, clock):
         clock.advance(24 * 3600)
         admin.daily_checkin(pid)
     assert state(admin, pid, "streak_7")["state"] == "ready"
+
+
+def test_action_counts_come_from_farm_stats(session_factory, clock, home_group):
+    """偷菜／賭場次數由 farm_stats 累計（不掃描交易紀錄），與交易紀錄重算一致。"""
+    from app.repositories import farm_stats as farm_stats_repo
+    from tests.conftest import grow
+
+    game = AdminService(session_factory, clock, dice=lambda: 7)
+    owner = make_farmer(game, "農夫", home_group)
+    thief = make_farmer(game, "小偷", home_group)
+    grow(game, owner, 1, "carrot")
+    clock.advance(600)
+    game.steal_crop(home_group, thief, owner, 1, 1)
+    game.set_inventory("root", thief, "wheat", "rare", "none", 5)
+    game.gamble(thief, "wheat", "rare", "none", 1, "big")
+    game.gamble(thief, "wheat", "rare", "none", 1, "small")
+    assert state(game, thief, "steal_20")["value"] == 1
+    assert state(game, thief, "gamble_50")["value"] == 2
+    with session_factory() as s:
+        assert farm_stats_repo.check(s)["farm_stats_mismatches"] == 0

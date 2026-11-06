@@ -18,7 +18,6 @@ from app.db.models import (
     FarmAchievement,
     FarmFish,
     FarmStats,
-    GameTransaction,
     WorldBossRewardClaim,
 )
 from app.game import achievements, balance, checkin, exploration
@@ -126,22 +125,25 @@ class ProgressService(WorldBossService):
             }
 
     def checkin_status(self, player_id: int) -> dict:
-        """總覽頁顯示：今天是否已簽到、目前連續天數、下一次簽到的獎勵。只讀取不鎖。"""
+        """今天是否已簽到、目前連續天數、下一次簽到的獎勵。只讀取不鎖。"""
         with self._transaction() as session:
-            today = self._taipei_today()
             farm_id = session.scalar(select(Farm.id).where(Farm.player_id == player_id))
-            last = self._last_checkin(session, farm_id) if farm_id is not None else None
-            checked = last is not None and last.day == today
-            # 連續天數：今天或昨天簽到過才算延續中
-            alive = last is not None and last.day >= today - timedelta(days=1)
-            streak = last.streak if alive else 0
-            nxt = streak + 1 if alive else 1
-            return {
-                "checked_today": checked,
-                "streak": streak,
-                "next_reward_text": checkin.reward_text(checkin.reward_for(nxt)),
-                "next_at": self._next_checkin_at(today),
-            }
+            return self._checkin_status(session, farm_id)
+
+    def _checkin_status(self, session: Session, farm_id: int | None) -> dict:
+        today = self._taipei_today()
+        last = self._last_checkin(session, farm_id) if farm_id is not None else None
+        checked = last is not None and last.day == today
+        # 連續天數：今天或昨天簽到過才算延續中
+        alive = last is not None and last.day >= today - timedelta(days=1)
+        streak = last.streak if alive else 0
+        nxt = streak + 1 if alive else 1
+        return {
+            "checked_today": checked,
+            "streak": streak,
+            "next_reward_text": checkin.reward_text(checkin.reward_for(nxt)),
+            "next_at": self._next_checkin_at(today),
+        }
 
     # ---------- 圖鑑 ----------
 
@@ -177,26 +179,26 @@ class ProgressService(WorldBossService):
             for key, emoji, name in CODEX_CATEGORIES
         ]
 
+    @staticmethod
+    def _codex_view(cats: list[dict]) -> dict:
+        return {"categories": cats, "discovered": sum(c["discovered"] for c in cats),
+                "total": sum(c["total"] for c in cats)}
+
     def codex(self, player_id: int) -> dict:
         """圖鑑：各分類已收集／總數與每個項目（未取得的名稱由介面隱藏）。只讀取不鎖。"""
         with self._transaction() as session:
             farm = self._farm_for_read(session, player_id)
-            cats = self._codex_categories(session, farm.id)
-            return {"categories": cats, "discovered": sum(c["discovered"] for c in cats),
-                    "total": sum(c["total"] for c in cats)}
+            return self._codex_view(self._codex_categories(session, farm.id))
 
     # ---------- 成就 ----------
 
-    def _achievement_metrics(self, session: Session, farm: Farm) -> dict:
-        """成就指標（全部從既有資料計算，含成就上線前的歷史）。"""
-        cats = {c["key"]: c for c in self._codex_categories(session, farm.id)}
+    def _achievement_metrics(self, session: Session, farm: Farm, categories: list[dict] | None = None) -> dict:
+        """成就指標（全部從既有資料計算，含成就上線前的歷史）。
+
+        每個查詢都以農場（或玩家）的索引取少量資料；次數類指標讀 farm_stats 的累計欄位，不掃描交易紀錄。"""
+        cats = {c["key"]: c for c in (categories or self._codex_categories(session, farm.id))}
         crops = cats["crop"]["entries"]
-        tx = dict(session.execute(
-            select(GameTransaction.event_type, func.count())
-            .where(GameTransaction.farm_id == farm.id,
-                   GameTransaction.event_type.in_(("steal", "defended", "gamble")))
-            .group_by(GameTransaction.event_type)
-        ).all())
+        stats = session.get(FarmStats, farm.id)
         fish_total, fish_legendary = session.execute(
             select(func.count(), func.count().filter(FarmFish.rarity == "legendary")).where(FarmFish.farm_id == farm.id)
         ).one()
@@ -208,7 +210,7 @@ class ProgressService(WorldBossService):
         all_total = sum(c["total"] for c in cats.values())
         return {
             "crops": sum(e["quantity"] for e in crops),
-            "crop_sales": session.scalar(select(FarmStats.crop_sales_income).where(FarmStats.farm_id == farm.id)) or 0,
+            "crop_sales": stats.crop_sales_income if stats else 0,
             "level": farm.level,
             "plots": farms_repo.count_plots(session, farm.id),
             "gold": farm.gold,
@@ -222,9 +224,9 @@ class ProgressService(WorldBossService):
             ),
             "fish": fish_total,
             "legendary_fish": fish_legendary,
-            "steals": tx.get("steal", 0),
-            "defended": tx.get("defended", 0),
-            "gambles": tx.get("gamble", 0),
+            "steals": stats.steal_count if stats else 0,
+            "defended": stats.defended_count if stats else 0,
+            "gambles": stats.gamble_count if stats else 0,
             "boss_joined": boss_joined,
             "boss_won": boss_won,
             "best_streak": session.scalar(
@@ -244,25 +246,36 @@ class ProgressService(WorldBossService):
         """成就清單與進度：state = claimed（已領取）／ready（可領取）／progress（進行中）。只讀取不鎖。"""
         with self._transaction() as session:
             farm = self._farm_for_read(session, player_id)
-            metrics = self._achievement_metrics(session, farm)
-            claimed = self._claimed(session, farm.id)
-            rows = []
-            for a in achievements.ACHIEVEMENTS:
-                value = metrics.get(a.metric, 0)
-                state = "claimed" if a.code in claimed else ("ready" if value >= a.target else "progress")
-                rows.append({
-                    "code": a.code, "category": a.category, "emoji": a.emoji, "name": a.name,
-                    "description": a.description, "value": min(value, a.target), "target": a.target,
-                    "unit": achievements.METRICS[a.metric][1], "state": state,
-                    "reward_text": achievements.reward_text(a), "title": a.title,
-                    "claimed_at": claimed[a.code].claimed_at if a.code in claimed else None,
-                })
-            return {
-                "rows": rows,
-                "claimed": sum(1 for r in rows if r["state"] == "claimed"),
-                "ready": sum(1 for r in rows if r["state"] == "ready"),
-                "total": len(rows),
-            }
+            return self._achievement_view(session, farm)
+
+    def progress_overview(self, player_id: int) -> dict:
+        """「成就圖鑑」總覽頁：圖鑑、成就、簽到與稱號一次讀取（圖鑑只計算一次）。只讀取不鎖。"""
+        with self._transaction() as session:
+            farm = self._farm_for_read(session, player_id)
+            cats = self._codex_categories(session, farm.id)
+            return {"codex": self._codex_view(cats), "achievements": self._achievement_view(session, farm, cats),
+                    "checkin": self._checkin_status(session, farm.id), "titles": self._titles(session, farm)}
+
+    def _achievement_view(self, session: Session, farm: Farm, categories: list[dict] | None = None) -> dict:
+        metrics = self._achievement_metrics(session, farm, categories)
+        claimed = self._claimed(session, farm.id)
+        rows = []
+        for a in achievements.ACHIEVEMENTS:
+            value = metrics.get(a.metric, 0)
+            state = "claimed" if a.code in claimed else ("ready" if value >= a.target else "progress")
+            rows.append({
+                "code": a.code, "category": a.category, "emoji": a.emoji, "name": a.name,
+                "description": a.description, "value": min(value, a.target), "target": a.target,
+                "unit": achievements.METRICS[a.metric][1], "state": state,
+                "reward_text": achievements.reward_text(a), "title": a.title,
+                "claimed_at": claimed[a.code].claimed_at if a.code in claimed else None,
+            })
+        return {
+            "rows": rows,
+            "claimed": sum(1 for r in rows if r["state"] == "claimed"),
+            "ready": sum(1 for r in rows if r["state"] == "ready"),
+            "total": len(rows),
+        }
 
     def claim_achievements(self, player_id: int) -> ActionResult:
         """一次領取所有已達成但還沒領的成就獎勵（金幣、道具、稱號）。"""
@@ -300,15 +313,18 @@ class ProgressService(WorldBossService):
     def titles(self, player_id: int) -> dict:
         """擁有的稱號與目前選用的稱號。只讀取不鎖。"""
         with self._transaction() as session:
-            farm = self._farm_for_read(session, player_id)
-            owned = [
-                {"title": t.title, "obtained_at": t.obtained_at,
-                 "source": (achievements.BY_CODE[t.source.split(":", 1)[1]].name
-                            if t.source.startswith("achievement:") and t.source.split(":", 1)[1] in achievements.BY_CODE
-                            else TITLE_SOURCES.get(t.source, t.source))}
-                for t in titles_repo.owned(session, farm.id)
-            ]
-            return {"current": farm.title, "owned": owned}
+            return self._titles(session, self._farm_for_read(session, player_id))
+
+    @staticmethod
+    def _titles(session: Session, farm: Farm) -> dict:
+        owned = [
+            {"title": t.title, "obtained_at": t.obtained_at,
+             "source": (achievements.BY_CODE[t.source.split(":", 1)[1]].name
+                        if t.source.startswith("achievement:") and t.source.split(":", 1)[1] in achievements.BY_CODE
+                        else TITLE_SOURCES.get(t.source, t.source))}
+            for t in titles_repo.owned(session, farm.id)
+        ]
+        return {"current": farm.title, "owned": owned}
 
     def set_title(self, player_id: int, title: str | None) -> ActionResult:
         """選用一個已擁有的稱號（None 或空字串 = 不顯示）。"""

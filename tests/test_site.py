@@ -168,3 +168,18 @@ def test_guide_lists_enabled_ranking_rules_only(session_factory, clock):
     assert rule["rewards"][0] == "2000 金幣" and len(rule["rewards"]) == 2
     page = client(session_factory).get("/").text
     assert 'id="g-rankings"' in page and "排名獎勵" in page
+
+
+def test_guide_has_checkin_achievements_and_codex(session_factory):
+    """手冊的簽到、成就與圖鑑表格由 /api/guide 填入，數量與規則模組一致，頁面預設表格也完整。"""
+    from app.game import achievements, checkin
+
+    c = client(session_factory)
+    page = c.get("/").text
+    for slot in ('id="progress"', 'id="g-checkin"', 'id="g-achievements"', 'id="g-codex-cats"', 'id="c-achievements"'):
+        assert slot in page
+    assert all(a.name in page for a in achievements.ACHIEVEMENTS)  # API 失敗時的預設表格
+    p = c.get("/api/guide").json()["progress"]
+    assert [x["day"] for x in p["checkin"]] == list(range(1, checkin.CYCLE_DAYS + 1))
+    assert len(p["achievements"]) == len(achievements.ACHIEVEMENTS)
+    assert any(a["title"] == "傳說農夫" for a in p["achievements"]) and "魚類" in p["codex"]
