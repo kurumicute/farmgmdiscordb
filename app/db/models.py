@@ -71,6 +71,7 @@ EVENT_TYPES = (
     "boss_reward",
     "rename_farm",
     "checkin_reward",
+    "achievement_reward",
 )
 
 QUALITY_CODES = ("normal", "good", "rare", "legendary")
@@ -204,6 +205,7 @@ class Farm(Base):
     level: Mapped[int] = mapped_column(Integer, nullable=False)
     gold: Mapped[int] = mapped_column(BigInteger, nullable=False)
     warehouse_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(20))  # 目前選用的稱號（必須在 farm_titles 中），NULL 不顯示
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 
@@ -1288,3 +1290,46 @@ class DailyCheckin(Base):
     gold: Mapped[int] = mapped_column(BigInteger, nullable=False)
     items: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FarmCodexEntry(Base):
+    """圖鑑：每座農場第一次取得某物品的時間、累計取得數量與最高品質（0 普通～3 傳說）。
+
+    收成、偷菜、收集動物產品、領取加工品時由 GameService._record 登記，山洞素材在領取探險時登記；
+    魚類圖鑑用 farm_fish。"""
+
+    __tablename__ = "farm_codex"
+    __table_args__ = (
+        CheckConstraint("quantity >= 0", name="quantity_non_negative"),
+        CheckConstraint("best_quality BETWEEN 0 AND 3", name="best_quality_valid"),
+    )
+
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True)
+    item_code: Mapped[str] = mapped_column(String(64), primary_key=True)
+    quantity: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    best_quality: Mapped[int] = mapped_column(Integer, nullable=False)
+    first_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FarmAchievement(Base):
+    """已領取的成就；(farm_id, code) 為主鍵，每個成就只能領一次。成就進度由既有資料即時計算，不另外存。"""
+
+    __tablename__ = "farm_achievements"
+    __table_args__ = (CheckConstraint("gold >= 0", name="gold_non_negative"),)
+
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    gold: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    items: Mapped[dict] = mapped_column(JSON, nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FarmTitle(Base):
+    """玩家擁有的稱號；source 是來源（成就代碼 achievement:<code>、world_boss）。"""
+
+    __tablename__ = "farm_titles"
+
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True)
+    title: Mapped[str] = mapped_column(String(20), primary_key=True)
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+    obtained_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

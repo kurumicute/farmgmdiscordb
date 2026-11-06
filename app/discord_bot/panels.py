@@ -26,6 +26,7 @@ import discord
 from app.cli.commands import CommandHandler
 from app.discord_bot import farm_image
 from app.discord_bot.fishing_panel import FishingPages, fish_line
+from app.discord_bot.progress_panel import ProgressPages
 from app.discord_bot.runner import player_message
 from app.discord_bot.world_boss_panel import WorldBossPages
 from app.game import balance, exploration, rules
@@ -191,7 +192,7 @@ class RenameModal(discord.ui.Modal):
 # ---------- 面板 ----------
 
 
-class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
+class FarmPanel(FishingPages, WorldBossPages, ProgressPages, discord.ui.View):
     """一個玩家的私密農場面板。頁面內容每次都重新從資料庫讀取，網站或其他介面的修改會立即反映。"""
 
     auto_checkin = True  # 開啟面板時自動每日簽到（測試預設關閉，避免改變其他測試的金幣與庫存）
@@ -618,8 +619,9 @@ class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
         growing = [p.ready_at for p in s.plots if p.state == PlotState.GROWING]
         ready = sum(1 for p in s.plots if p.state == PlotState.READY)
         waiting = sum(1 for p in s.plots if p.state == PlotState.WAITING_WATER)
+        title = f"〔{s.title}〕" if s.title else ""
         header = (
-            f"👨‍🌾 **{s.player_name}**　⭐ **Lv {s.level}**　💰 **{money(s.gold)}** 金\n"
+            f"👨‍🌾 **{s.player_name}**{title}　⭐ **Lv {s.level}**　💰 **{money(s.gold)}** 金\n"
             f"━━━━━━━━ 🌱 **農田（{len(s.plots)} 格）** ━━━━━━━━"
         )
         e = discord.Embed(title=f"🌾 ✦ {s.name} ✦", color=GREEN,
@@ -685,6 +687,7 @@ class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
         self.nav("背包", "backpack", emoji="🎒", row=1)
         self.nav("商店", "shop", emoji="🏪", row=1)
         self.nav("販售", "sell", emoji="💰", row=1)
+        self.nav("成就圖鑑", "progress", emoji="🏅", row=1, style=discord.ButtonStyle.primary)
         self.nav("動物", "animals", emoji="🐔", row=2)
         self.nav("加工", "craft", emoji="🏭", row=2)
         self.nav("防守", "defense", emoji="🛡️", row=2)
@@ -1704,7 +1707,7 @@ class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
             rows = svc.leaderboard(b["kind"])
         else:
             rows = svc.period_leaderboard(b["kind"], b["period"])
-        return {"rows": rows}
+        return {"rows": rows, "titles": svc.player_titles([r["player_id"] for r in rows if "player_id" in r])}
 
     def _build_board(self, d):
         b = self.board
@@ -1714,6 +1717,9 @@ class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
         for r in d["rows"]:
             medal = MEDALS.get(r["rank"], f"`{r['rank']:>2}.`")
             name = r.get("group_name") or r.get("player_name")
+            title = d["titles"].get(r.get("player_id"))
+            if title:
+                name = f"{name}〔{title}〕"
             if b["kind"] == "money":
                 net = b["period"] != "all" and b["scope"] != "group"
                 value = f"{money(r['score'])} 金" + ("（賣農產品收入）" if net else "")
@@ -2212,6 +2218,10 @@ def help_embed() -> discord.Embed:
     e.add_field(name="🐉 世界 Boss", inline=False, value=(
         "伺服器的共同活動：總覽「🐉 世界Boss」→「📦 捐獻物資」把農作物、漁獲、素材或加工品捐給前線，"
         "糧食／醫療／戰鬥／裝備四種補給越充足，前線自動打 Boss 越快。活動結束後依結果、積分與排名「🎁 領取獎勵」。"))
+    e.add_field(name="🏅 簽到、成就與圖鑑", inline=False, value=(
+        "每天（台灣時間）第一次打開面板會自動簽到，連續簽到 7 天一輪，第 7 天獎勵最多，中斷一天就重新計算。"
+        "總覽「🏅 成就圖鑑」可以領取成就獎勵（進度包含以前的紀錄）、選擇要顯示的稱號，"
+        "以及查看作物、動物產品、加工品、山洞素材與魚類圖鑑。稱號會顯示在總覽、排行榜與世界 Boss 排行。"))
     e.add_field(name="👥 群組", inline=False, value=(
         "每個 Discord 伺服器是一個群組。你的農場屬於建立時的伺服器，只有在那裡的操作才計入群組任務與競賽；"
         "可在「👥 群組」把農場轉移到目前的伺服器（每 7 天一次）。"))

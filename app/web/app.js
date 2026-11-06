@@ -121,7 +121,7 @@ if (typeof document !== "undefined") {
     explore: "山洞探索", build_machine: "製作機器", exchange: "假幣兌換", make_seed: "製造種子",
     fishing_buy: "購買釣具", fish_sell: "販售魚類", release_animal: "放生動物",
     boss_donate: "世界 Boss 捐獻", boss_reward: "世界 Boss 獎勵", rename_farm: "農場改名",
-    checkin_reward: "每日簽到",
+    checkin_reward: "每日簽到", achievement_reward: "成就獎勵",
   };
 
   const state = {

@@ -42,6 +42,7 @@ from app.repositories import fishing as fishing_repo
 from app.repositories import genetics as genetics_repo
 from app.repositories import groups as groups_repo
 from app.repositories import inventory as inventory_repo
+from app.repositories import titles as titles_repo
 from app.services.dto import ActionResult
 from app.services.game_service import genetics_label
 from app.services.ranking_service import RankingService
@@ -652,7 +653,8 @@ class WorldBossService(RankingService):
             got = reward_text({"gold": reward["gold"], "items": reward["items"]}, names)
             message = f"🎁 領取「{ev.name}」{'、'.join(reward['parts']) or label + '獎勵'}：{got}。"
             if reward["title"]:
-                message += f"\n🏅 獲得稱號「{reward['title']}」！"
+                titles_repo.grant(session, farm.id, reward["title"], "world_boss", now)  # 可在「成就圖鑑」選用
+                message += f"\n🏅 獲得稱號「{reward['title']}」！可到「🏅 成就圖鑑」設定顯示。"
             return ActionResult(message, farm.gold, reward["gold"], None, sum(reward["items"].values()))
 
     # ---------- 背景結算 ----------

@@ -374,6 +374,9 @@ def test_rewards_claimed_once(game, clock, home_group, session_factory):
     assert game.get_farm_status(a).gold == gold_a + 155
     assert any(m.code == "wood" and m.quantity == 1 for m in game.get_backpack(a).materials)
     assert game.boss_current(home_group, a)["me"]["title"] == "屠龍英雄"
+    assert [t["title"] for t in game.titles(a)["owned"]] == ["屠龍英雄"]  # 可在成就圖鑑選用
+    game.set_title(a, "屠龍英雄")
+    assert game.get_farm_status(a).title == "屠龍英雄"
     with pytest.raises(AlreadyExistsError):
         game.boss_claim(home_group, a, eid)
     with pytest.raises(ValidationError, match="沒有參與"):

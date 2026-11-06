@@ -64,6 +64,7 @@ class EventType(StrEnum):
     BOSS_REWARD = "boss_reward"
     RENAME_FARM = "rename_farm"
     CHECKIN_REWARD = "checkin_reward"
+    ACHIEVEMENT_REWARD = "achievement_reward"
 
 
 EVENT_TYPE_LABELS = {
@@ -106,6 +107,7 @@ EVENT_TYPE_LABELS = {
     EventType.BOSS_REWARD: "世界 Boss 獎勵",
     EventType.RENAME_FARM: "農場改名",
     EventType.CHECKIN_REWARD: "每日簽到",
+    EventType.ACHIEVEMENT_REWARD: "成就獎勵",
 }
 
 

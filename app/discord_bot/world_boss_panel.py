@@ -443,13 +443,16 @@ class WorldBossPages:
         view = self._boss_view()
         if view is None:
             raise ValidationError("目前沒有世界 Boss 活動。")
-        return self.svc.boss_leaderboard(self._boss_group(), self.player_id, view["event_id"])
+        board = self.svc.boss_leaderboard(self._boss_group(), self.player_id, view["event_id"])
+        return {**board, "titles": self.svc.player_titles([r["player_id"] for r in board["rows"]])}
 
     def _build_boss_board(self, d):
         lines = []
         for r in d["rows"]:
             medal = MEDALS.get(r["rank"]) or f"`{r['rank']:>2}.`"
-            lines.append(f"{medal} **{r['player_name']}**　🏅 {r['points']:,} 分　📦 {r['quantity']:,} 個")
+            title = d["titles"].get(r["player_id"])
+            name = f"{r['player_name']}〔{title}〕" if title else r["player_name"]
+            lines.append(f"{medal} **{name}**　🏅 {r['points']:,} 分　📦 {r['quantity']:,} 個")
         e = self._boss_embed(title=f"🏆 世界 Boss 貢獻排行｜{d['name']}", color=BOSS_GOLD,
                           description="\n".join(lines) if lines else "還沒有人捐獻，成為第一個支援前線的人吧！")
         me = d["me"]

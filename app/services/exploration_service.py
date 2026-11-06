@@ -17,6 +17,7 @@ from app.game.errors import (
 )
 from app.game.rules import CraftState, EventType, PlotState
 from app.repositories import catalog as catalog_repo
+from app.repositories import codex as codex_repo
 from app.repositories import exploration as exploration_repo
 from app.repositories import farms as farms_repo
 from app.repositories import inventory as inventory_repo
@@ -152,6 +153,7 @@ class ExplorationService(RanchService):
                 raise WarehouseFullError(f"{exc} 探險帶回來的物品放不下，清出空間後再領取。") from None
             for item, qty in items.items():
                 inventory_repo.add(session, farm.id, item, qty)
+                codex_repo.register(session, farm.id, item, qty, None, now)  # 山洞素材圖鑑
             log.claimed_at = now
             names = _names(session, items)
             text = f"探索{area.name}：{_join(items, names) or '一無所獲'}"

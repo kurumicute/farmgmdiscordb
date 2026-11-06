@@ -19,7 +19,8 @@ from tests.test_discord_bot import ALICE, BOB, CAROL, GUILD_A, GUILD_B, FakeInte
 PAGES = ("main", "plots", "backpack", "shop", "prices", "genetics", "sell", "animals", "craft", "build", "casino",
          "cave", "cave_area", "cave_log", "machines", "defense", "steal",
          "board", "rewards", "quests", "history", "group", "log", "help",
-         "fishing", "fish_shop", "fish_basket", "fish_codex", "fish_rank")
+         "fishing", "fish_shop", "fish_basket", "fish_codex", "fish_rank",
+         "progress", "codex", "achievements", "titles")
 
 
 def run(coro):

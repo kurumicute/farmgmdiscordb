@@ -69,6 +69,7 @@ class FarmStatus:
     warehouse_capacity: int
     plots: list[PlotInfo]
     now: datetime
+    title: str | None = None  # 目前選用的稱號
 
     @property
     def empty_plots(self) -> int:

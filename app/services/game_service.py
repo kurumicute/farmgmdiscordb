@@ -37,6 +37,7 @@ from app.game.errors import (
 from app.game.rules import EventType, PlotState
 from app.repositories import animals as animals_repo
 from app.repositories import catalog as catalog_repo
+from app.repositories import codex as codex_repo
 from app.repositories import community as community_repo
 from app.repositories import crops as crops_repo
 from app.repositories import events as events_repo
@@ -230,6 +231,8 @@ class GameService:
         # 同一筆交易中更新排行用的累積統計，並計入群組任務與競賽（只有成功提交的操作才會計分）
         farm_stats_repo.on_transaction(session, farm, tx)
         activity.on_event(session, farm, tx)
+        if tx.event_type in codex_repo.CODEX_EVENTS and tx.item_code:  # 取得物品時登記圖鑑
+            codex_repo.register(session, farm.id, tx.item_code, tx.quantity, tx.quality, now)
 
     # ---------- 玩家 ----------
 
@@ -516,6 +519,7 @@ class GameService:
             warehouse_capacity=farm.warehouse_capacity,
             plots=plots,
             now=now,
+            title=farm.title,
         )
 
     def get_farm_status(self, player_id: int) -> FarmStatus:

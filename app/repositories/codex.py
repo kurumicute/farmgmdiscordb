@@ -1,0 +1,36 @@
+"""圖鑑登記：第一次取得物品的時間、累計數量與最高品質。"""
+
+from datetime import datetime
+
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
+
+from app.db.models import QUALITY_CODES, FarmCodexEntry
+
+# 會登記到圖鑑的交易類型（取得物品的那一方）；山洞素材另外在領取探險時登記
+CODEX_EVENTS = frozenset({"harvest", "steal", "collect_animal", "craft_collect"})
+QUALITY_RANK = {q: i for i, q in enumerate(QUALITY_CODES)}
+
+
+def register(session: Session, farm_id: int, item_code: str, quantity: int, quality: str | None,
+             now: datetime) -> None:
+    if quantity <= 0:
+        return
+    rank = QUALITY_RANK.get(quality or "normal", 0)
+    stmt = insert(FarmCodexEntry).values(
+        farm_id=farm_id, item_code=item_code, quantity=quantity, best_quality=rank, first_at=now
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[FarmCodexEntry.farm_id, FarmCodexEntry.item_code],
+        set_={
+            "quantity": FarmCodexEntry.quantity + stmt.excluded.quantity,
+            "best_quality": func.greatest(FarmCodexEntry.best_quality, stmt.excluded.best_quality),
+        },
+    )
+    session.execute(stmt)
+
+
+def entries(session: Session, farm_id: int) -> dict[str, FarmCodexEntry]:
+    rows = session.scalars(select(FarmCodexEntry).where(FarmCodexEntry.farm_id == farm_id))
+    return {r.item_code: r for r in rows}
