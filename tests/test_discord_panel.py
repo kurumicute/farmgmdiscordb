@@ -789,3 +789,12 @@ def test_machines_page_build_and_fake_coin_exchange(cmds, admin, session_factory
     assert "獲得 100 金幣" in p.text
     with session_factory() as s:
         assert s.scalar(select(Farm.gold)) == 600
+
+
+def test_help_has_official_guild_link():
+    from app.config import OFFICIAL_GUILD_URL
+    from app.discord_bot.panels import help_embed
+
+    e = help_embed()
+    assert any(f.name == "💬 官方群組" and OFFICIAL_GUILD_URL in f.value for f in e.fields)
+    assert len(e) <= 6000 and len(e.fields) <= 25  # Discord 單一 Embed 的上限

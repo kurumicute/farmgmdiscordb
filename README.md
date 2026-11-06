@@ -695,7 +695,7 @@ docker compose logs lavalink     # 看到 Loaded 'youtube-plugin…' 與 Lavalin
 ```
 
 功能介紹、**農場操作手冊**（每個功能的操作步驟與數值表）、邀請連結（依 `DISCORD_APPLICATION_ID` 產生）、
-支援伺服器（`SITE_SUPPORT_URL`）與即時統計。只提供彙總數字，不輸出任何玩家資料；統計在唯讀交易中查詢並快取 30 秒。
+支援伺服器（`SITE_SUPPORT_URL`，留空時使用官方群組 https://discord.gg/gsd823SQtP）與即時統計。只提供彙總數字，不輸出任何玩家資料；統計在唯讀交易中查詢並快取 30 秒。
 頁面回應 `Cache-Control: no-cache`，網站更新後訪客會立即看到新版。修改遊戲數值時記得同步更新 `app/site/static/index.html` 的操作手冊。
 
 ### 壓力測試結果（本機 12 核心，PostgreSQL 16 in Docker）

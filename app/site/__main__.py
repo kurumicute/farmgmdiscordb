@@ -2,7 +2,7 @@
 
 import uvicorn
 
-from app.config import get_settings
+from app.config import OFFICIAL_GUILD_URL, get_settings
 from app.db.session import make_engine, make_session_factory
 from app.site.server import create_site_app
 
@@ -14,7 +14,7 @@ def main() -> None:
     app = create_site_app(
         make_session_factory(engine),
         application_id=settings.discord_application_id,
-        support_url=settings.site_support_url,
+        support_url=settings.site_support_url or OFFICIAL_GUILD_URL,
         music_enabled=settings.music_enabled,
         music_application_id=settings.music_application_id if settings.music_bot_token else None,
         music_prefix_commands=settings.music_prefix_commands,

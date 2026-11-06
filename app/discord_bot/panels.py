@@ -24,6 +24,7 @@ import aiohttp
 import discord
 
 from app.cli.commands import CommandHandler
+from app.config import OFFICIAL_GUILD_URL
 from app.discord_bot import farm_image
 from app.discord_bot.fishing_panel import FishingPages, fish_line
 from app.discord_bot.progress_panel import ProgressPages
@@ -2303,4 +2304,6 @@ def help_embed() -> discord.Embed:
     e.add_field(name="🎵 聽音樂", inline=False, value=(
         "先進入語音頻道，再用 **/play** 點歌（關鍵字、YouTube／Spotify 連結）。\n"
         "/nowplaying 顯示控制面板（暫停、跳過、循環、音量）、/queue 看清單；完整說明請用 **/music**。"))
+    e.add_field(name="💬 官方群組", inline=False, value=(
+        f"問題回報、建議與活動公告都在官方群組：{OFFICIAL_GUILD_URL}"))
     return e

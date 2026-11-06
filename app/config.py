@@ -6,6 +6,9 @@ from typing import Literal
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 官方 Discord 群組（公開邀請連結）：Bot 的「❓ 說明」與介紹網站的支援伺服器按鈕都用它
+OFFICIAL_GUILD_URL = "https://discord.gg/gsd823SQtP"
+
 
 class Settings(BaseSettings):
     # env_ignore_empty：.env 中留空的項目（例如 DISCORD_DEV_GUILD_ID=）視為未設定，使用預設值
@@ -63,7 +66,7 @@ class Settings(BaseSettings):
     # 介紹網站（python -m app.site）
     site_host: str = "127.0.0.1"
     site_port: int = Field(24444, ge=1, le=65535)
-    site_support_url: str | None = None  # 支援伺服器邀請連結（選填）
+    site_support_url: str | None = None  # 支援伺服器邀請連結（選填；沒設定或空值時用 OFFICIAL_GUILD_URL）
 
     @property
     def allowed_host_list(self) -> list[str]:
