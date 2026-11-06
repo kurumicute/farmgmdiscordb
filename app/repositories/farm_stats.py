@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.clock import TAIPEI_TZ
+from app.db import txcache
 from app.db.models import CropType, Farm, FarmDailyStats, FarmStats, GameTransaction
 from app.game.ranking import NET_GOLD_EXCLUDED
 
@@ -37,12 +38,12 @@ def _upsert(session: Session, model, keys: dict, values: dict) -> None:
     if not values:
         return
     table = model.__table__
-    stmt = insert(model).values(**keys, **values)
+    stmt = insert(table).values(**keys, **values)
     stmt = stmt.on_conflict_do_update(
         index_elements=[table.c[k] for k in keys if k != "player_id"],
         set_={k: table.c[k] + stmt.excluded[k] for k in values},
     )
-    session.execute(stmt)
+    txcache.core_execute(session, stmt)  # 不觸發 ORM flush（與交易紀錄同一批寫入）
 
 
 def on_transaction(session: Session, farm: Farm, tx: GameTransaction) -> None:

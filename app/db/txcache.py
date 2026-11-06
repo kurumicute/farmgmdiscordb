@@ -88,3 +88,16 @@ def _after_flush(session, _flush_context) -> None:
 def _on_execute(state) -> None:
     if state.is_insert or state.is_update or state.is_delete:
         _clear_reads(state.session)
+
+
+# ---------- 直接在連線上執行的寫入（不觸發 ORM autoflush） ----------
+
+
+def core_execute(session: Session, stmt):
+    """在這筆交易的連線上直接執行 Core 語句，不觸發 ORM autoflush。
+
+    Session.execute 會先把所有改過但還沒寫入的 ORM 物件（土地、農場金幣…）整批寫入；逐格操作每格都寫交易紀錄，
+    原本每格都觸發一次。只用於「不依賴尚未寫入的 ORM 變更」的寫入（交易紀錄、排行統計、圖鑑、倉庫數量的 upsert）；
+    ORM 物件仍會在下一次 ORM 查詢或提交時一起寫入。寫入時一併清空讀取快取（do_orm_execute 收不到這裡的語句）。"""
+    _clear_reads(session)
+    return session.connection().execute(stmt)

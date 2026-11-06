@@ -2,6 +2,7 @@ from sqlalchemy import func, select, union_all, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from app.db import txcache
 from app.db.models import GamblePrize, InventoryItem
 from app.game import exploration
 
@@ -103,14 +104,13 @@ def add(
     session: Session, farm_id: int, item_code: str, quantity: int, quality: str = "normal", mutation: str = "none"
 ) -> None:
     # 以唯一限制 (farm_id, item_code, quality, mutation) 做 upsert，避免重複建立庫存紀錄
-    stmt = insert(InventoryItem).values(
-        farm_id=farm_id, item_code=item_code, quality=quality, mutation=mutation, quantity=quantity
-    )
+    t = InventoryItem.__table__
+    stmt = insert(t).values(farm_id=farm_id, item_code=item_code, quality=quality, mutation=mutation, quantity=quantity)
     stmt = stmt.on_conflict_do_update(
         constraint="uq_inventory_items_farm_item",
-        set_={"quantity": InventoryItem.quantity + quantity, "updated_at": func.now()},
+        set_={"quantity": t.c.quantity + quantity, "updated_at": func.now()},
     )
-    session.execute(stmt)
+    txcache.core_execute(session, stmt)  # 不觸發 ORM flush（逐格收成時每格一次）
 
 
 def remove(

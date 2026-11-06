@@ -328,14 +328,21 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
             state.store_view(self, message.id)
 
     def _prepare(self, loader: Callable, farm_page: bool) -> tuple[list, object, Exception | None]:
-        """在執行緒中依序：自動機器 → 每日簽到 → 讀取整頁（一次排隊，原本是三次）。
+        """在執行緒中依序：每日簽到 → 自動機器＋讀取整頁（一次排隊，原本是三次；機器與頁面同一筆交易）。
 
         回傳 (頂端提示, 頁面資料, 讀取錯誤)。機器與簽到各自是一筆交易，失敗不影響面板顯示；
         讀取失敗時仍回傳前兩步的提示（例如剛簽到的獎勵），錯誤由呼叫端顯示。"""
-        notes = [self._checkin_note(), self._machines_note()] if farm_page else []
+        notes = [self._checkin_note()] if farm_page else []
+
+        def load():
+            # 自動機器與讀取整頁在同一筆交易：沒有機器時只是兩條讀取（與頁面共用讀取快取），
+            # 有機器時在 SAVEPOINT 中執行（見 ExplorationService.run_machines）
+            return (self._machines_note() if farm_page else None), loader()
+
         try:
             # 整頁資料在同一筆交易中讀取（原本每個服務呼叫各開一筆）
-            return notes, self.svc.run_batch(loader), None
+            machines, data = self.svc.run_batch(load)
+            return notes + [machines], data, None
         except Exception as exc:
             return notes, None, exc
 

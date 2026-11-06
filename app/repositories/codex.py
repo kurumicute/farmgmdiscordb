@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from app.db import txcache
 from app.db.models import QUALITY_CODES, FarmCodexEntry
 
 # 會登記到圖鑑的交易類型（取得物品的那一方）；山洞素材另外在領取探險時登記
@@ -18,17 +19,16 @@ def register(session: Session, farm_id: int, item_code: str, quantity: int, qual
     if quantity <= 0:
         return
     rank = QUALITY_RANK.get(quality or "normal", 0)
-    stmt = insert(FarmCodexEntry).values(
-        farm_id=farm_id, item_code=item_code, quantity=quantity, best_quality=rank, first_at=now
-    )
+    t = FarmCodexEntry.__table__
+    stmt = insert(t).values(farm_id=farm_id, item_code=item_code, quantity=quantity, best_quality=rank, first_at=now)
     stmt = stmt.on_conflict_do_update(
-        index_elements=[FarmCodexEntry.farm_id, FarmCodexEntry.item_code],
+        index_elements=[t.c.farm_id, t.c.item_code],
         set_={
-            "quantity": FarmCodexEntry.quantity + stmt.excluded.quantity,
-            "best_quality": func.greatest(FarmCodexEntry.best_quality, stmt.excluded.best_quality),
+            "quantity": t.c.quantity + stmt.excluded.quantity,
+            "best_quality": func.greatest(t.c.best_quality, stmt.excluded.best_quality),
         },
     )
-    session.execute(stmt)
+    txcache.core_execute(session, stmt)  # 不觸發 ORM flush
 
 
 def entries(session: Session, farm_id: int) -> dict[str, FarmCodexEntry]:

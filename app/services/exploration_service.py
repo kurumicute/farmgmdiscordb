@@ -5,11 +5,13 @@
 等級、進行中的探險、素材與倉庫空間都在同一筆交易中檢查，重複點擊或並行請求不會重複發獎或重複扣料。
 """
 
+import logging
 from datetime import timedelta
 
 from app.game import balance, exploration, genetics, rules
 from app.game.errors import (
     AlreadyExistsError,
+    GameError,
     InsufficientItemsError,
     NotFoundError,
     ValidationError,
@@ -29,6 +31,9 @@ from app.services.ranch_service import RanchService
 
 INCUBATOR = "rare_incubator"
 
+
+
+logger = logging.getLogger(__name__)
 
 def _names(session, codes) -> dict[str, str]:
     names = catalog_repo.item_names(session)
@@ -363,13 +368,27 @@ class ExplorationService(RanchService):
             tools = {t.tool_code: t for t in items_repo.list_tools(session, farm.id) if t.enabled}
             if "auto_harvester" not in tools and "auto_processor" not in tools:
                 return ""
-            farm = self._locked_farm(session, player_id)
-            notes = []
-            if "auto_harvester" in tools:
-                notes.append(self._auto_harvest(session, farm, tools["auto_harvester"]))
-            if "auto_processor" in tools:
-                notes.append(self._auto_process(session, farm, tools["auto_processor"]))
-            return " ".join(n for n in notes if n)
+            if not self.in_batch():
+                return self._run_machine_tools(session, player_id, tools)
+            # 在面板讀取整頁的共用交易中：機器在 SAVEPOINT 裡執行，失敗只回滾機器的部分，頁面照常讀取
+            # （與原本「機器是獨立交易、失敗不影響面板」相同；下次開啟或換頁時再試）
+            try:
+                with session.begin_nested():
+                    return self._run_machine_tools(session, player_id, tools)
+            except GameError:
+                return ""
+            except Exception:
+                logger.exception("自動機器執行失敗（玩家 #%s）", player_id)
+                return ""
+
+    def _run_machine_tools(self, session, player_id: int, tools: dict) -> str:
+        farm = self._locked_farm(session, player_id)
+        notes = []
+        if "auto_harvester" in tools:
+            notes.append(self._auto_harvest(session, farm, tools["auto_harvester"]))
+        if "auto_processor" in tools:
+            notes.append(self._auto_process(session, farm, tools["auto_processor"]))
+        return " ".join(n for n in notes if n)
 
     def _auto_harvest(self, session, farm, tool) -> str:
         """收成成熟的作物；擁有收割機時才成熟的作物，即使已過乾枯時間也照樣收成（收割機會在成熟時處理）。"""

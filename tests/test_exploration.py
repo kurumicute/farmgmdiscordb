@@ -599,3 +599,33 @@ def test_auto_harvester_queries_plots_once(explorer, player_id, session_factory,
     finally:
         event.remove(engine, "before_cursor_execute", count)
     assert len(selects) == 1
+
+
+def test_machines_in_page_batch_use_savepoint(explorer, player_id, session_factory, clock, monkeypatch):
+    """面板讀取整頁時機器在同一筆交易的 SAVEPOINT 中執行：成功時頁面看得到結果；
+    失敗時只回滾機器的部分，頁面照常讀取。"""
+    explorer.plant_all(player_id, "wheat")
+    explorer.water_all(player_id)
+    owned(explorer, session_factory, player_id, "auto_harvester")
+    clock.advance(60)
+
+    def page():
+        return explorer.run_machines(player_id), explorer.get_farm_status(player_id)
+
+    note, status = explorer.run_batch(page)
+    assert "自動收割機收成 4 格" in note and all(p.state == PlotState.EMPTY for p in status.plots)
+    assert qty(explorer, player_id, "wheat") == 8  # 已提交
+
+    explorer.plant_all(player_id, "wheat")
+    explorer.water_all(player_id)
+    clock.advance(60)
+    original = explorer._auto_harvest
+
+    def broken(session, farm, tool):
+        original(session, farm, tool)  # 先收成（寫入），再失敗：SAVEPOINT 要把這些寫入回滾
+        raise RuntimeError("機器故障")
+
+    monkeypatch.setattr(explorer, "_auto_harvest", broken)
+    note, status = explorer.run_batch(page)
+    assert note == "" and all(p.state == PlotState.READY for p in status.plots)  # 頁面照常、作物還在
+    assert qty(explorer, player_id, "wheat") == 8  # 回滾：沒有多收

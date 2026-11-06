@@ -99,7 +99,11 @@ node --test tests/web/connection.test.js                               # 指定�
   面板 `_render` 的自動機器、簽到與讀取整頁合成一次執行緒工作（`_prepare`）；`act()` 經 `_work_then_prepare` 在同一次工作中
   先執行操作再預讀新畫面（重繪時頁面已改變就不用預讀結果；頁面讀取不可依賴操作後才重設的 picker／confirm）。
   讀取整頁（`run_batch`）另有讀取快取 `txcache.read_scope`／`read_memo`（不加鎖的找農場、作物／動物種類、工具、建築、加工訂單），
-  交易中任何寫入（ORM flush 或 `session.execute` 的 INSERT／UPDATE／DELETE）都會清空。固定場景圖第一次轉 256 色後快取（`scene_png`）。量測：`scripts/bot_stresstest.py 200 300`
+  交易中任何寫入（ORM flush 或 `session.execute` 的 INSERT／UPDATE／DELETE）都會清空。固定場景圖第一次轉 256 色後快取（`scene_png`）。
+  每筆交易紀錄都會走到的寫入（`transactions.add` 用 INSERT … RETURNING id、排行統計／圖鑑／倉庫的 upsert）經
+  `txcache.core_execute` 直接在連線上執行，不觸發 ORM autoflush（原本每寫一筆紀錄就 flush 一次）；只能用於不依賴
+  尚未寫入的 ORM 變更的語句。`transactions.add` 回傳 `TxRecord`（不是 ORM 物件）。自動機器在面板讀取整頁的同一筆交易中
+  以 SAVEPOINT 執行（`run_machines` 偵測 `in_batch()`），失敗只回滾機器的部分。量測：`scripts/bot_stresstest.py 200 300`
   2026-11-06 由 48.2 秒降到 31.0 秒（種滿 154→62 條 SQL、澆水 130→39、收成 243→77）。
 - **交易紀錄不變式**：所有資產變動都經 `GameService._record()` 寫入 `game_transactions`（含建立農場的初始金幣），因此全部 `gold_delta` 加總 = 全服金幣；`_record()` 同時更新排行用的 `farm_stats`／`farm_daily_stats`（`repositories/farm_stats.py`，不要繞過 `_record` 直接改金幣或販售）；管理員調整用 `admin_adjust`、排名獎勵用 `ranking_reward`。新增事件類型需同時改 `models.EVENT_TYPES`、`rules.EventType`／`EVENT_TYPE_LABELS`、Migration 的 CHECK 約束與 `web/app.js` 的 `EVENT_LABELS`。
 - **所屬群組轉移**：`farms.home_group_id` 只能經 `GameService.transfer_home_group`（7 天冷卻、需為目標群組成員）或 `AdminService.admin_transfer_farm`（必填原因，可 `SET LOCAL farmgm.admin_group_transfer = 'on'` 略過冷卻並寫 `admin_actions`）變更；觸發器 `farms_home_group_immutable`（Migration 0010）在資料庫層同樣檢查冷卻，不要移除。
