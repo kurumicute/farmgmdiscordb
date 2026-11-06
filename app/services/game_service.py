@@ -51,7 +51,7 @@ from app.repositories import pets as pets_repo
 from app.repositories import players as players_repo
 from app.repositories import steals as steals_repo
 from app.repositories import transactions as tx_repo
-from app.services import activity
+from app.services import activity, txcache
 from app.services.dto import (
     ActionResult,
     Backpack,
@@ -184,18 +184,33 @@ class GameService:
             raise ValidationError(f"{crop.name}已停用，不能購買種子或種植（已持有的作物仍可收成、販售）。")
         return crop
 
+    # ---------- 一鍵操作的交易內快取（說明見 services/txcache.py） ----------
+
+    @staticmethod
+    def _bulk(session: Session):
+        return txcache.bulk(session)
+
+    @staticmethod
+    def _memo(session: Session, key, compute: Callable[[], object]):
+        return txcache.memo(session, key, compute)
+
     def _active_events(self, session: Session) -> list:
-        return events_repo.active(session, self._clock.now())
+        return self._memo(session, "events", lambda: events_repo.active(session, self._clock.now()))
 
     @staticmethod
     def _genetics(session: Session) -> dict:
         """目前生效的品質與突變設定（最新版本）。"""
-        _version, settings = genetics_repo.current(session)
-        return settings
+        return GameService._memo(session, "genetics", lambda: genetics_repo.current(session)[1])
+
+    def _tool_enabled(self, session: Session, farm_id: int, tool_code: str) -> bool:
+        return self._memo(session, ("tool", farm_id, tool_code),
+                          lambda: items_repo.tool_enabled(session, farm_id, tool_code))
 
     @staticmethod
     def _ensure_space(session: Session, farm: Farm, incoming: int) -> None:
-        used = inventory_repo.total_quantity(session, farm.id)
+        # 一鍵收成時只查一次，之後由 _harvest_locked 以 txcache.adjust 累加
+        used = txcache.memo(session, ("warehouse_used", farm.id),
+                            lambda: inventory_repo.total_quantity(session, farm.id))
         if used + incoming > farm.warehouse_capacity:
             raise WarehouseFullError(f"倉庫空間不足：目前 {used}/{farm.warehouse_capacity}，需要再放入 {incoming} 個。")
 
@@ -216,11 +231,16 @@ class GameService:
 
     def _record(self, session: Session, farm: Farm, event: EventType, description: str, **kw) -> None:
         now = self._clock.now()
-        farm.updated_at = now
+        # 每筆交易只更新一次農場的 updated_at（每次都設會讓逐格操作每格多一條 UPDATE farms）
+        touched = session.info.setdefault("touched_farms", set())
+        if farm.id not in touched:
+            farm.updated_at = now
+            touched.add(farm.id)
         if "context_group_id" not in kw:
             ctx = self._context_group_id
             # 只有玩家確實是該群組成員時才記錄上下文，避免把操作歸到無關的群組
-            if ctx is not None and not groups_repo.is_member(session, ctx, farm.player_id):
+            if ctx is not None and not self._memo(session, ("member", ctx, farm.player_id),
+                                                  lambda: groups_repo.is_member(session, ctx, farm.player_id)):
                 ctx = None
             kw["context_group_id"] = ctx
         tx = tx_repo.add(
@@ -637,15 +657,16 @@ class GameService:
         free = event_rules.bonus(active, "free_water", crop.id)
         if free.value > 0:
             return label, self._water(session, farm, plot, crop, now, auto=True, reason=free)
-        if items_repo.tool_enabled(session, farm.id, balance.TOOL_AUTO_WATERER):
+        if self._tool_enabled(session, farm.id, balance.TOOL_AUTO_WATERER):
             return label, self._water(session, farm, plot, crop, now, auto=True)
         return label, None
 
     def _auto_plant(self, session: Session, farm: Farm) -> str:
         """自動播種機：從背包隨機挑選種子把所有空地種滿。未持有或停用時不做任何事，回傳空字串。"""
-        if not items_repo.tool_enabled(session, farm.id, balance.TOOL_AUTO_PLANTER):
+        if not self._tool_enabled(session, farm.id, balance.TOOL_AUTO_PLANTER):
             return ""
-        empty = [p for p in farms_repo.list_plots(session, farm.id) if p.crop_type_id is None]
+        # 一次鎖定全部土地再挑空地（同 _plots_in_state）
+        empty = [p for p in farms_repo.list_plots(session, farm.id, for_update=True) if p.crop_type_id is None]
         if not empty:
             return ""
         stock = {
@@ -653,16 +674,16 @@ class GameService:
             for c in crops_repo.list_all(session, active_only=True)
         }
         planted: dict[str, int] = {}
-        for plot in empty:
-            choices = [c for c, n in stock.items() if n > 0]
-            if not choices:
-                break
-            crop = self._pick(choices)
-            inventory_repo.remove(session, farm.id, rules.seed_item_code(crop.code), 1)
-            stock[crop] -= 1
-            plot = farms_repo.get_plot(session, farm.id, plot.plot_number, for_update=True)
-            self._plant(session, farm, plot, crop, source="自動播種機：")
-            planted[crop.name] = planted.get(crop.name, 0) + 1
+        with self._bulk(session):
+            for plot in empty:
+                choices = [c for c, n in stock.items() if n > 0]
+                if not choices:
+                    break
+                crop = self._pick(choices)
+                inventory_repo.remove(session, farm.id, rules.seed_item_code(crop.code), 1)
+                stock[crop] -= 1
+                self._plant(session, farm, plot, crop, source="自動播種機：")
+                planted[crop.name] = planted.get(crop.name, 0) + 1
         if not planted:
             return " 🤖 自動播種機：背包沒有種子可以種。"
         detail = "、".join(f"{name}×{n}" for name, n in planted.items())
@@ -671,7 +692,8 @@ class GameService:
     def _water(
         self, session: Session, farm: Farm, plot, crop: CropType, now, *, auto: bool = False, reason=None
     ) -> int:
-        earthworm = items_repo.effect_active(session, farm.id, balance.EFFECT_EARTHWORM, now)
+        earthworm = self._memo(session, ("effect", farm.id, balance.EFFECT_EARTHWORM),
+                               lambda: items_repo.effect_active(session, farm.id, balance.EFFECT_EARTHWORM, now))
         grow = event_rules.bonus(self._active_events(session), "grow_reduction_pct", crop.id)
         # 快速生長突變也只在澆水後才開始計時，不會繞過澆水與乾枯規則；溫室的減少 % 與限時活動相加
         seconds = genetics.grow_seconds(
@@ -739,18 +761,22 @@ class GameService:
         lost = min(wind.value, max(0, plot.remaining_quantity - 1))
         quantity = plot.remaining_quantity - lost
         # 貓咪趕走偷吃的老鼠：收成數量 +X%（只有主人收成時；被偷走的部分不會補回）
-        cat_bonus = pets.bonus_quantity(quantity, pets.bonus_pct(pets_repo.level(session, farm.id, pets.CAT)),
-                                        self._pet_rng())
+        cat = self._memo(session, ("pet", farm.id, pets.CAT), lambda: pets_repo.level(session, farm.id, pets.CAT))
+        cat_bonus = pets.bonus_quantity(quantity, pets.bonus_pct(cat), self._pet_rng())
         quantity += cat_bonus
-        auto_sell = items_repo.tool_enabled(session, farm.id, balance.TOOL_AUTO_SELLER)
+        auto_sell = self._tool_enabled(session, farm.id, balance.TOOL_AUTO_SELLER)
         if not auto_sell:
             # 倉庫空間不足時拒絕收成，作物保留在土地上，不會遺失（自動販售會立即賣出，不佔倉庫）
             self._ensure_space(session, farm, quantity)
         quality, mutation = plot.quality, plot.mutation
         item = genetics.produce_code(crop, mutation)
         name = genetics.produce_name(crop, mutation) + genetics_label(quality, mutation)
-        stolen = steals_repo.stolen_quantity(session, plot.id, plot.planting_no)
+        # 這株被偷走的數量（只用於訊息）：一鍵收成時一次查出整座農場目前每格的數量
+        stolen = self._memo(session, ("stolen", farm.id), lambda: steals_repo.stolen_by_current_plantings(
+            session, farm.id)).get(plot.id, 0)
         inventory_repo.add(session, farm.id, item, quantity, quality, mutation)
+        if not auto_sell:
+            txcache.adjust(session, ("warehouse_used", farm.id), quantity)
         plot_number = plot.plot_number
         farms_repo.clear(plot)  # 收成後土地清空，同一批作物不會再發放
         note = f"（已被偷走 {stolen} 個）" if stolen > 0 else ""
@@ -790,10 +816,11 @@ class GameService:
     # ---------- 一鍵操作（整批在同一筆交易中完成，只鎖一次農場） ----------
 
     def _plots_in_state(self, session: Session, farm: Farm, state: PlotState) -> list:
+        """先一次鎖定這座農場的全部土地再判斷狀態（一條 SELECT … FOR UPDATE；
+        原本先無鎖讀取再逐格加鎖，Session 會沿用無鎖讀到的舊值）。"""
         now = self._clock.now()
         return [
-            farms_repo.get_plot(session, farm.id, p.plot_number, for_update=True)
-            for p in farms_repo.list_plots(session, farm.id)
+            p for p in farms_repo.list_plots(session, farm.id, for_update=True)
             if rules.plot_state(p.crop_type_id, p.watered_at, p.ready_at, now) == state
         ]
 
@@ -825,10 +852,13 @@ class GameService:
                     )
             count = min(len(plots), have + bought)
             watered = 0
-            for plot in plots[:count]:
-                inventory_repo.remove(session, farm.id, item, 1)
-                _label, seconds = self._plant(session, farm, plot, crop)
-                watered += seconds is not None
+            # 種子一次扣完（have + bought ≥ count，一定扣得到）
+            if count and not inventory_repo.remove(session, farm.id, item, count):
+                raise InsufficientItemsError(f"{crop.name}種子不足。")
+            with self._bulk(session):
+                for plot in plots[:count]:
+                    _label, seconds = self._plant(session, farm, plot, crop)
+                    watered += seconds is not None
             text = f"在 {count} 格種下{crop.name}" + (f"（購買 {bought} 顆種子）" if bought else "")
             if count < len(plots):
                 reason = "金幣不夠" if crop.shop_buyable else "種子不夠"
@@ -846,7 +876,8 @@ class GameService:
             if not plots:
                 raise ValidationError("沒有需要澆水的土地。")
             now = self._clock.now()
-            seconds = [self._water(session, farm, p, crops_repo.get(session, p.crop_type_id), now) for p in plots]
+            with self._bulk(session):
+                seconds = [self._water(session, farm, p, crops_repo.get(session, p.crop_type_id), now) for p in plots]
             return ActionResult(
                 f"已為 {len(plots)} 格澆水，最快 {rules.format_duration(min(seconds))}後成熟。", farm.gold,
                 quantity=len(plots),
@@ -860,19 +891,20 @@ class GameService:
             if not plots:
                 raise ValidationError("目前沒有可收成的作物。")
             done, total, stopped = 0, 0, ""
-            for plot in plots:
-                try:
-                    _msg, quantity, _item = self._harvest_locked(
-                        session, farm, plot, crops_repo.get(session, plot.crop_type_id)
-                    )
-                except WarehouseFullError as exc:
-                    stopped = f" 還有 {len(plots) - done} 格沒收：{exc}"
-                    break
-                done += 1
-                total += quantity
-            if not done:
-                raise WarehouseFullError(stopped.strip())
-            auto = self._auto_plant(session, farm)
+            with self._bulk(session):
+                for plot in plots:
+                    try:
+                        _msg, quantity, _item = self._harvest_locked(
+                            session, farm, plot, crops_repo.get(session, plot.crop_type_id)
+                        )
+                    except WarehouseFullError as exc:
+                        stopped = f" 還有 {len(plots) - done} 格沒收：{exc}"
+                        break
+                    done += 1
+                    total += quantity
+                if not done:
+                    raise WarehouseFullError(stopped.strip())
+                auto = self._auto_plant(session, farm)
             return ActionResult(f"收成 {done} 格，共 {total} 個作物。{stopped}{auto}", farm.gold, quantity=total)
 
     def clear_all_withered(self, player_id: int) -> ActionResult:
@@ -881,11 +913,12 @@ class GameService:
             plots = self._plots_in_state(session, farm, PlotState.WITHERED)
             if not plots:
                 raise ValidationError("沒有乾枯的作物。")
-            for plot in plots:
-                crop = crops_repo.get(session, plot.crop_type_id)
-                farms_repo.clear(plot)
-                self._record(session, farm, EventType.CLEAR, f"清除第 {plot.plot_number} 格乾枯的{crop.name}")
-            auto = self._auto_plant(session, farm)
+            with self._bulk(session):
+                for plot in plots:
+                    crop = crops_repo.get(session, plot.crop_type_id)
+                    farms_repo.clear(plot)
+                    self._record(session, farm, EventType.CLEAR, f"清除第 {plot.plot_number} 格乾枯的{crop.name}")
+                auto = self._auto_plant(session, farm)
             return ActionResult(f"已清除 {len(plots)} 格乾枯的作物。{auto}", farm.gold, quantity=len(plots))
 
     # ---------- 販售與擴建 ----------

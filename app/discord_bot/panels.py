@@ -289,12 +289,14 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
     async def _render(self, notice: str | None) -> discord.Embed:
         self.clear_items()
         self.files, self.image_digest = [], None  # 換頁時舊圖片也要移除
-        if self.page != "welcome":
-            notice = await self._run_machines(notice)
-            notice = await self._auto_checkin(notice)
         try:
-            # 整頁資料在同一筆交易中讀取（原本每個服務呼叫各開一筆）
-            data = await self.run(self.svc.run_batch, getattr(self, f"_load_{self.page}"))
+            notes, data, error = await self.run(self._prepare, getattr(self, f"_load_{self.page}"),
+                                                self.page != "welcome")
+            for note in notes:
+                if note:
+                    notice = f"{notice}\n{note}" if notice else note
+            if error is not None:
+                raise error
             embed = getattr(self, f"_build_{self.page}")(data)
         except Exception as exc:
             if not isinstance(exc, GameError):
@@ -321,39 +323,48 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         if state is not None and message is not None and self.is_dispatchable():
             state.store_view(self, message.id)
 
-    async def _run_machines(self, notice: str | None) -> str | None:
+    def _prepare(self, loader: Callable, farm_page: bool) -> tuple[list, object, Exception | None]:
+        """在執行緒中依序：自動機器 → 每日簽到 → 讀取整頁（一次排隊，原本是三次）。
+
+        回傳 (頂端提示, 頁面資料, 讀取錯誤)。機器與簽到各自是一筆交易，失敗不影響面板顯示；
+        讀取失敗時仍回傳前兩步的提示（例如剛簽到的獎勵），錯誤由呼叫端顯示。"""
+        notes = [self._checkin_note(), self._machines_note()] if farm_page else []
+        try:
+            # 整頁資料在同一筆交易中讀取（原本每個服務呼叫各開一筆）
+            return notes, self.svc.run_batch(loader), None
+        except Exception as exc:
+            return notes, None, exc
+
+    def _machines_note(self) -> str | None:
         """自動收割機／自動加工機在開啟或切換頁面時運作；失敗不影響面板顯示。"""
         try:
-            note = await self.run(self.svc.run_machines, self.player_id)
+            return self.svc.run_machines(self.player_id) or None
         except GameError:
-            return notice
+            return None
         except Exception:
             logger.exception("自動機器執行失敗（玩家 #%s）", self.player_id)
-            return notice
-        if not note:
-            return notice
-        return f"{notice}\n{note}" if notice else note
+            return None
 
-    async def _auto_checkin(self, notice: str | None) -> str | None:
-        """開啟或切換頁面時自動每日簽到並在頂端顯示獎勵；失敗不影響面板顯示。"""
+    def _checkin_note(self) -> str | None:
+        """開啟或切換頁面時自動每日簽到，回傳頂端顯示的獎勵；今天已簽到後到台灣隔天 00:00 前不再查詢。"""
         if not self.auto_checkin or (self.checkin_next_at and datetime.now(UTC) < self.checkin_next_at):
-            return notice
+            return None
         try:
-            result = await self.run(self.svc.daily_checkin, self.player_id)
+            result = self.svc.daily_checkin(self.player_id)
         except Exception as exc:
             if not isinstance(exc, GameError):
                 logger.exception("每日簽到失敗（玩家 #%s）", self.player_id)
-            return notice
+            return None
         if result is None:
-            return notice
+            return None
         self.checkin_next_at = result["next_at"]
         if not result["new"]:
-            return notice
+            return None
         note = (f"📅 每日簽到成功！連續第 **{result['streak']}** 天，獲得 {result['reward_text']}。"
                 "（簽到紀錄在「🏅 成就圖鑑」）")
         if result["converted"]:
             note += "（倉庫已滿，道具改發等值金幣）"
-        return f"{note}\n{notice}" if notice else note
+        return note
 
     async def _in_time(self, interaction: discord.Interaction, coro, budget: float | None = None):
         """執行 coro；尚未回覆互動且 budget 秒（預設 DIRECT_REPLY_SECONDS）內沒完成時先 defer，之後改編輯原訊息。"""

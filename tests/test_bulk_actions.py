@@ -56,3 +56,20 @@ def test_clear_all_withered(service, player_id, clock):
     clock.advance(60 + balance.WITHER_SECONDS + 1)
     assert "已清除 4 格" in service.clear_all_withered(player_id).message
     assert states(service, player_id) == [PlotState.EMPTY] * 4
+
+
+def test_harvest_all_quest_completes_mid_loop(session_factory, clock, home_group, player_id):
+    """一鍵收成時任務清單只查一次：中途達標完成後，後面幾格不再計入（與逐格重查的結果相同）。"""
+    from datetime import timedelta
+
+    admin = AdminService(session_factory, clock)
+    admin.create_quest("root", group_id=home_group, name="收成任務", quest_type="harvest", target=3,
+                       reward_mode="fixed", reward_type="gold", reward_amount=10,
+                       starts_at=clock.now(), ends_at=clock.now() + timedelta(days=1))
+    svc = admin.in_group_context(home_group)
+    svc.plant_all(player_id, "wheat")  # 4 格，每格 2 個
+    svc.water_all(player_id)
+    clock.advance(61)
+    assert svc.harvest_all(player_id).quantity == 8
+    quest = admin.group_quests(home_group, player_id)[0]
+    assert quest["completed_at"] is not None and quest["progress"] == 4  # 第 2 格達標，第 3、4 格不計

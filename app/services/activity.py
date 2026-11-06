@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.db.models import Farm, GameTransaction
 from app.game import rules
 from app.repositories import community as community_repo
+from app.services import txcache
 
 # 可能影響任務或競賽的事件類型；其他事件直接略過，不做額外查詢
 SCORING_EVENTS = {"harvest", "sell", "upgrade", "build", "collect_animal", "defended"}
@@ -32,7 +33,12 @@ def on_event(session: Session, farm: Farm, tx: GameTransaction) -> None:
         return
     now = tx.created_at
 
-    for quest in community_repo.open_quests_for_event(session, group_id, now):
+    quests = txcache.memo(session, ("quests", group_id),
+                          lambda: community_repo.open_quests_for_event(session, group_id, now))
+    for quest in quests:
+        # 快取的清單：迴圈中已達標完成、或時間已過的任務不再計入（與重新查詢的結果相同）
+        if quest.status != "active" or not quest.starts_at <= now < quest.ends_at:
+            continue
         amount = rules.quest_amount(
             quest.quest_type, quest.metric, quest.item_filter, tx.event_type, tx.item_code, tx.quantity, tx.gold_delta
         )
@@ -45,7 +51,10 @@ def on_event(session: Session, farm: Farm, tx: GameTransaction) -> None:
                 quest.status = "completed"
                 quest.completed_at = now
 
-    for comp in community_repo.open_competitions_for_event(session, now):
+    comps = txcache.memo(session, "competitions", lambda: community_repo.open_competitions_for_event(session, now))
+    for comp in comps:
+        if comp.status != "active" or not comp.starts_at <= now < comp.ends_at:
+            continue
         points = rules.competition_points(comp.comp_type, tx.event_type, tx.quantity, tx.gold_delta)
         if points > 0:
             community_repo.add_competition_contribution(session, comp.id, group_id, farm.player_id, tx.id, points, now)

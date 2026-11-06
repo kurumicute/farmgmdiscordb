@@ -1,7 +1,7 @@
 """農場面板的長期進度頁面（FarmPanel 的 mixin）：成就與圖鑑總覽、成就、稱號、圖鑑。
 
 - 總覽頁「🏅 成就圖鑑」按鈕進入 progress（總覽），再分到成就、稱號與圖鑑；不使用圖片。
-- 每日簽到在開啟面板時自動完成（panels._auto_checkin），這裡只顯示連續天數。
+- 每日簽到在開啟面板時自動完成（panels._checkin_note），這裡只顯示連續天數。
 """
 
 import discord

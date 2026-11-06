@@ -8,7 +8,7 @@
 環境變數 WB_DB_CONTAINER 可指定要取樣 CPU／記憶體的 PostgreSQL 容器（預設 farmgm-postgres-1）。
 
 每位玩家：開面板 → 世界 Boss（介紹區）→ 進入戰鬥區 → 捐獻物資 → 作物 ×5 確認 → 素材 ×5「連點兩下確認」
-→ 回戰鬥區 → 回介紹區 → 排行榜 → 回介紹區，
+→ 回戰鬥區 → 目前排行 → 回戰鬥區 → 回介紹區 → 上一場排行榜 → 回介紹區，
 接著以同一個 request_id 同時送出兩次捐獻（模擬網路重送）。全部捐完後管理員結束活動，每位玩家同時領獎兩次。
 時鐘固定（ManualClock），因此 HP 只受捐獻的立即傷害影響，可以精確比對。
 
@@ -227,8 +227,10 @@ async def player(cmds, runner, uid, gid, group_id, event_id):
         BOSS_UPLOADS[uid] = BOSS_UPLOADS.get(uid, 0) + msg.uploads - before
         DUP["panel_double"] += 1
     await click("回戰鬥區", "切換頁面")
+    await click("目前排行", "目前排行")  # 戰鬥區：這一場的即時排行（不附圖）
+    await click("回戰鬥區", "切換頁面")
     await click("回介紹區", "切換頁面")
-    await click("查看排行榜", "排行榜")
+    await click("上一場排行榜", "上一場排行")  # 介紹區：上一場（最近一場已結束）的排行
     await click("回介紹區", "切換頁面")
     await click("更新狀態", "更新狀態")
 

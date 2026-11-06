@@ -92,6 +92,12 @@ node --test tests/web/connection.test.js                               # 指定�
 - **Discord Bot**（`app/discord_bot/`）：`commands.py` 從互動取得 User／Guild ID（不接受玩家輸入的 ID），以 `SocialService.external_context` 對應群組與玩家，再用 `CommandHandler.execute(args)` 重用 CMD 的服務呼叫與文字輸出（參數以清單傳入，不經字串解析）；新增 Discord 指令時沿用此方式，並讓 `tests/test_discord_bot.py::test_every_command_maps_to_services` 通過。服務在 `runner.ServiceRunner` 的執行緒池執行（不可在事件迴圈直接呼叫），`RetryingService` 只重試 40P01／40001；2 秒內未完成先 `defer`。
 - **服務繼承鏈**：`GameService` → `RanchService` → `ExplorationService`（山洞探索、機器、假幣）→ `FishingService`（釣魚）→ `SocialService` → `CommunityService` → `RankingService` → `WorldBossService`（世界 Boss）→ `ProgressService`（每日簽到、圖鑑、成就與稱號）→ `AdminService`。子類別的私有方法會覆蓋父類別同名方法，新增前先 `grep "def <名稱>(" app/services/*.py`。CLI 使用 `RankingService`；網站 `app.state.social_service` 是 `AdminService`；`MonitorService` 獨立且所有查詢在 `SET TRANSACTION READ ONLY` 中執行。服務方法只收基本型別，不依賴 CMD／FastAPI／Discord（玩家以 `external_platform`/`external_user_id` 對應，Discord ID 一律字串）。
 - **交易與併發**：每個公開服務方法 = 一筆 DB 交易（`self._transaction()`）；改變資產前先以 `farms_repo.get_by_player(..., for_update=True)`（`_locked_farm`）鎖農場列。重複發獎／重複偷菜等由資料庫 UNIQUE／CHECK 約束做最後防線。面板的 `_load_*` 經 `run_batch` 在同一筆交易中執行（`_transaction()` 偵測到共用交易時沿用，其中任何例外都會回滾整批；`RetryingService` 在共用交易中不重試單一方法，改由外層重試整個 `run_batch`）。遊戲規則錯誤皆為 `app.game.errors.GameError` 子類別（訊息可直接給玩家；API 轉成 400／404）。
+- **一鍵操作的交易內快取**（`services/txcache.py`）：種滿／全部澆水／收成／清除與自動播種以 `self._bulk(session)` 包住逐格迴圈，
+  期間 `_memo` 讓品質設定、限時活動、工具、蚯蚓、群組成員、貓等級、倉庫用量（收成後 `txcache.adjust` 累加）、被偷數量、
+  進行中的任務與競賽（`activity.on_event`，迴圈中已完成或過期的會跳過）只查一次；只用於迴圈中不會被修改的資料，
+  新增快取項目時要確認這點。`_plots_in_state` 一次 `SELECT … FOR UPDATE` 鎖全部土地；`_record` 每筆交易只寫一次 `farms.updated_at`。
+  面板 `_render` 的自動機器、簽到與讀取整頁合成一次執行緒工作（`_prepare`）。量測：`scripts/bot_stresstest.py 200 300`
+  2026-11-06 由 48.2 秒降到 31.0 秒（種滿 154→62 條 SQL、澆水 130→39、收成 243→77）。
 - **交易紀錄不變式**：所有資產變動都經 `GameService._record()` 寫入 `game_transactions`（含建立農場的初始金幣），因此全部 `gold_delta` 加總 = 全服金幣；`_record()` 同時更新排行用的 `farm_stats`／`farm_daily_stats`（`repositories/farm_stats.py`，不要繞過 `_record` 直接改金幣或販售）；管理員調整用 `admin_adjust`、排名獎勵用 `ranking_reward`。新增事件類型需同時改 `models.EVENT_TYPES`、`rules.EventType`／`EVENT_TYPE_LABELS`、Migration 的 CHECK 約束與 `web/app.js` 的 `EVENT_LABELS`。
 - **所屬群組轉移**：`farms.home_group_id` 只能經 `GameService.transfer_home_group`（7 天冷卻、需為目標群組成員）或 `AdminService.admin_transfer_farm`（必填原因，可 `SET LOCAL farmgm.admin_group_transfer = 'on'` 略過冷卻並寫 `admin_actions`）變更；觸發器 `farms_home_group_immutable`（Migration 0010）在資料庫層同樣檢查冷卻，不要移除。
 - **任務／競賽計分**：`_record()` 在同一交易中呼叫 `services/activity.on_event`；只有 `context_group_id`（操作所在群組，由 `in_group_context()` 設定）等於農場 `home_group_id`（轉移受冷卻保護，見上）時才計分。
@@ -121,7 +127,7 @@ node --test tests/web/connection.test.js                               # 指定�
   畫面持有面板的鎖（`_lock()`，依事件迴圈建立），連點兩下不會交錯重繪。
 - **每日簽到**：規則與獎勵只在 `game/checkin.py`（台灣日期、7 天一輪、連續天數中斷歸 1）；服務 `services/progress_service.py`
   （`ProgressService.daily_checkin`，`(farm_id, day)` 唯一，先不鎖檢查、要發獎時才鎖農場並再確認；道具放不進倉庫改發等值金幣）。
-  面板 `_render` 在 `_run_machines` 後呼叫 `_auto_checkin`（開啟或換頁就簽到，結果顯示在頂端；台灣隔天 00:00 前不再查詢），
+  面板 `_render` 經 `_prepare` 在同一次執行緒工作中依序呼叫 `_checkin_note`、`_machines_note` 與 `run_batch`（開啟或換頁就簽到，結果顯示在頂端；台灣隔天 00:00 前不再查詢），
   連續天數顯示在「🏅 成就圖鑑」（總覽不顯示）。`checkin_reward` 列入 `ranking.NET_GOLD_EXCLUDED`。測試預設關閉（conftest 的 `no_auto_checkin`），
   簽到測試以 `monkeypatch.setattr(FarmPanel, "auto_checkin", True)` 開啟。
 - **圖鑑／成就／稱號**：圖鑑 `farm_codex` 由 `_record()` 在 `codex_repo.CODEX_EVENTS`（收成、偷菜、收集動物產品、領取加工品）時 upsert，

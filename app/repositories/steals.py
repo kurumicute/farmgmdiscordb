@@ -81,6 +81,17 @@ def stolen_quantity(session: Session, plot_id: int, planting_no: int) -> int:
     return int(session.scalar(stmt) or 0)
 
 
+def stolen_by_current_plantings(session: Session, farm_id: int) -> dict[int, int]:
+    """整座農場每格「目前這株作物」被成功偷走的總數：{plot_id: 數量}（沒被偷的不列出）。"""
+    stmt = (
+        select(StealRecord.plot_id, func.sum(StealRecord.quantity))
+        .join(FarmPlot, (FarmPlot.id == StealRecord.plot_id) & (FarmPlot.planting_no == StealRecord.planting_no))
+        .where(FarmPlot.farm_id == farm_id, StealRecord.outcome == "success")
+        .group_by(StealRecord.plot_id)
+    )
+    return {plot_id: int(qty) for plot_id, qty in session.execute(stmt)}
+
+
 def candidate_plots(
     session: Session,
     group_id: int,

@@ -37,6 +37,7 @@ def reset_cache() -> None:
     _cache.clear()
     world_boss_png.cache_clear()
     file_png.cache_clear()
+    preset_with_pets_png.cache_clear()
 
 
 def img(rel: str) -> Image.Image:
@@ -154,8 +155,9 @@ def farm_png(plots: list[dict], pets: dict | None = None) -> bytes:
     field = manifest()["field"]
     plots = plots[:field["slots"]]  # 最多畫 16 格（超過上限的舊農場只畫前 16 格）
     hit = preset_for(plots)
-    if hit and not hit[1] and not pets:
-        return file_png(hit[0])
+    if hit and not hit[1]:
+        # 預先產生的圖：沒有寵物直接用快取；有寵物時依「有哪幾隻」快取（圖上不畫等級）
+        return preset_with_pets_png(hit[0], tuple(sorted(pets))) if pets else file_png(hit[0])
     if hit:  # 預先產生的圖（+ 補標記）
         canvas = img(hit[0]).copy()
         if hit[1]:
@@ -167,6 +169,12 @@ def farm_png(plots: list[dict], pets: dict | None = None) -> bytes:
         for k, plot in enumerate(plots):  # 第 k 塊土地放第 k 格（plot_number 可能不連續）
             draw_plot(canvas, field["cells"][k]["rect"], plot)
     return encode(with_pets(canvas, pets) if pets else canvas)
+
+
+@functools.lru_cache(maxsize=512)
+def preset_with_pets_png(rel: str, pet_codes: tuple[str, ...]) -> bytes:
+    """預先產生的農田圖加上寵物（寵物組合只有幾種，快取後不必每次重新合成）。"""
+    return encode(with_pets(img(rel).copy(), dict.fromkeys(pet_codes, 0)))
 
 
 def with_pets(field_canvas: Image.Image, pets: dict) -> Image.Image:
