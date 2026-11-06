@@ -611,6 +611,7 @@ class FishingPages:
         self._equip_select(d["items"], row=2)
         self.button("農場商店", self._goto_farm_shop, emoji="🌾", row=4)
         self.button("釣具商店", self._noop, emoji="🎣", row=4, style=discord.ButtonStyle.primary, disabled=True)
+        self.nav("特賣與升級", "shop_special", emoji="🎁", row=4)
         self.nav("釣魚中心", "fishing", emoji="🎣", row=4)
         self.nav("回總覽", "main", emoji="🏠", row=4)
         return e

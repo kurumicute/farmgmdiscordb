@@ -83,9 +83,10 @@ GROUP_TRANSFER_COOLDOWN_SECONDS = 7 * 24 * 3600
 GROUP_TRANSFER_REASON_MAX_LEN = 200
 
 # ---------- 道具 ----------
-FERTILIZER_TIME_FACTOR = 0.75  # 化肥：剩餘生長時間減少 25%
+FERTILIZER_TIME_FACTOR = 0.85  # 化肥：剩餘生長時間減少 15%（2026-11-06 由 25% 調降）
 EARTHWORM_DURATION_SECONDS = 3 * 24 * 3600  # 蚯蚓效果持續 3 天；有效期間再次使用再延長 3 天
-EARTHWORM_GROW_MULTIPLIER = 0.75  # 蚯蚓有效期間澆水的作物，生長時間 ×0.75
+EARTHWORM_GROW_MULTIPLIER = 0.85  # 蚯蚓有效期間澆水的作物，生長時間 ×0.85（2026-11-06 由 ×0.75 調降）
+FERTILIZER_PCT = round((1 - FERTILIZER_TIME_FACTOR) * 100)  # 說明文字用
 
 ITEM_FERTILIZER = "fertilizer"
 ITEM_EARTHWORM = "earthworm"
@@ -99,13 +100,14 @@ EFFECT_EARTHWORM = "earthworm"
 # code: (名稱, 價格, 種類, 說明, 別名)
 ITEMS = {
     ITEM_FERTILIZER: (
-        "化肥", 30, "consumable", "用於生長中的農田，剩餘生長時間減少 25%（每次種植限用一次）", ("化肥",)
+        "化肥", 30, "consumable", f"用於生長中的農田，剩餘生長時間減少 {FERTILIZER_PCT}%（每次種植限用一次）",
+        ("化肥",)
     ),
     ITEM_EARTHWORM: (
         "人工養殖蚯蚓",
         300,
         "consumable",
-        "使用後 3 天內澆水的作物，生長時間 ×0.75（效果期間再次使用可再延長 3 天）",
+        f"使用後 3 天內澆水的作物，生長時間 ×{EARTHWORM_GROW_MULTIPLIER}（效果期間再次使用可再延長 3 天）",
         ("蚯蚓", "人工養殖蚯蚓"),
     ),
     TOOL_AUTO_WATERER: ("自動澆水器", 3500, "tool", "永久工具：啟用時種植後自動澆水", ("澆水器", "自動澆水器")),

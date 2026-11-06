@@ -28,6 +28,7 @@ from app.discord_bot import farm_image
 from app.discord_bot.fishing_panel import FishingPages, fish_line
 from app.discord_bot.progress_panel import ProgressPages
 from app.discord_bot.runner import player_message
+from app.discord_bot.special_shop_panel import SpecialShopPages
 from app.discord_bot.world_boss_panel import WorldBossPages
 from app.game import balance, exploration, rules
 from app.game.errors import GameError, ValidationError
@@ -192,7 +193,7 @@ class RenameModal(discord.ui.Modal):
 # ---------- 面板 ----------
 
 
-class FarmPanel(FishingPages, WorldBossPages, ProgressPages, discord.ui.View):
+class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, discord.ui.View):
     """一個玩家的私密農場面板。頁面內容每次都重新從資料庫讀取，網站或其他介面的修改會立即反映。"""
 
     auto_checkin = True  # 開啟面板時自動每日簽到（測試預設關閉，避免改變其他測試的金幣與庫存）
@@ -797,8 +798,9 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, discord.ui.View):
                 await self.act(interaction, lambda: self.svc.use_fertilizer(self.player_id, int(n)).message)
 
             self.select(
-                f"🧪 施化肥（持有 {fert}，剩餘時間減半）…",
-                [(f"#{p.plot_number} {p.crop_name}", str(p.plot_number), "成熟時間減半", "🧪") for p in growing],
+                f"🧪 施化肥（持有 {fert}，剩餘時間 -{balance.FERTILIZER_PCT}%）…",
+                [(f"#{p.plot_number} {p.crop_name}", str(p.plot_number), f"剩餘時間 -{balance.FERTILIZER_PCT}%", "🧪")
+                 for p in growing],
                 fertilize, row=2,
             )
         worms = next((x.quantity for x in bp.consumables if x.code == balance.ITEM_EARTHWORM), 0)
@@ -932,7 +934,8 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, discord.ui.View):
         events = [f"🔥 **{ev['name']}**{'（限' + ev['crop_name'] + '）' if ev['crop_name'] else ''}"
                   f"\n　{ev['effects_text']}" for ev in d["events"]]
         e = discord.Embed(title="🏪 ✦ 農場商店 ✦", color=GOLD, description=sections(
-            f"💰 你的金幣：**{money(d['gold'])}**　｜　🎣 釣具在「釣具商店」分頁",
+            f"💰 你的金幣：**{money(d['gold'])}**　｜　🎣 釣具在「釣具商店」分頁"
+            "　｜　🎁 溫室、每週特賣、稱號在「特賣與升級」",
             ("🌰 種子", seeds, "\n\n"),
             ("🧪 道具", consumables, "\n\n"),
             ("📦 倉庫", [warehouse]),
@@ -997,6 +1000,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, discord.ui.View):
         # 商店分成兩個分頁：農場商店（種子、道具、工具）與釣具商店
         self.button("農場商店", self._noop, emoji="🌾", row=4, style=discord.ButtonStyle.primary, disabled=True)
         self.nav("釣具商店", "fish_shop", emoji="🎣", row=4)
+        self.nav("特賣與升級", "shop_special", emoji="🎁", row=4, style=discord.ButtonStyle.success)
         self._nav_back()
         self.attach_image(e, d["image"])
         return e
@@ -2190,7 +2194,9 @@ def help_embed() -> discord.Embed:
     e.add_field(name="🌱 種田", inline=False, value=(
         "「🌱 農田」選作物會種滿空地（種子不夠會自動買）→「💧 全部澆水」→ 等成熟 →「🧺 全部收成」→「💰 販售」。\n"
         f"農田最多 {balance.MAX_PLOTS} 格。成熟後 16 小時沒收成會乾枯。\n"
-        "化肥讓剩餘時間減半；蚯蚓讓之後澆水的作物長得更快；自動澆水器種下就澆水。"))
+        f"化肥讓剩餘時間減少 {balance.FERTILIZER_PCT}%；"
+        f"蚯蚓讓之後澆水的作物生長時間 ×{balance.EARTHWORM_GROW_MULTIPLIER}；"
+        "自動澆水器種下就澆水。溫室每一級讓生長時間再少一些（商店購買）。"))
     e.add_field(name="🐔 養殖與加工", inline=False, value=(
         "先建造畜舍再買動物，餵食後等待生產再收集。磨坊、烘焙坊、果醬工坊可以把作物加工成更值錢的商品。"))
     e.add_field(name="🥷 偷菜與防守", inline=False, value=(

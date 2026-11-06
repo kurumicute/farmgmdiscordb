@@ -183,3 +183,18 @@ def test_guide_has_checkin_achievements_and_codex(session_factory):
     assert [x["day"] for x in p["checkin"]] == list(range(1, checkin.CYCLE_DAYS + 1))
     assert len(p["achievements"]) == len(achievements.ACHIEVEMENTS)
     assert any(a["title"] == "傳說農夫" for a in p["achievements"]) and "魚類" in p["codex"]
+
+
+def test_guide_has_special_shop(session_factory):
+    """特賣與升級：溫室價格、本週特賣與稱號商店由 /api/guide 提供，頁面有對應欄位。"""
+    from app.game import special_shop
+
+    c = client(session_factory)
+    page = c.get("/").text
+    for slot in ('id="special-shop"', 'id="g-weekly"', 'id="g-title-shop"', 'id="g-gh-prices"', "上一場排行榜"):
+        assert slot in page
+    sp = c.get("/api/guide").json()["special_shop"]
+    assert sp["greenhouse"]["prices"] == list(special_shop.GREENHOUSE_PRICES)
+    assert [t["title"] for t in sp["titles"]] == [t for t, _p in special_shop.TITLE_SHOP]
+    offers = sp["weekly"]["offers"]
+    assert len(offers) == special_shop.NORMAL_DEALS_PER_WEEK + 1 and sum(o["rare"] for o in offers) == 1

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.clock import TAIPEI_TZ, Clock, SystemClock
 from app.db.models import CropType, Farm, FarmEffect
-from app.game import balance, exploration, genetics, rules
+from app.game import balance, exploration, genetics, rules, special_shop
 from app.game import events as event_rules
 from app.game.errors import (
     AlreadyExistsError,
@@ -669,12 +669,14 @@ class GameService:
     ) -> int:
         earthworm = items_repo.effect_active(session, farm.id, balance.EFFECT_EARTHWORM, now)
         grow = event_rules.bonus(self._active_events(session), "grow_reduction_pct", crop.id)
-        # 快速生長突變也只在澆水後才開始計時，不會繞過澆水與乾枯規則
+        # 快速生長突變也只在澆水後才開始計時，不會繞過澆水與乾枯規則；溫室的減少 % 與限時活動相加
         seconds = genetics.grow_seconds(
-            crop.grow_seconds, plot.mutation, earthworm, self._genetics(session), grow.value
+            crop.grow_seconds, plot.mutation, earthworm, self._genetics(session),
+            grow.value + special_shop.greenhouse_pct(farm.greenhouse_level),
         )
         farms_repo.water(plot, now, rules.ready_time(now, seconds))
         extra = ("（蚯蚓加速）" if earthworm else "") + ("（快速生長）" if plot.mutation == "fast" else "")
+        extra += f"（溫室 -{special_shop.greenhouse_pct(farm.greenhouse_level)}%）" if farm.greenhouse_level else ""
         applied = event_rules.merge_applied(grow, *([reason] if reason else []))
         source = "免澆水活動" if reason else ("自動澆水器" if auto else "澆水")
         self._record(
@@ -994,6 +996,30 @@ class GameService:
             return ActionResult(
                 f"倉庫擴大為 {farm.warehouse_capacity} 格，花費 {price} 金幣。{tail}", farm.gold, -price,
                 balance.WAREHOUSE_EXPANSION_CODE, 1,
+            )
+
+    def upgrade_greenhouse(self, player_id: int) -> ActionResult:
+        """溫室升級：永久讓之後澆水的作物生長時間再少一些，價格逐級提高。"""
+        with self._transaction() as session:
+            farm = self._locked_farm(session, player_id)
+            price = special_shop.greenhouse_price(farm.greenhouse_level)
+            if price is None:
+                raise ValidationError(f"溫室已經是最高等級 {special_shop.GREENHOUSE_MAX_LEVEL} 級。")
+            if farm.gold < price:
+                raise InsufficientGoldError(f"金幣不足：溫室升級需要 {price}，目前只有 {farm.gold}。")
+            farm.gold -= price
+            farm.greenhouse_level += 1
+            pct = special_shop.greenhouse_pct(farm.greenhouse_level)
+            self._record(
+                session, farm, EventType.BUY_ITEM,
+                f"溫室升到 {farm.greenhouse_level} 級（生長時間 -{pct}%），金幣 -{price}",
+                item_code=special_shop.GREENHOUSE_CODE, quantity=1, gold_delta=-price,
+            )
+            nxt = special_shop.greenhouse_price(farm.greenhouse_level)
+            tail = f"下一級需要 {nxt:,} 金幣。" if nxt else "已達最高等級。"
+            return ActionResult(
+                f"🏡 溫室升到 {farm.greenhouse_level} 級，之後澆水的作物生長時間 -{pct}%。{tail}", farm.gold, -price,
+                special_shop.GREENHOUSE_CODE, 1,
             )
 
     # ---------- 賭場 ----------

@@ -1,9 +1,10 @@
 """農場面板的世界 Boss 頁面（FarmPanel 的 mixin），分成兩個區域：
 
 - 介紹區（boss、boss_board、boss_help）：附固定圖（farm/scenes/world_boss.png，由 dragon.png 縮小），
-  顯示 Boss 簡介、活動說明、排行榜與「⚔️ 進入（Boss 名稱）」；
+  顯示 Boss 簡介、活動說明、上一場的排行榜（boss_board）與「⚔️ 進入（Boss 名稱）」；
   區域內換頁沿用訊息上的附件（FarmPanel._attachments 比對雜湊）。
-- 戰鬥區（boss_battle、boss_donate）：不附圖片，只有數值面板（HP、補給、戰況、個人貢獻）與捐獻流程，
+- 戰鬥區（boss_battle、boss_donate、boss_live_board）：不附圖片，只有數值面板（HP、補給、戰況、個人貢獻）、
+  捐獻流程與這一場目前的排行榜，
   按鈕操作不必等圖片載入。
 - 活動資料（HP、時間、補給、捐獻、領獎）都在 PostgreSQL；面板每次切換頁面都重新讀取，Bot 重啟後重新開啟即可。
 - 看得到全服活動（所有伺服器的玩家一起打，例如固定每 2 天出現的深淵魔龍）與開啟面板的伺服器自己的活動
@@ -164,7 +165,7 @@ class WorldBossPages:
 
         self.button(f"進入{v['name']}", self._boss_battle_open, emoji="⚔️", style=discord.ButtonStyle.success,
                     row=0)
-        self.button("查看排行榜", board, emoji="🏆", row=0)
+        self.button("上一場排行榜", board, emoji="🏆", row=0)
         self.button("活動說明", self._boss_help_page, emoji="📖", row=0)
         self._boss_claim_button(v, row=0)
         self.button("更新狀態", self._boss_open, emoji="🔄", row=0)
@@ -225,6 +226,11 @@ class WorldBossPages:
         self._boss_claim_button(v, row=0)
         self.button("更新狀態", self._boss_battle_open, emoji="🔄", row=0)
         self.button("回介紹區", self._boss_open, emoji="🐉", row=0)
+
+        async def live_board(interaction):
+            await self.goto(interaction, "boss_live_board")
+
+        self.button("目前排行", live_board, emoji="🏆", row=1, style=discord.ButtonStyle.primary)
         self._nav_back(row=1)
         return e
 
@@ -439,29 +445,67 @@ class WorldBossPages:
 
     # ---------- 排行榜與說明 ----------
 
+    def _with_titles(self, board: dict | None) -> dict | None:
+        if board is None:
+            return None
+        return {**board, "titles": self.svc.player_titles([r["player_id"] for r in board["rows"]])}
+
     def _load_boss_board(self):
+        """介紹區：上一場（最近一場已結束）活動的排行。"""
         view = self._boss_view()
         if view is None:
             raise ValidationError("目前沒有世界 Boss 活動。")
-        board = self.svc.boss_leaderboard(self._boss_group(), self.player_id, view["event_id"])
-        return {**board, "titles": self.svc.player_titles([r["player_id"] for r in board["rows"]])}
+        board = self.svc.boss_last_leaderboard(self._boss_group(), self.player_id, view["event_id"])
+        return {"board": self._with_titles(board), "current_name": view["name"]}
 
     def _build_boss_board(self, d):
+        b = d["board"]
+        if b is None:
+            e = self._boss_embed(title="🏆 上一場貢獻排行", color=BOSS_GOLD, description=(
+                f"還沒有已結束的{d['current_name']}活動。\n這一場的即時排行請到「⚔️ 戰鬥區」→「🏆 目前排行」。"))
+            self.button("回介紹區", self._boss_open, emoji="🐉", row=0)
+            self._nav_back(row=0)
+            return e
+        result = "💀 已擊敗" if b["defeated"] else "🏁 時間到未擊敗"
+        e = self._board_embed(b, title=f"🏆 上一場貢獻排行｜{b['name']}",
+                              head=f"{result}　結束於 {_ts(b['ended_at'], 'f')}", image=True)
+        self.button("回介紹區", self._boss_open, emoji="🐉", row=0)
+        self._nav_back(row=0)
+        return e
+
+    def _load_boss_live_board(self):
+        """戰鬥區：這一場目前的排行。"""
+        view = self._boss_view(image=False)
+        if view is None:
+            raise ValidationError("目前沒有世界 Boss 活動。")
+        board = self.svc.boss_leaderboard(self._boss_group(), self.player_id, view["event_id"])
+        return self._with_titles(board)
+
+    def _build_boss_live_board(self, d):
+        e = self._board_embed(d, title=f"🏆 目前貢獻排行｜{d['name']}",
+                              head="這一場的即時排行（每次開啟或重新整理時更新）", image=False)
+        self.button("重新整理", self._boss_live_board_open, emoji="🔄", row=0)
+        self.button("回戰鬥區", self._boss_battle_open, emoji="⚔️", row=0)
+        self._nav_back(row=0)
+        return e
+
+    async def _boss_live_board_open(self, interaction) -> None:
+        await self.goto(interaction, "boss_live_board")
+
+    def _board_embed(self, d, *, title: str, head: str, image: bool) -> discord.Embed:
         lines = []
         for r in d["rows"]:
             medal = MEDALS.get(r["rank"]) or f"`{r['rank']:>2}.`"
-            title = d["titles"].get(r["player_id"])
-            name = f"{r['player_name']}〔{title}〕" if title else r["player_name"]
+            badge = d["titles"].get(r["player_id"])
+            name = f"{r['player_name']}〔{badge}〕" if badge else r["player_name"]
             lines.append(f"{medal} **{name}**　🏅 {r['points']:,} 分　📦 {r['quantity']:,} 個")
-        e = self._boss_embed(title=f"🏆 世界 Boss 貢獻排行｜{d['name']}", color=BOSS_GOLD,
-                          description="\n".join(lines) if lines else "還沒有人捐獻，成為第一個支援前線的人吧！")
+        body = "\n".join(lines) if lines else "還沒有人捐獻，成為第一個支援前線的人吧！"
+        e = self._boss_embed(image=image, title=title, color=BOSS_GOLD, description=f"{head}\n\n{body}")
         me = d["me"]
         e.add_field(name="🙋 我的名次", value=(
             f"第 {me['rank']} 名 / {d['participants']} 人　🏅 {me['points']:,} 分　📦 {me['quantity']:,} 個"
-            if me else "尚未捐獻"), inline=False)
+            if me else "沒有捐獻"), inline=False)
         e.set_footer(text="依貢獻積分排序；同分時先捐獻的玩家在前。")
-        self.button("回介紹區", self._boss_open, emoji="🐉", row=0)
-        self._nav_back(row=0)
         return e
 
     def _load_boss_help(self):

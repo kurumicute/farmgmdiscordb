@@ -160,7 +160,7 @@ def test_rolls_and_formulas():
     assert genetics.grow_seconds(7200, "fast", False, s) == balance.MIN_GROW_SECONDS  # 不會變成 0 或負數
     assert genetics.grow_seconds(10_000, "fast", False, s) == 2800
     assert genetics.grow_seconds(7200, "fast", True, s) == balance.MIN_GROW_SECONDS
-    assert genetics.grow_seconds(600, "none", True, s) == 450
+    assert genetics.grow_seconds(600, "none", True, s) == 510
 
 
 # ---------- 固定品質與重啟 ----------

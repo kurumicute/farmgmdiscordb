@@ -173,6 +173,22 @@
     if (g.rankings) renderRankings(g.rankings);
     if (g.world_boss) renderWorldBoss(g.world_boss);
     if (g.progress) renderProgress(g.progress);
+    if (g.special_shop) renderSpecialShop(g.special_shop);
+  }
+
+  // 特賣與升級：溫室價格、本週特賣（所有玩家相同）、稱號商店
+  function renderSpecialShop(sp) {
+    setText("g-gh-max", String(sp.greenhouse.prices.length));
+    setText("g-gh-pct", String(sp.greenhouse.per_level));
+    setText("g-gh-prices", sp.greenhouse.prices.map((p) => num.format(p)).join(" → "));
+    const w = sp.weekly;
+    fillRows("g-weekly", w.offers.length
+      ? w.offers.map((o) => [`${o.rare ? "🌟 " : "🌰 "}${o.name}`, num.format(o.price),
+        o.rare ? "平常不販售" : num.format(o.original_price), `${o.limit} 顆`])
+      : [["本週沒有特賣", "", "", ""]]);
+    const ends = new Date(w.ends_at);
+    setText("g-weekly-note", `本週特賣到 ${ends.toLocaleString("zh-TW", { dateStyle: "medium", timeStyle: "short" })} 為止，之後換新商品。`);
+    fillRows("g-title-shop", sp.titles.map((t) => [`🎖️ ${t.title}`, num.format(t.price)]));
   }
 
   // 每日簽到、成就與圖鑑（固定規則，沒有玩家資料）

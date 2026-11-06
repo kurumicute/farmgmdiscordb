@@ -22,7 +22,7 @@ def test_plot_state():
 
 def test_earthworm_multiplier():
     assert rules.grow_seconds_with_effects(600, False) == 600
-    assert rules.grow_seconds_with_effects(600, True) == 450
+    assert rules.grow_seconds_with_effects(600, True) == 510
 
 
 def test_remaining_seconds_rounds_up_and_never_negative():

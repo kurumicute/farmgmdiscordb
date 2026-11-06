@@ -182,6 +182,7 @@ class AnimalType(Base):
 class Farm(Base):
     __tablename__ = "farms"
     __table_args__ = (
+        CheckConstraint("greenhouse_level BETWEEN 0 AND 10", name="greenhouse_level_valid"),
         CheckConstraint("gold >= 0", name="gold_non_negative"),
         CheckConstraint("level >= 1", name="level_positive"),
         CheckConstraint("warehouse_capacity > 0", name="warehouse_capacity_positive"),
@@ -206,6 +207,8 @@ class Farm(Base):
     gold: Mapped[int] = mapped_column(BigInteger, nullable=False)
     warehouse_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str | None] = mapped_column(String(20))  # 目前選用的稱號（必須在 farm_titles 中），NULL 不顯示
+    # 溫室等級（0 = 沒有溫室）：每一級讓之後澆水的作物生長時間減少 special_shop.GREENHOUSE_PCT_PER_LEVEL%
+    greenhouse_level: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
 
@@ -1337,3 +1340,15 @@ class FarmTitle(Base):
     title: Mapped[str] = mapped_column(String(20), primary_key=True)
     source: Mapped[str] = mapped_column(String(40), nullable=False)
     obtained_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WeeklyShopPurchase(Base):
+    """每週特賣的購買量（每人每週每項限購）；week_start 是台灣時間的週一。"""
+
+    __tablename__ = "weekly_shop_purchases"
+    __table_args__ = (CheckConstraint("quantity > 0", name="quantity_positive"),)
+
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True)
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    item_code: Mapped[str] = mapped_column(String(64), primary_key=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)

@@ -148,7 +148,7 @@ def test_inventory_requires_player_and_shows_sections(cli, session_factory):
     assert "【種子】" in out and "小麥種子" in out and "商店售價 10" in out
     assert "【消耗型道具】" in out and "化肥" in out and "x 3" in out
     assert "自動澆水器：已永久持有，已啟用" in out
-    assert "人工養殖蚯蚓：有效中" in out and "剩餘 72 小時 0 分 0 秒" in out and "×0.75" in out
+    assert "人工養殖蚯蚓：有效中" in out and "剩餘 72 小時 0 分 0 秒" in out and "×0.85" in out
     assert "已自動澆水" in cli.handle("plant 1 wheat")
     assert "已停用" in cli.handle("tool off auto_waterer")
     assert "請記得澆水" in cli.handle("plant 2 wheat")

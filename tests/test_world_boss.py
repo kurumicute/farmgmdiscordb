@@ -613,12 +613,12 @@ def test_panel_donate_flow_and_double_click(cmds, game, clock):
     for text in ("深淵魔龍", "HP", "前往戰場", "我的參與"):
         assert text in p.text, text
     assert "後勤補給進度" not in p.text
-    assert {"進入深淵魔龍", "查看排行榜", "領取獎勵", "活動說明", "更新狀態"} <= set(p.labels())
+    assert {"進入深淵魔龍", "上一場排行榜", "領取獎勵", "活動說明", "更新狀態"} <= set(p.labels())
     p.click("進入深淵魔龍")
     for text in ("戰鬥區", "群組後勤補給進度", "糧食補給", "醫療補給", "戰鬥補給", "裝備補給", "前線戰況",
                  "個人貢獻", "HP"):
         assert text in p.text, text
-    assert {"捐獻物資", "領取獎勵", "更新狀態", "回介紹區"} <= set(p.labels())
+    assert {"捐獻物資", "領取獎勵", "更新狀態", "回介紹區", "目前排行"} <= set(p.labels())
     p.click("捐獻物資")
     p.choose("捐獻類別", "crop")
     p.choose("選擇物品", "0")
@@ -640,9 +640,12 @@ def test_panel_donate_flow_and_double_click(cmds, game, clock):
     assert game.boss_current(gid, p.panel.player_id)["me"]["quantity"] == 5
     p.click("回戰鬥區")
     assert "戰鬥區" in p.text and "貢獻積分 **15**" in p.text
+    p.click("目前排行")  # 戰鬥區：這一場目前的排行
+    assert "目前貢獻排行" in p.text and "阿明" in p.text and "15 分" in p.text
+    p.click("回戰鬥區")
     p.click("回介紹區")
-    p.click("查看排行榜")
-    assert "阿明" in p.text and "15 分" in p.text
+    p.click("上一場排行榜")  # 介紹區：上一場（還沒有已結束的活動）
+    assert "還沒有已結束" in p.text and "阿明" not in p.text
     p.click("回介紹區")
     p.click("活動說明")
     assert "補給類型與效果" in p.text and "獎勵制度" in p.text
@@ -650,6 +653,9 @@ def test_panel_donate_flow_and_double_click(cmds, game, clock):
     game.world_boss_action("admin", eid, "end")
     p.click("更新狀態")
     assert "已結束" in p.text
+    p.click("上一場排行榜")  # 這一場結束後就是「上一場」
+    assert "上一場貢獻排行" in p.text and "阿明" in p.text and "15 分" in p.text
+    p.click("回介紹區")
     p.click("領取獎勵")
     assert "領取「深淵魔龍」" in p.text
     assert "已領取" in p.text
@@ -916,7 +922,7 @@ def test_panel_boss_image_only_in_intro_area(cmds, game, clock):
     assert kw["embed"].image.url == "attachment://farm.png"
     for page in ("boss", "boss_board", "boss_help", "boss"):
         assert go(page) == [existing], page  # 介紹區同一張圖：沿用，不重新上傳
-    for page in ("boss_battle", "boss_donate", "boss_battle"):
+    for page in ("boss_battle", "boss_donate", "boss_live_board", "boss_battle"):
         assert go(page) == [], page  # 戰鬥區：不附圖片
         assert not p.panel.files
     assert go("boss") != [existing]  # 從戰鬥區回介紹區：重新附上圖片
@@ -987,3 +993,27 @@ def test_viewing_does_not_lock_or_write(game, clock, home_group, session_factory
     assert game.boss_claim(home_group, pid, eid).gold_delta > 0
     with session_factory() as s:
         assert s.get(WorldBossEvent, eid).status == "ended"
+
+
+def test_last_leaderboard_is_previous_finished_event(game, clock, home_group):
+    """介紹區的排行看上一場：目前這場進行中時看前一場已結束的；這場結束後看這場。"""
+    a = make_farmer(game, "阿明", home_group)
+    b = make_farmer(game, "小華", home_group)
+    first = make_boss(game, clock, home_group, hp=100_000, hours=1)
+    give(game, a, "carrot", 4)
+    donate(game, home_group, a, first, "crop", "carrot", 4)
+    assert game.boss_last_leaderboard(home_group, a, first) is None  # 第一場還在進行：沒有上一場
+    clock.advance(3600)  # 時間到（背景結算前也算已結束）
+    last = game.boss_last_leaderboard(home_group, a, first)
+    assert last["event_id"] == first and last["is_current"] and not last["defeated"]
+    assert [r["player_name"] for r in last["rows"]] == ["阿明"]
+    game.finalize_due_world_bosses()
+
+    second = make_boss(game, clock, home_group, hp=100_000, hours=72)
+    give(game, b, "carrot", 2)
+    donate(game, home_group, b, second, "crop", "carrot", 2)
+    prev = game.boss_last_leaderboard(home_group, b, second)
+    assert prev["event_id"] == first and not prev["is_current"]
+    assert [r["player_name"] for r in prev["rows"]] == ["阿明"] and prev["me"] is None
+    now = game.boss_leaderboard(home_group, b, second)  # 戰鬥區的目前排行
+    assert [r["player_name"] for r in now["rows"]] == ["小華"]

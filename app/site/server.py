@@ -32,7 +32,7 @@ from app.db.models import (
     WorldBossEvent,
     WorldBossSchedule,
 )
-from app.game import achievements, balance, checkin, exploration, fishing
+from app.game import achievements, balance, checkin, exploration, fishing, special_shop
 from app.game import events as event_rules
 from app.game import ranking as ranking_rules
 from app.game import world_boss as wb
@@ -248,6 +248,23 @@ def build_progress() -> dict:
     }
 
 
+def build_special_shop(session: Session, now: datetime) -> dict:
+    """商店「特賣與升級」：溫室價格、本週特賣（所有玩家相同）與稱號商店（沒有玩家資料）。"""
+    start = special_shop.week_start(now)
+    crops = [special_shop.CropRef(c.code, c.name, c.seed_price, c.shop_buyable)
+             for c in crops_repo.list_all(session, active_only=True)]
+    return {
+        "greenhouse": {"per_level": special_shop.GREENHOUSE_PCT_PER_LEVEL,
+                       "prices": list(special_shop.GREENHOUSE_PRICES)},
+        "weekly": {
+            "week_start": start.isoformat(), "ends_at": special_shop.week_ends_at(start).isoformat(),
+            "offers": [{"name": f"{o.crop_name}種子", "price": o.price, "original_price": o.original_price,
+                        "limit": o.limit, "rare": o.rare} for o in special_shop.weekly_offers(start, crops)],
+        },
+        "titles": [{"title": t, "price": p} for t, p in special_shop.TITLE_SHOP],
+    }
+
+
 def build_world_boss(session: Session, names: dict[str, str], now: datetime) -> dict:
     """世界 Boss 手冊：補給類型與效果、捐獻類別、積分規則、限制、獎勵、本場全服活動狀態，以及啟用中的固定出現排程
     （名稱、全服或伺服器、出現時間與獎勵；不含伺服器名稱或任何玩家資料）。
@@ -354,6 +371,7 @@ def build_guide(session: Session, now: datetime) -> dict:
         "fishing": build_fishing(session),
         "world_boss": build_world_boss(session, catalog_repo.item_names(session), now),
         "progress": build_progress(),
+        "special_shop": build_special_shop(session, now),
         "qualities": [
             {"name": label, "chance_pct": _pct(g["quality_bp"][code]), "price_mul": g["quality_price_pct"][code] / 100}
             for code, label in balance.QUALITIES.items()

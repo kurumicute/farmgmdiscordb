@@ -156,7 +156,7 @@ def test_genetics_event_formulas():
     assert genetics.grow_seconds(7200, "none", False, settings, 50) == 3600
     # 順序：事件減少 % 後再減快速生長秒數，最短 60 秒
     assert genetics.grow_seconds(7200, "fast", False, settings, 50) == balance.MIN_GROW_SECONDS
-    assert genetics.grow_seconds(60, "none", True, settings, 50) == 45  # 蚯蚓後已低於下限時，事件不會拉長
+    assert genetics.grow_seconds(60, "none", True, settings, 50) == 51  # 蚯蚓後已低於下限時，事件不會拉長
 
 
 # ---------- 限時事件整合 ----------

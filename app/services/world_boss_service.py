@@ -607,6 +607,46 @@ class WorldBossService(RankingService):
             mine = next((r for r in rows if r["player_id"] == player_id), None)
             return {"event_id": ev.id, "name": ev.name, "rows": rows[:limit], "me": mine, "participants": len(rows)}
 
+    def boss_last_leaderboard(self, group_id: int | None, player_id: int, event_id: int,
+                              limit: int = wb.LEADERBOARD_SIZE) -> dict | None:
+        """介紹區「查看排行榜」：最近一場已結束活動的排行。
+
+        目前這場已結束就是它自己；否則找同一個排程（手動活動則是同一個範圍）中、在它之前開始的最近一場已結束活動。
+        沒有任何已結束的活動時回傳 None。只讀取不鎖（結束與否用 _projection 推算，與面板顯示一致）。"""
+        now = self._clock.now()
+        with self._transaction() as session:
+            ev = self._member_event(session, group_id, player_id, event_id, lock=False)
+
+            def finished(e: WorldBossEvent) -> bool:
+                stats = wb.combat_stats(progress_of(supplies_of(session, e.id)), e.settings)
+                return _projection(e, stats, now)["state"] in ("ended", "defeated")
+
+            last = ev if finished(ev) else None
+            if last is None:
+                stmt = select(WorldBossEvent).where(
+                    self._scope(group_id), WorldBossEvent.id != ev.id, WorldBossEvent.starts_at <= ev.starts_at
+                )
+                if ev.schedule_id is not None:
+                    stmt = stmt.where(WorldBossEvent.schedule_id == ev.schedule_id)
+                elif ev.group_id is None:
+                    stmt = stmt.where(WorldBossEvent.group_id.is_(None), WorldBossEvent.schedule_id.is_(None))
+                else:
+                    stmt = stmt.where(WorldBossEvent.group_id == ev.group_id, WorldBossEvent.schedule_id.is_(None))
+                for cand in session.scalars(stmt.order_by(WorldBossEvent.starts_at.desc(), WorldBossEvent.id.desc())
+                                            .limit(5)):
+                    if finished(cand):
+                        last = cand
+                        break
+            if last is None:
+                return None
+            stats = wb.combat_stats(progress_of(supplies_of(session, last.id)), last.settings)
+            proj = _projection(last, stats, now)
+            rows = ranking(session, last.id)
+            mine = next((r for r in rows if r["player_id"] == player_id), None)
+            return {"event_id": last.id, "name": last.name, "rows": rows[:limit], "me": mine,
+                    "participants": len(rows), "ended_at": proj["ended_at"],
+                    "defeated": proj["defeated_at"] is not None, "is_current": last.id == ev.id}
+
     def boss_claim(self, group_id: int, player_id: int, event_id: int) -> ActionResult:
         """領取活動獎勵（活動結束後）：依結果、個人積分與名次發放；每人每場只能領一次。"""
         now = self._clock.now()

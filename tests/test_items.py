@@ -52,12 +52,12 @@ def test_fertilizer_reduces_time_once(service, player_id, clock):
     clock.advance(200)  # 剩 400 秒
     service.use_item(player_id, "fertilizer", 1)
     p = plot(service, player_id)
-    assert p.remaining_seconds == 300 and p.fertilized  # 剩餘時間減少 25%
+    assert p.remaining_seconds == 340 and p.fertilized  # 剩餘時間減少 15%
     with pytest.raises(ValidationError):  # 同一株不可重複施肥
         service.use_item(player_id, "fertilizer", 1)
     backpack = service.get_backpack(player_id)
     assert [(c.code, c.quantity) for c in backpack.consumables] == [("fertilizer", 1)]
-    clock.advance(299)
+    clock.advance(339)
     assert plot(service, player_id).state == PlotState.GROWING
     clock.advance(1)
     assert plot(service, player_id).state == PlotState.READY
@@ -77,7 +77,7 @@ def test_earthworm_effect_lifecycle_and_restart(service, player_id, clock, sessi
     service.use_item(player_id, "earthworm")
     start = clock.now()
     grow(service, player_id, 1, "wheat")
-    assert plot(service, player_id).remaining_seconds == 45  # 60 × 0.75
+    assert plot(service, player_id).remaining_seconds == 51  # 60 × 0.85
 
     # 程式重新啟動：新的 Engine 與服務，效果期限不重設
     clock.advance(600)
@@ -173,6 +173,6 @@ def test_backpack_contents(service, player_id, clock, session_factory):
     assert [(x.name, x.quantity, x.price) for x in bp.seeds] == [("胡蘿蔔種子", 2, 20)]
     assert [(x.name, x.quantity, x.price) for x in bp.produce] == [("胡蘿蔔", 3, 25)]
     assert [(x.name, x.quantity) for x in bp.consumables] == [("化肥", 2)]
-    assert "減少 25%" in bp.consumables[0].description
+    assert "減少 15%" in bp.consumables[0].description
     assert bp.tools[0].owned and bp.tools[0].enabled
     assert bp.used == 7

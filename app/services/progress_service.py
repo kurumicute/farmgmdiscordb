@@ -1,4 +1,4 @@
-"""玩家長期進度：每日簽到、圖鑑、成就與稱號。
+"""玩家長期進度：每日簽到、圖鑑、成就與稱號，以及商店的「特賣與升級」（溫室、每週特賣、稱號商店）。
 
 繼承鏈：WorldBossService → ProgressService → AdminService（Bot 與網站都用 AdminService）。
 - 成就進度由既有資料即時計算（歷史進度也算），只有「已領取」存在 farm_achievements。
@@ -8,6 +8,7 @@
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.clock import TAIPEI_TZ
@@ -18,10 +19,11 @@ from app.db.models import (
     FarmAchievement,
     FarmFish,
     FarmStats,
+    WeeklyShopPurchase,
     WorldBossRewardClaim,
 )
-from app.game import achievements, balance, checkin, exploration
-from app.game.errors import NotFoundError, ValidationError
+from app.game import achievements, balance, checkin, exploration, rules, special_shop
+from app.game.errors import AlreadyExistsError, InsufficientGoldError, NotFoundError, ValidationError
 from app.game.rules import EventType
 from app.repositories import animals as animals_repo
 from app.repositories import codex as codex_repo
@@ -42,7 +44,9 @@ CODEX_CATEGORIES = (
     ("fish", "🐟", "魚類"),
 )
 QUALITY_NAMES = list(balance.QUALITIES.values())  # 依 0–3 排列：普通、優良、稀有、傳說
-TITLE_SOURCES = {"world_boss": "世界 Boss"}
+TITLE_SOURCES = {"world_boss": "世界 Boss", "shop": "稱號商店"}
+
+assert not {a.title for a in achievements.ACHIEVEMENTS} & set(special_shop.TITLE_PRICES), "商店稱號與成就稱號重複"
 
 
 def _pct(value: int, total: int) -> int:
@@ -340,3 +344,99 @@ class ProgressService(WorldBossService):
         """排行榜顯示用：玩家 → 目前選用的稱號。"""
         with self._transaction() as session:
             return titles_repo.selected_by_player(session, list(player_ids))
+
+    # ---------- 特賣與升級：溫室、每週特賣、稱號商店 ----------
+
+    @staticmethod
+    def _weekly_offers(session: Session, start) -> list[special_shop.Offer]:
+        crops = [special_shop.CropRef(c.code, c.name, c.seed_price, c.shop_buyable)
+                 for c in crops_repo.list_all(session, active_only=True)]
+        return special_shop.weekly_offers(start, crops)
+
+    @staticmethod
+    def _weekly_bought(session: Session, farm_id: int, start) -> dict[str, int]:
+        rows = session.execute(select(WeeklyShopPurchase.item_code, WeeklyShopPurchase.quantity)
+                               .where(WeeklyShopPurchase.farm_id == farm_id, WeeklyShopPurchase.week_start == start))
+        return dict(rows.all())
+
+    def special_shop(self, player_id: int) -> dict:
+        """商店「特賣與升級」分頁：溫室等級與價格、本週特賣與已購買量、稱號商店。只讀取不鎖。"""
+        with self._transaction() as session:
+            farm = self._farm_for_read(session, player_id)
+            start = special_shop.week_start(self._clock.now())
+            bought = self._weekly_bought(session, farm.id, start)
+            owned = {t.title for t in titles_repo.owned(session, farm.id)}
+            level = farm.greenhouse_level
+            return {
+                "gold": farm.gold,
+                "greenhouse": {
+                    "level": level, "max": special_shop.GREENHOUSE_MAX_LEVEL,
+                    "pct": special_shop.greenhouse_pct(level), "next_price": special_shop.greenhouse_price(level),
+                    "next_pct": special_shop.greenhouse_pct(level + 1),
+                    "per_level": special_shop.GREENHOUSE_PCT_PER_LEVEL,
+                },
+                "weekly": {
+                    "week_start": start, "ends_at": special_shop.week_ends_at(start),
+                    "offers": [
+                        {"crop_code": o.crop_code, "name": f"{o.crop_name}種子", "price": o.price,
+                         "original_price": o.original_price, "limit": o.limit, "rare": o.rare,
+                         "bought": bought.get(rules.seed_item_code(o.crop_code), 0)}
+                        for o in self._weekly_offers(session, start)
+                    ],
+                },
+                "titles": [{"title": t, "price": price, "owned": t in owned} for t, price in special_shop.TITLE_SHOP],
+            }
+
+    def buy_weekly_deal(self, player_id: int, crop_code: str, quantity: int) -> ActionResult:
+        """購買本週特賣的種子：每人每週每項限購；稀有種子放素材背包。"""
+        if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity <= 0:
+            raise ValidationError("購買數量必須是正整數。")
+        with self._transaction() as session:
+            farm = self._locked_farm(session, player_id)
+            start = special_shop.week_start(self._clock.now())
+            offer = next((o for o in self._weekly_offers(session, start) if o.crop_code == crop_code), None)
+            if offer is None:
+                raise NotFoundError("這項商品不在本週特賣中（每週一 00:00 換一批），請重新整理。")
+            item = rules.seed_item_code(offer.crop_code)
+            bought = self._weekly_bought(session, farm.id, start).get(item, 0)
+            if bought + quantity > offer.limit:
+                left = max(0, offer.limit - bought)
+                raise ValidationError(f"{offer.crop_name}種子本週每人限購 {offer.limit} 顆，你還可以買 {left} 顆。")
+            cost = offer.price * quantity
+            if farm.gold < cost:
+                raise InsufficientGoldError(f"金幣不足：需要 {cost}，目前只有 {farm.gold}。")
+            self._ensure_item_space(session, farm, item, quantity)
+            farm.gold -= cost
+            inventory_repo.add(session, farm.id, item, quantity)
+            stmt = insert(WeeklyShopPurchase).values(farm_id=farm.id, week_start=start, item_code=item,
+                                                     quantity=quantity)
+            session.execute(stmt.on_conflict_do_update(
+                index_elements=[WeeklyShopPurchase.farm_id, WeeklyShopPurchase.week_start,
+                                WeeklyShopPurchase.item_code],
+                set_={"quantity": WeeklyShopPurchase.quantity + stmt.excluded.quantity},
+            ))
+            self._record(session, farm, EventType.BUY_SEED,
+                         f"每週特賣：購買 {quantity} 顆{offer.crop_name}種子（每顆 {offer.price}），金幣 -{cost}",
+                         item_code=item, quantity=quantity, gold_delta=-cost)
+            left = offer.limit - bought - quantity
+            return ActionResult(
+                f"🎁 買到 {quantity} 顆{offer.crop_name}種子，花費 {cost:,} 金幣（本週還能買 {left} 顆）。",
+                farm.gold, -cost, item, quantity,
+            )
+
+    def buy_title(self, player_id: int, title: str) -> ActionResult:
+        """稱號商店：用金幣買稱號，買到後可以在「🎖️ 稱號」選用。每個稱號只能買一次。"""
+        price = special_shop.TITLE_PRICES.get(title)
+        if price is None:
+            raise NotFoundError(f"稱號商店沒有「{title}」。")
+        with self._transaction() as session:
+            farm = self._locked_farm(session, player_id)
+            if title in {t.title for t in titles_repo.owned(session, farm.id)}:
+                raise AlreadyExistsError(f"你已經擁有稱號「{title}」。")
+            if farm.gold < price:
+                raise InsufficientGoldError(f"金幣不足：稱號「{title}」需要 {price:,}，目前只有 {farm.gold:,}。")
+            farm.gold -= price
+            titles_repo.grant(session, farm.id, title, "shop", self._clock.now())
+            self._record(session, farm, EventType.BUY_ITEM, f"稱號商店：購買稱號「{title}」，金幣 -{price}",
+                         item_code=special_shop.TITLE_SHOP_CODE, quantity=1, gold_delta=-price)
+            return ActionResult(f"🎖️ 買到稱號「{title}」！到「🏅 成就圖鑑 → 🎖️ 稱號」選用。", farm.gold, -price)

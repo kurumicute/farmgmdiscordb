@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 農場經營遊戲：Discord Bot（主要介面）+ CMD（開發維護）+ PostgreSQL（唯一資料來源）+ FastAPI 即時監控／管理網站。程式註解、訊息與文件皆為繁體中文，新程式碼請沿用。
 
-`discordbot.txt` 是移植到其他電腦的安裝指南（需要的軟體、套件版本、步驟與常見問題；改依賴或部署方式時要同步更新）。`discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求；已實作（`app/discord_bot/`、Migration 0010；0011 為作物時間與每日活動，0012 為賭場，0013 為作物價格調整，0014 為山洞冒險，0015 改為一次一趟的探險，0016 為釣魚，0017 讓魚的售價不受稀有度限制，0018 為放生動物，0019 為世界 Boss，0020 為全服世界 Boss 與固定排程（深淵魔龍），0021 讓釣到的魚售價跟隨魚種、不再限 1–200，0022 為世界 Boss 參與門檻 min_points，0023 為農場改名（交易類型 rename_farm），0024 為每日簽到（`daily_checkins`、交易類型 checkin_reward），0025 為圖鑑（`farm_codex`，從歷史補建），0026 為成就與稱號（`farm_achievements`、`farm_titles`、`farms.title`、交易類型 achievement_reward，匯入既有世界 Boss 稱號），0027 為 `farm_stats` 的偷菜／防守／賭場次數（成就進度用）），README「Discord Bot」一節是操作與故障排查文件。
+`discordbot.txt` 是移植到其他電腦的安裝指南（需要的軟體、套件版本、步驟與常見問題；改依賴或部署方式時要同步更新）。`discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求；已實作（`app/discord_bot/`、Migration 0010；0011 為作物時間與每日活動，0012 為賭場，0013 為作物價格調整，0014 為山洞冒險，0015 改為一次一趟的探險，0016 為釣魚，0017 讓魚的售價不受稀有度限制，0018 為放生動物，0019 為世界 Boss，0020 為全服世界 Boss 與固定排程（深淵魔龍），0021 讓釣到的魚售價跟隨魚種、不再限 1–200，0022 為世界 Boss 參與門檻 min_points，0023 為農場改名（交易類型 rename_farm），0024 為每日簽到（`daily_checkins`、交易類型 checkin_reward），0025 為圖鑑（`farm_codex`，從歷史補建），0026 為成就與稱號（`farm_achievements`、`farm_titles`、`farms.title`、交易類型 achievement_reward，匯入既有世界 Boss 稱號），0027 為 `farm_stats` 的偷菜／防守／賭場次數（成就進度用），0028 為溫室等級 `farms.greenhouse_level` 與每週特賣限購 `weekly_shop_purchases`），README「Discord Bot」一節是操作與故障排查文件。
 尚未在真實 Discord 驗證（需要使用者提供 Bot Token 與測試伺服器），包括 Lavalink 實際語音播放與 DAVE 語音加密；舊玩家清除腳本尚未對開發資料庫執行。
 
 ## 協作規範（使用者的固定要求）
@@ -30,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    `.env` 必須有 `COMPOSE_PROJECT_NAME=farmgm`（`.env.example` 沒列）：否則 compose 以資料夾名稱建立另一組專案與**空的** Volume，看不到原本的資料。
 2. `docker compose up -d postgres lavalink yt-cipher`：啟動 PostgreSQL、Lavalink 與 YouTube 簽章服務（`LAVALINK_PASSWORD`／`YT_CIPHER_TOKEN` 未設定時 compose 會直接報錯；網站與 Bot 要等 Migration 完成再啟動）。第一次啟動時 `docker/initdb` 會建立 `farmgm` 與 `farmgm_test`（只在 Volume 為空時執行；若測試資料庫不存在需手動 `CREATE DATABASE farmgm_test`）；Lavalink 每次建立容器都會從網路下載插件。
 3. `python -m venv .venv` → `.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt`。
-4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0027）。
+4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0028）。
 5. 驗證：`pytest`、`ruff check app tests migrations scripts`、`node --test tests/web/connection.test.js` 都應通過。
 6. 若要搬移舊電腦的資料（PowerShell 的 `>` 會破壞二進位檔，一律在容器內產生檔案再 `docker cp`）：
    - 舊電腦：`docker exec farmgm-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" -Fc -f /tmp/farmgm.dump farmgm'`，再 `docker cp farmgm-postgres-1:/tmp/farmgm.dump .`
@@ -131,6 +131,13 @@ node --test tests/web/connection.test.js                               # 指定�
   `_grant_reward`（道具放不進倉庫改發等值金幣）。稱號存在 `farm_titles`（成就與世界 Boss 領獎時 `titles_repo.grant`），
   `farms.title` 是選用的稱號，顯示在總覽、排行榜與世界 Boss 排行（`player_titles`）。面板頁面在 `discord_bot/progress_panel.py`
   （`ProgressPages` mixin：progress／achievements／titles／codex），總覽「🏅 成就圖鑑」進入。
+- **特賣與升級**（商店第三個分頁 `shop_special`，`discord_bot/special_shop_panel.py` 的 `SpecialShopPages`）：規則只在
+  `game/special_shop.py`。溫室 `farms.greenhouse_level` 由 `GameService.upgrade_greenhouse` 升級，`_water` 把
+  `greenhouse_pct` 與限時活動的 `grow_reduction_pct` 相加；每週特賣依台灣週一決定商品（`weekly_offers`，不存資料庫），
+  限購量存 `weekly_shop_purchases`，購買記 `buy_seed`；稱號商店 `buy_title` 記 `buy_item`、`titles_repo.grant(source="shop")`，
+  商店稱號不可和成就稱號重複（`progress_service` 匯入時檢查）。化肥 `FERTILIZER_TIME_FACTOR` 0.85、蚯蚓 ×0.85（2026-11-06 調降），
+  說明文字由常數產生。世界 Boss 介紹區「上一場排行榜」用 `boss_last_leaderboard`（同排程或同範圍的最近一場已結束活動），
+  戰鬥區「目前排行」（`boss_live_board`）用 `boss_leaderboard`。
 - **品質／突變與限時活動**：公式只在 `game/genetics.py`（設定版本存在 `crop_genetics_settings`）與 `game/events.py`（`game_events`，加成在播種／澆水／販售當下決定並記在 `applied_events`）。
 - **排名獎勵**：`game/ranking.py`（期間、驗證）+ `services/ranking_service.py`；背景結算 `run_background_settlement`（advisory lock，排名＋競賽；`WorldBossService` 覆寫後另外結束到期的世界 Boss 並建立排程的下一場，回傳多 `world_boss`／`world_boss_spawned`）由 `BACKGROUND_TASKS_RUNNER` 指定的網站（`main._auto_settle`，注入 `session_factory` 的測試中不啟動）或 Bot 執行，CLI／Bot 的 `leaderboard groups|rewards` 查詢時補結算，`(rule_id, period_start)` 唯一保證只發一次。
   項目 `money` 在有期間時（本日／本週／本月與所有排名獎勵）= 期間內**作物**販售收入（使用者要求：買東西不能影響排名；動物產品、加工品、魚與獎勵不算），只有「全部期間」才是目前金幣；`net_gold`／`NET_GOLD_EXCLUDED` 仍會計算與回傳，但不再是排名分數。

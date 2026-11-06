@@ -37,7 +37,7 @@ HELP_TEXT = f"""\
   water <土地編號|all>          澆水，澆水後開始生長
   harvest <土地編號|all>        收成
   clear <土地編號>              清除乾枯的作物
-  use fertilizer <土地編號>     對生長中的土地施化肥（剩餘時間減半）
+  use fertilizer <土地編號>     對生長中的土地施化肥（剩餘時間減少 15%）
   use earthworm                 使用人工養殖蚯蚓（30 分鐘內澆水的作物加速生長）
   tool on|off auto_waterer      啟用／停用自動澆水器
   inventory [items|tools]       查看背包：全部／可堆疊物品／工具與效果
