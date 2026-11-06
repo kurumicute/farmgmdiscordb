@@ -63,6 +63,21 @@ def bonus_quantity(quantity: int, pct: int, u: float) -> int:
     return whole + (1 if u < extra - whole else 0)
 
 
+def odds_text(quantity: int, pct: int) -> str:
+    """貓咪對「每格收成 quantity 個」的實際效果（與 bonus_quantity 相同算法）。"""
+    extra = quantity * pct / 100
+    sure = int(extra)
+    chance = round((extra - sure) * 100, 1)
+    chance_text = f"{chance:g}%"
+    if sure and chance:
+        return f"固定 +{sure}，另有 {chance_text} 機率再 +1"
+    if sure:
+        return f"固定 +{sure}"
+    if chance:
+        return f"{chance_text} 機率 +1"
+    return "不會多"
+
+
 def blocker_name(code: str) -> str:
     """偷菜被阻止時的阻止者名稱（防守設施或狗狗）。"""
     if code == DOG_BLOCKER:

@@ -1294,7 +1294,14 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
                 step = f"🛒 領養 **{money(x['next_price'])}** 金（Lv0，升到 Lv1 後才有加成）"
             else:
                 step = f"⬆️ 升到 Lv{x['level'] + 1}：**{money(x['next_price'])}** 金 → {x['next_pct']}%"
-            blocks.append(f"{pet_line(x)}\n　📝 {x['role']}\n　{step}")
+            block = f"{pet_line(x)}\n　📝 {x['role']}\n　{step}"
+            odds = x.get("odds")
+            if odds:
+                when = f"目前 +{odds['pct']}%" if odds["current"] else f"升到 Lv1（+{odds['pct']}%）後"
+                block += f"\n　🎲 **每格實際多收**（{when}）：\n" + "\n".join(
+                    f"　　{crop_emoji(c['code'])} {c['name']}（每格 {c['quantity']} 個）：{c['text']}"
+                    for c in odds["crops"])
+            blocks.append(block)
         ladder = " → ".join(money(v) for v in pets.UPGRADE_PRICES)
         e = discord.Embed(title="🐾 ✦ 寵物 ✦", color=GREEN, description=sections(
             f"💰 你的金幣：**{money(d['gold'])}**",

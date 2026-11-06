@@ -19,6 +19,7 @@ from app.game.errors import (
 from app.game.rules import AnimalState, CraftState, EventType
 from app.repositories import animals as animals_repo
 from app.repositories import catalog as catalog_repo
+from app.repositories import crops as crops_repo
 from app.repositories import inventory as inventory_repo
 from app.repositories import pets as pets_repo
 from app.repositories import ranch as ranch_repo
@@ -630,12 +631,22 @@ class RanchService(GameService):
             for code, pet in pets.PETS.items():
                 level = owned.get(code)
                 nxt = pets.BUY_PRICE if level is None else pets.upgrade_price(level)
-                out.append({
+                view = {
                     "code": code, "name": pet.name, "emoji": pet.emoji, "role": pet.role, "owned": level is not None,
                     "level": level, "max_level": pets.MAX_LEVEL, "pct": pets.bonus_pct(level),
                     "effect": pets.effect_text(code, level),
                     "next_price": nxt, "next_pct": pets.bonus_pct(0 if level is None else level + 1),
-                })
+                }
+                if code == pets.CAT:
+                    # 每種作物每格實際多收幾個：有加成時看目前等級，還沒有加成時看 Lv1
+                    shown = view["pct"] or pets.PCT_PER_LEVEL
+                    view["odds"] = {
+                        "pct": shown, "current": view["pct"] > 0,
+                        "crops": [{"code": c.code, "name": c.name, "quantity": c.harvest_quantity,
+                                   "text": pets.odds_text(c.harvest_quantity, shown)}
+                                  for c in crops_repo.list_all(session, active_only=True)],
+                    }
+                out.append(view)
             return out
 
     def buy_pet(self, player_id: int, pet_code: str) -> ActionResult:

@@ -137,6 +137,7 @@ def test_panel_adopt_and_upgrade(cmds, admin):  # noqa: F811
     assert "寵物" in p.text and "還沒有領養" in p.text
     p.click("寵物（貓狗）")
     assert "🐾" in p.text and "領養" in p.text
+    assert "每格實際多收" in p.text and "升到 Lv1（+5%）後" in p.text and "小麥（每格 2 個）：10% 機率 +1" in p.text
     p.click("領養狗狗")
     assert "再按一次" in p.text
     p.click("確認領養狗狗")
@@ -145,3 +146,19 @@ def test_panel_adopt_and_upgrade(cmds, admin):  # noqa: F811
     p.click("確認升級 Lv1狗狗")
     assert "Lv1" in p.text and "5%" in p.text
     assert admin.get_farm_status(pid).pets == {"dog": 1}
+
+
+def test_cat_odds_text_on_pets_page(admin, pid, cmds):  # noqa: F811
+    assert pets.odds_text(2, 20) == "40% 機率 +1"  # 小麥滿級
+    assert pets.odds_text(5, 20) == "固定 +1"  # 草莓滿級
+    assert pets.odds_text(4, 20) == "80% 機率 +1"
+    assert pets.odds_text(5, 25) == "固定 +1，另有 25% 機率再 +1"
+    assert pets.odds_text(3, 15) == "45% 機率 +1" and pets.odds_text(1, 0) == "不會多"
+    cat = next(x for x in admin.pet_status(pid) if x["code"] == pets.CAT)
+    assert not cat["odds"]["current"] and cat["odds"]["pct"] == pets.PCT_PER_LEVEL  # 還沒領養：看 Lv1
+    admin.buy_pet(pid, pets.CAT)
+    for _ in range(pets.MAX_LEVEL):
+        admin.upgrade_pet(pid, pets.CAT)
+    cat = next(x for x in admin.pet_status(pid) if x["code"] == pets.CAT)
+    odds = {c["code"]: c["text"] for c in cat["odds"]["crops"]}
+    assert cat["odds"]["current"] and odds["wheat"] == "40% 機率 +1" and odds["strawberry"] == "固定 +1"
