@@ -24,6 +24,7 @@ METRICS = {"money": "金幣", "sales": "農產品販售", "goods": "商品總販
 # 計算「淨賺金幣」時排除的交易類型（非遊戲經營所得）
 NET_GOLD_EXCLUDED = (
     "create_farm", "admin_adjust", "quest_reward", "competition_reward", "ranking_reward", "boss_reward",
+    "checkin_reward",
 )
 
 

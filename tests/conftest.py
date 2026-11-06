@@ -18,7 +18,7 @@ from app.services.ranking_service import RankingService
 ROOT = Path(__file__).resolve().parents[1]
 GAME_TABLES = (
     "world_boss_reward_claims, world_boss_contributions, world_boss_supplies, world_boss_events, "
-    "world_boss_schedules, "
+    "world_boss_schedules, daily_checkins, "
     "ranking_awards, ranking_settlements, ranking_reward_rules, game_events, "
     "competition_awards, competition_results, competition_contributions, competitions, "
     "quest_claims, quest_contributions, quests, admin_actions, "
@@ -156,6 +156,14 @@ def clean_db(request):
         )
     set_test_crop_times(engine)
     yield
+
+
+@pytest.fixture(autouse=True)
+def no_auto_checkin(monkeypatch):
+    """面板預設不自動每日簽到（會改變金幣、庫存與交易紀錄）；簽到測試自行開啟。"""
+    from app.discord_bot.panels import FarmPanel
+
+    monkeypatch.setattr(FarmPanel, "auto_checkin", False)
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 農場經營遊戲：Discord Bot（主要介面）+ CMD（開發維護）+ PostgreSQL（唯一資料來源）+ FastAPI 即時監控／管理網站。程式註解、訊息與文件皆為繁體中文，新程式碼請沿用。
 
-`discordbot.txt` 是移植到其他電腦的安裝指南（需要的軟體、套件版本、步驟與常見問題；改依賴或部署方式時要同步更新）。`discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求；已實作（`app/discord_bot/`、Migration 0010；0011 為作物時間與每日活動，0012 為賭場，0013 為作物價格調整，0014 為山洞冒險，0015 改為一次一趟的探險，0016 為釣魚，0017 讓魚的售價不受稀有度限制，0018 為放生動物，0019 為世界 Boss，0020 為全服世界 Boss 與固定排程（深淵魔龍），0021 讓釣到的魚售價跟隨魚種、不再限 1–200，0022 為世界 Boss 參與門檻 min_points，0023 為農場改名（交易類型 rename_farm）），README「Discord Bot」一節是操作與故障排查文件。
+`discordbot.txt` 是移植到其他電腦的安裝指南（需要的軟體、套件版本、步驟與常見問題；改依賴或部署方式時要同步更新）。`discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求；已實作（`app/discord_bot/`、Migration 0010；0011 為作物時間與每日活動，0012 為賭場，0013 為作物價格調整，0014 為山洞冒險，0015 改為一次一趟的探險，0016 為釣魚，0017 讓魚的售價不受稀有度限制，0018 為放生動物，0019 為世界 Boss，0020 為全服世界 Boss 與固定排程（深淵魔龍），0021 讓釣到的魚售價跟隨魚種、不再限 1–200，0022 為世界 Boss 參與門檻 min_points，0023 為農場改名（交易類型 rename_farm），0024 為每日簽到（`daily_checkins`、交易類型 checkin_reward）），README「Discord Bot」一節是操作與故障排查文件。
 尚未在真實 Discord 驗證（需要使用者提供 Bot Token 與測試伺服器），包括 Lavalink 實際語音播放與 DAVE 語音加密；舊玩家清除腳本尚未對開發資料庫執行。
 
 ## 協作規範（使用者的固定要求）
@@ -30,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    `.env` 必須有 `COMPOSE_PROJECT_NAME=farmgm`（`.env.example` 沒列）：否則 compose 以資料夾名稱建立另一組專案與**空的** Volume，看不到原本的資料。
 2. `docker compose up -d postgres lavalink yt-cipher`：啟動 PostgreSQL、Lavalink 與 YouTube 簽章服務（`LAVALINK_PASSWORD`／`YT_CIPHER_TOKEN` 未設定時 compose 會直接報錯；網站與 Bot 要等 Migration 完成再啟動）。第一次啟動時 `docker/initdb` 會建立 `farmgm` 與 `farmgm_test`（只在 Volume 為空時執行；若測試資料庫不存在需手動 `CREATE DATABASE farmgm_test`）；Lavalink 每次建立容器都會從網路下載插件。
 3. `python -m venv .venv` → `.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt`。
-4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0023）。
+4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0024）。
 5. 驗證：`pytest`、`ruff check app tests migrations scripts`、`node --test tests/web/connection.test.js` 都應通過。
 6. 若要搬移舊電腦的資料（PowerShell 的 `>` 會破壞二進位檔，一律在容器內產生檔案再 `docker cp`）：
    - 舊電腦：`docker exec farmgm-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" -Fc -f /tmp/farmgm.dump farmgm'`，再 `docker cp farmgm-postgres-1:/tmp/farmgm.dump .`
@@ -90,7 +90,7 @@ node --test tests/web/connection.test.js                               # 指定�
 - **Discord 面板**（`app/discord_bot/panels.py`）：預設只註冊 `/farm`（私密互動面板）與 `/help`；`FarmPanel` 每頁有 `_load_<page>`（執行緒中呼叫服務）與 `_build_<page>`（建 Embed 與按鈕／選單），操作經 `act()` 執行後在頂端顯示 ✅／❌；換頁與操作在 `DIRECT_REPLY_SECONDS`（1.5 秒）內準備好就用 `response.edit_message` 直接回覆，超過才先 `defer`（`_in_time()`／`_show()`），新的按鈕處理不要再自己先 `defer` 再 `refresh`；`tests/test_discord_panel.py` 以模擬互動點擊。
   總覽／農田／動物／加工／建造／商店／賭場頁與山洞區域（區域頁、探險中、探索結果）附圖：`_load_*` 在執行緒中呼叫 `farm_image`（Pillow，素材與規則在 `app/discord_bot/farm/`，含 `manifest.json` 與 `拼接說明.md`），`_build_*` 用 `attach_image()`，`refresh()` 以 `attachments=self.files` 更新（失敗時退回純文字）。農田與建築圖上傳 64 色（`farm_image.PANEL_COLORS`；預先產生的素材由 `file_png` 轉換後快取，場景圖仍上傳原檔）。`attach_image()` 記錄圖片雜湊，`_attachments()` 在雜湊等於 `sent_digest` 時沿用訊息上既有的附件、不重新上傳（世界 Boss、賭場連續操作靠這個）。圖片是 4×4 農田，所以 `balance.MAX_PLOTS = 16`（擴建與管理員新增土地都檢查）。完整文字指令在 `DISCORD_ADVANCED_COMMANDS=true` 時才註冊。
 - **Discord Bot**（`app/discord_bot/`）：`commands.py` 從互動取得 User／Guild ID（不接受玩家輸入的 ID），以 `SocialService.external_context` 對應群組與玩家，再用 `CommandHandler.execute(args)` 重用 CMD 的服務呼叫與文字輸出（參數以清單傳入，不經字串解析）；新增 Discord 指令時沿用此方式，並讓 `tests/test_discord_bot.py::test_every_command_maps_to_services` 通過。服務在 `runner.ServiceRunner` 的執行緒池執行（不可在事件迴圈直接呼叫），`RetryingService` 只重試 40P01／40001；2 秒內未完成先 `defer`。
-- **服務繼承鏈**：`GameService` → `RanchService` → `ExplorationService`（山洞探索、機器、假幣）→ `FishingService`（釣魚）→ `SocialService` → `CommunityService` → `RankingService` → `WorldBossService`（世界 Boss）→ `AdminService`。子類別的私有方法會覆蓋父類別同名方法，新增前先 `grep "def <名稱>(" app/services/*.py`。CLI 使用 `RankingService`；網站 `app.state.social_service` 是 `AdminService`；`MonitorService` 獨立且所有查詢在 `SET TRANSACTION READ ONLY` 中執行。服務方法只收基本型別，不依賴 CMD／FastAPI／Discord（玩家以 `external_platform`/`external_user_id` 對應，Discord ID 一律字串）。
+- **服務繼承鏈**：`GameService` → `RanchService` → `ExplorationService`（山洞探索、機器、假幣）→ `FishingService`（釣魚）→ `SocialService` → `CommunityService` → `RankingService` → `WorldBossService`（世界 Boss）→ `ProgressService`（每日簽到；之後的圖鑑、成就與稱號）→ `AdminService`。子類別的私有方法會覆蓋父類別同名方法，新增前先 `grep "def <名稱>(" app/services/*.py`。CLI 使用 `RankingService`；網站 `app.state.social_service` 是 `AdminService`；`MonitorService` 獨立且所有查詢在 `SET TRANSACTION READ ONLY` 中執行。服務方法只收基本型別，不依賴 CMD／FastAPI／Discord（玩家以 `external_platform`/`external_user_id` 對應，Discord ID 一律字串）。
 - **交易與併發**：每個公開服務方法 = 一筆 DB 交易（`self._transaction()`）；改變資產前先以 `farms_repo.get_by_player(..., for_update=True)`（`_locked_farm`）鎖農場列。重複發獎／重複偷菜等由資料庫 UNIQUE／CHECK 約束做最後防線。面板的 `_load_*` 經 `run_batch` 在同一筆交易中執行（`_transaction()` 偵測到共用交易時沿用，其中任何例外都會回滾整批；`RetryingService` 在共用交易中不重試單一方法，改由外層重試整個 `run_batch`）。遊戲規則錯誤皆為 `app.game.errors.GameError` 子類別（訊息可直接給玩家；API 轉成 400／404）。
 - **交易紀錄不變式**：所有資產變動都經 `GameService._record()` 寫入 `game_transactions`（含建立農場的初始金幣），因此全部 `gold_delta` 加總 = 全服金幣；`_record()` 同時更新排行用的 `farm_stats`／`farm_daily_stats`（`repositories/farm_stats.py`，不要繞過 `_record` 直接改金幣或販售）；管理員調整用 `admin_adjust`、排名獎勵用 `ranking_reward`。新增事件類型需同時改 `models.EVENT_TYPES`、`rules.EventType`／`EVENT_TYPE_LABELS`、Migration 的 CHECK 約束與 `web/app.js` 的 `EVENT_LABELS`。
 - **所屬群組轉移**：`farms.home_group_id` 只能經 `GameService.transfer_home_group`（7 天冷卻、需為目標群組成員）或 `AdminService.admin_transfer_farm`（必填原因，可 `SET LOCAL farmgm.admin_group_transfer = 'on'` 略過冷卻並寫 `admin_actions`）變更；觸發器 `farms_home_group_immutable`（Migration 0010）在資料庫層同樣檢查冷卻，不要移除。
@@ -105,7 +105,7 @@ node --test tests/web/connection.test.js                               # 指定�
   逾時依時間判定（`_expire`），Bot `setup_hook` 呼叫 `cleanup_fishing_sessions`。釣魚面板會依 `fish_due` 自動更新（測試設
   `panel.fish_timers_enabled = False`）。初始魚種／釣具在 Migration 0016 與 `fishing.INITIAL_FISH`／`INITIAL_GEAR` 各一份（conftest 用後者重設）。
 - **世界 Boss**（群組後勤活動）：規則、預設值與戰鬥公式只在 `game/world_boss.py`；服務 `services/world_boss_service.py`
-  （`WorldBossService`，繼承鏈 `RankingService` → `WorldBossService` → `AdminService`，Bot 與網站都用 `AdminService`）；
+  （`WorldBossService`，繼承鏈 `RankingService` → `WorldBossService` → `ProgressService` → `AdminService`，Bot 與網站都用 `AdminService`）；
   面板 `discord_bot/world_boss_panel.py`（`WorldBossPages` mixin；介紹區 `boss`／`boss_board`／`boss_help` 附同一張固定圖 `farm/scenes/world_boss.png`，戰鬥區 `boss_battle`／`boss_donate` 不附圖，由根目錄 `dragon.png` 縮小，`dragon.png` 不進映像）。活動、補給、捐獻、領獎在 Migration 0019 的
   `world_boss_*` 四張表，設定與獎勵是建立時的 JSON 快照。HP 依時間推進（`_advance`，寫回 `hp`／`last_tick_at`）；監控網站
   用 `event_view` 唯讀推算。玩家操作一律以互動來源的 `group_id` 比對活動群組並檢查成員；先鎖活動列再鎖農場列。
@@ -119,6 +119,11 @@ node --test tests/web/connection.test.js                               # 指定�
   查看類方法（`boss_current`、`boss_leaderboard`、`boss_donation_options`）只讀取不鎖（`_member_event(lock=False)`，HP 由
   `event_view` 推算）；只有捐獻、領獎、管理與背景結算鎖活動列並 `_advance` 寫回。`FarmPanel.refresh`／`show_error` 從重繪到送出
   畫面持有面板的鎖（`_lock()`，依事件迴圈建立），連點兩下不會交錯重繪。
+- **每日簽到**：規則與獎勵只在 `game/checkin.py`（台灣日期、7 天一輪、連續天數中斷歸 1）；服務 `services/progress_service.py`
+  （`ProgressService.daily_checkin`，`(farm_id, day)` 唯一，先不鎖檢查、要發獎時才鎖農場並再確認；道具放不進倉庫改發等值金幣）。
+  面板 `_render` 在 `_run_machines` 後呼叫 `_auto_checkin`（開啟或換頁就簽到，結果顯示在頂端；台灣隔天 00:00 前不再查詢），
+  總覽有「📅 每日簽到」欄位。`checkin_reward` 列入 `ranking.NET_GOLD_EXCLUDED`。測試預設關閉（conftest 的 `no_auto_checkin`），
+  簽到測試以 `monkeypatch.setattr(FarmPanel, "auto_checkin", True)` 開啟。
 - **品質／突變與限時活動**：公式只在 `game/genetics.py`（設定版本存在 `crop_genetics_settings`）與 `game/events.py`（`game_events`，加成在播種／澆水／販售當下決定並記在 `applied_events`）。
 - **排名獎勵**：`game/ranking.py`（期間、驗證）+ `services/ranking_service.py`；背景結算 `run_background_settlement`（advisory lock，排名＋競賽；`WorldBossService` 覆寫後另外結束到期的世界 Boss 並建立排程的下一場，回傳多 `world_boss`／`world_boss_spawned`）由 `BACKGROUND_TASKS_RUNNER` 指定的網站（`main._auto_settle`，注入 `session_factory` 的測試中不啟動）或 Bot 執行，CLI／Bot 的 `leaderboard groups|rewards` 查詢時補結算，`(rule_id, period_start)` 唯一保證只發一次。
   項目 `money` 在有期間時（本日／本週／本月與所有排名獎勵）= 期間內**作物**販售收入（使用者要求：買東西不能影響排名；動物產品、加工品、魚與獎勵不算），只有「全部期間」才是目前金幣；`net_gold`／`NET_GOLD_EXCLUDED` 仍會計算與回傳，但不再是排名分數。

@@ -70,6 +70,7 @@ EVENT_TYPES = (
     "boss_donate",
     "boss_reward",
     "rename_farm",
+    "checkin_reward",
 )
 
 QUALITY_CODES = ("normal", "good", "rare", "legendary")
@@ -1268,3 +1269,22 @@ class WorldBossRewardClaim(Base):
     items: Mapped[dict] = mapped_column(JSON, nullable=False)
     title: Mapped[str | None] = mapped_column(String(20))
     claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DailyCheckin(Base):
+    """每日簽到紀錄（台灣日期）；(farm_id, day) 唯一，每座農場每天只能簽到一次。保存連續天數與發放內容。"""
+
+    __tablename__ = "daily_checkins"
+    __table_args__ = (
+        UniqueConstraint("farm_id", "day", name="uq_daily_checkins_farm_day"),
+        CheckConstraint("streak >= 1", name="streak_positive"),
+        CheckConstraint("gold >= 0", name="gold_non_negative"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), nullable=False)
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    streak: Mapped[int] = mapped_column(Integer, nullable=False)
+    gold: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    items: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -18,7 +18,7 @@ import logging
 import re
 import time
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 
 import aiohttp
 import discord
@@ -194,6 +194,8 @@ class RenameModal(discord.ui.Modal):
 class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
     """一個玩家的私密農場面板。頁面內容每次都重新從資料庫讀取，網站或其他介面的修改會立即反映。"""
 
+    auto_checkin = True  # 開啟面板時自動每日簽到（測試預設關閉，避免改變其他測試的金幣與庫存）
+
     def __init__(self, cmds, owner_id: int, who, ctx) -> None:
         super().__init__(timeout=PANEL_TIMEOUT_SECONDS)
         self.cmds = cmds
@@ -219,6 +221,7 @@ class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
         self.cave_area: str | None = None
         self.cave_result: dict | None = None
         self.exploring = False
+        self.checkin_next_at: datetime | None = None  # 今天已簽到：這個時間（台灣隔天 00:00）前不再查詢
         self.files: list[discord.File] = []  # 本次畫面要附上的圖片；每次 render 重建
         # 圖片內容的雜湊：本次畫面的圖、面板訊息上目前掛著的圖；相同時沿用訊息上的附件，不重新上傳
         self.image_digest: bytes | None = None
@@ -278,6 +281,7 @@ class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
         self.files, self.image_digest = [], None  # 換頁時舊圖片也要移除
         if self.page != "welcome":
             notice = await self._run_machines(notice)
+            notice = await self._auto_checkin(notice)
         try:
             # 整頁資料在同一筆交易中讀取（原本每個服務呼叫各開一筆）
             data = await self.run(self.svc.run_batch, getattr(self, f"_load_{self.page}"))
@@ -319,6 +323,26 @@ class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
         if not note:
             return notice
         return f"{notice}\n{note}" if notice else note
+
+    async def _auto_checkin(self, notice: str | None) -> str | None:
+        """開啟或切換頁面時自動每日簽到並在頂端顯示獎勵；失敗不影響面板顯示。"""
+        if not self.auto_checkin or (self.checkin_next_at and datetime.now(UTC) < self.checkin_next_at):
+            return notice
+        try:
+            result = await self.run(self.svc.daily_checkin, self.player_id)
+        except Exception as exc:
+            if not isinstance(exc, GameError):
+                logger.exception("每日簽到失敗（玩家 #%s）", self.player_id)
+            return notice
+        if result is None:
+            return notice
+        self.checkin_next_at = result["next_at"]
+        if not result["new"]:
+            return notice
+        note = f"📅 每日簽到成功！連續第 **{result['streak']}** 天，獲得 {result['reward_text']}。"
+        if result["converted"]:
+            note += "（倉庫已滿，道具改發等值金幣）"
+        return f"{note}\n{notice}" if notice else note
 
     async def _in_time(self, interaction: discord.Interaction, coro, budget: float | None = None):
         """執行 coro；尚未回覆互動且 budget 秒（預設 DIRECT_REPLY_SECONDS）內沒完成時先 defer，之後改編輯原訊息。"""
@@ -586,6 +610,7 @@ class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
             "orders": svc.craft_orders(pid),
             "home": svc.get_home_group(pid),
             "events": svc.active_events(),
+            "checkin": svc.checkin_status(pid),
         }
 
     def _build_main(self, d):
@@ -621,6 +646,12 @@ class FarmPanel(FishingPages, WorldBossPages, discord.ui.View):
         craft = [f"✅ {done} 張可領取"] if done else []
         craft += [f"⚙️ {o['recipe_name']} {ts(o['ready_at'])}" for o in busy[:3]]
         e.add_field(name="🏭 加工", value="\n".join(craft) or "💤 閒置")
+        c = d["checkin"]
+        if c["checked_today"]:
+            sign = f"✅ 今天已簽到｜連續 **{c['streak']}** 天\n🎁 明天：{c['next_reward_text']}"
+        else:
+            sign = f"🎁 今天：{c['next_reward_text']}\n（開啟面板自動簽到）"
+        e.add_field(name="📅 每日簽到", value=sign)
         events = [
             f"🔥 **{ev['name']}**{'（限' + ev['crop_name'] + '）' if ev['crop_name'] else ''}\n"
             f"　✨ 效果：{ev['effects_text']}" + (f"\n　📝 {ev['description']}" if ev["description"] else "")

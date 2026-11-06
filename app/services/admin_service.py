@@ -42,8 +42,8 @@ from app.repositories import inventory as inventory_repo
 from app.repositories import ranch as ranch_repo
 from app.services.fishing_service import fish_type_view, gear_view
 from app.services.game_service import genetics_label
+from app.services.progress_service import ProgressService
 from app.services.ranch_service import animal_type_view
-from app.services.world_boss_service import WorldBossService
 
 CODE_RE = re.compile(balance.CATALOG_CODE_PATTERN)
 PRODUCE_MUTATIONS = ("none", "giant", "golden", "fast")
@@ -98,7 +98,7 @@ ANIMAL_FIELDS = (
 )
 
 
-class AdminService(WorldBossService):
+class AdminService(ProgressService):
     # ---------- 共用 ----------
 
     def _audit(self, session, actor: str, action: str, target_type: str, target_id, details: dict) -> None:

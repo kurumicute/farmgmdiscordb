@@ -63,6 +63,7 @@ class EventType(StrEnum):
     BOSS_DONATE = "boss_donate"
     BOSS_REWARD = "boss_reward"
     RENAME_FARM = "rename_farm"
+    CHECKIN_REWARD = "checkin_reward"
 
 
 EVENT_TYPE_LABELS = {
@@ -104,6 +105,7 @@ EVENT_TYPE_LABELS = {
     EventType.BOSS_DONATE: "世界 Boss 捐獻",
     EventType.BOSS_REWARD: "世界 Boss 獎勵",
     EventType.RENAME_FARM: "農場改名",
+    EventType.CHECKIN_REWARD: "每日簽到",
 }
 
 
