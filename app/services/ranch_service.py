@@ -638,8 +638,8 @@ class RanchService(GameService):
                     "next_price": nxt, "next_pct": pets.bonus_pct(0 if level is None else level + 1),
                 }
                 if code == pets.CAT:
-                    # 每種作物每格實際多收幾個：有加成時看目前等級，還沒有加成時看 Lv1
-                    shown = view["pct"] or pets.PCT_PER_LEVEL
+                    # 每種作物每格實際多收幾個：已領養看目前等級，還沒領養看領養後的 Lv0
+                    shown = view["pct"] or pets.bonus_pct(0)
                     view["odds"] = {
                         "pct": shown, "current": view["pct"] > 0,
                         "crops": [{"code": c.code, "name": c.name, "quantity": c.harvest_quantity,
@@ -668,7 +668,7 @@ class RanchService(GameService):
                          item_code=pets.item_code(pet_code), quantity=1, gold_delta=-price)
             nxt = pets.upgrade_price(0)
             return ActionResult(
-                f"{pet.emoji} 領養了{pet.name}！牠會出現在農場上。現在是 Lv0（還沒有加成），"
+                f"{pet.emoji} 領養了{pet.name}！牠會出現在農場上。現在是 Lv0：{pets.effect_text(pet_code, 0)}；"
                 f"升到 Lv1 需要 {nxt:,} 金幣：{pets.effect_text(pet_code, 1)}。",
                 farm.gold, -price, pets.item_code(pet_code), 1,
             )

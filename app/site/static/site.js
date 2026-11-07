@@ -181,13 +181,15 @@
   function renderPets(p) {
     setText("g-pet-buy", num.format(p.buy_price));
     setText("g-pet-ladder", p.upgrade_prices.map((v) => num.format(v)).join(" → "));
+    setText("g-pet-base", String(p.base_pct));
     setText("g-pet-pct", String(p.pct_per_level));
     setText("g-pet-max", String(p.max_level));
+    setText("g-pet-maxpct", String(p.max_pct));
     fillRows("g-pets", p.pets.map((x) => [x.name, x.role, x.effect]));
     if (p.cat_odds) {
       fillRows("g-cat-odds", p.cat_odds.length
         ? p.cat_odds.map((c) => [`${c.name}（每格 ${c.quantity} 個）`, ...c.levels])
-        : [["目前沒有開放種植的作物", ...Array(p.max_level).fill("")]]);
+        : [["目前沒有開放種植的作物", ...Array(p.max_level + 1).fill("")]]);
     }
   }
 

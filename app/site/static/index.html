@@ -684,16 +684,16 @@
             <ul>
               <li>在「🐔 動物」→「🐾 寵物（貓狗）」領養與升級，每次都要再按一次「確認」。寵物會出現在<b>農場圖上方</b>
                 （狗狗在左上、貓咪在右上），<b>不佔畜舍欄位</b>，也不用餵食。</li>
-              <li>領養 <b id="g-pet-buy">5,000</b> 金幣（Lv0，還沒有加成）；升級
-                <span id="g-pet-ladder">10,000 → 20,000 → 30,000 → 40,000</span> 金幣，每升一級 X +<span id="g-pet-pct">5</span>%，
-                最高 Lv<span id="g-pet-max">4</span>（X 最多 20%）。</li>
+              <li>領養 <b id="g-pet-buy">5,000</b> 金幣，Lv0 就有 X = <span id="g-pet-base">5</span>%；升級
+                <span id="g-pet-ladder">10,000 → 20,000 → 30,000 → 40,000</span> 金幣，每升一級 X 再 +<span id="g-pet-pct">5</span>%，
+                最高 Lv<span id="g-pet-max">4</span>（X 最多 <span id="g-pet-maxpct">25</span>%）。</li>
               <li><b>貓咪</b>只加成主人自己收成的數量（自動收割機也算），被偷走的部分不會補回；小數部分依機率多給 1 個。</li>
               <li><b>狗狗</b>在稻草人、警戒犬、防盜圍欄都沒擋住時再判定一次，不受防守設施整體 60% 上限限制；
                 被狗狗擋下的偷菜一樣會出現在巡查紀錄。</li>
             </ul>
             <div class="table-scroll">
               <table class="guide-table">
-                <thead><tr><th>寵物</th><th>簡介</th><th>效果（X = 等級 × 5%）</th></tr></thead>
+                <thead><tr><th>寵物</th><th>簡介</th><th>效果（X 見上方）</th></tr></thead>
                 <tbody id="g-pets">
                   <tr><td>🐱 貓咪</td><td>抓老鼠：趕走偷吃農作物的老鼠</td><td>收成數量 +X%</td></tr>
                   <tr><td>🐶 狗狗</td><td>保衛農田：趕走來偷菜的小偷</td><td>防守設施沒擋住時，再有 X% 機率擋下偷菜（所有農田）</td></tr>
@@ -701,18 +701,18 @@
               </table>
             </div>
             <p class="note">🐱 貓咪每格實際多收：收成數量 × 加成的整數部分一定給，小數部分換成機率多 1 個。
-              例如小麥每格 2 個、滿級 +20% = 0.4 個 → 每格 40% 機率多 1 個。下表以每種作物的基本收成數量計算
+              例如小麥每格 2 個、滿級 +25% = 0.5 個 → 每格 50% 機率多 1 個。下表以每種作物的基本收成數量計算
               （巨型突變、活動加成、被偷或大風颳走時會不同）。</p>
             <div class="table-scroll">
               <table class="guide-table">
-                <thead><tr><th>作物</th><th>Lv1（+5%）</th><th>Lv2（+10%）</th><th>Lv3（+15%）</th><th>Lv4（+20%）</th></tr></thead>
+                <thead><tr><th>作物</th><th>Lv0（+5%）</th><th>Lv1（+10%）</th><th>Lv2（+15%）</th><th>Lv3（+20%）</th><th>Lv4（+25%）</th></tr></thead>
                 <tbody id="g-cat-odds">
-                  <tr><td>小麥（每格 2 個）</td><td>10% 機率 +1</td><td>20% 機率 +1</td><td>30% 機率 +1</td><td>40% 機率 +1</td></tr>
-                  <tr><td>胡蘿蔔（每格 3 個）</td><td>15% 機率 +1</td><td>30% 機率 +1</td><td>45% 機率 +1</td><td>60% 機率 +1</td></tr>
-                  <tr><td>番茄（每格 4 個）</td><td>20% 機率 +1</td><td>40% 機率 +1</td><td>60% 機率 +1</td><td>80% 機率 +1</td></tr>
-                  <tr><td>草莓（每格 5 個）</td><td>25% 機率 +1</td><td>50% 機率 +1</td><td>75% 機率 +1</td><td>固定 +1</td></tr>
-                  <tr><td>琥珀瓜（每格 3 個）</td><td>15% 機率 +1</td><td>30% 機率 +1</td><td>45% 機率 +1</td><td>60% 機率 +1</td></tr>
-                  <tr><td>月光花（每格 2 個）</td><td>10% 機率 +1</td><td>20% 機率 +1</td><td>30% 機率 +1</td><td>40% 機率 +1</td></tr>
+                  <tr><td>小麥（每格 2 個）</td><td>10% 機率 +1</td><td>20% 機率 +1</td><td>30% 機率 +1</td><td>40% 機率 +1</td><td>50% 機率 +1</td></tr>
+                  <tr><td>胡蘿蔔（每格 3 個）</td><td>15% 機率 +1</td><td>30% 機率 +1</td><td>45% 機率 +1</td><td>60% 機率 +1</td><td>75% 機率 +1</td></tr>
+                  <tr><td>番茄（每格 4 個）</td><td>20% 機率 +1</td><td>40% 機率 +1</td><td>60% 機率 +1</td><td>80% 機率 +1</td><td>固定 +1</td></tr>
+                  <tr><td>草莓（每格 5 個）</td><td>25% 機率 +1</td><td>50% 機率 +1</td><td>75% 機率 +1</td><td>固定 +1</td><td>固定 +1，另有 25% 機率再 +1</td></tr>
+                  <tr><td>琥珀瓜（每格 3 個）</td><td>15% 機率 +1</td><td>30% 機率 +1</td><td>45% 機率 +1</td><td>60% 機率 +1</td><td>75% 機率 +1</td></tr>
+                  <tr><td>月光花（每格 2 個）</td><td>10% 機率 +1</td><td>20% 機率 +1</td><td>30% 機率 +1</td><td>40% 機率 +1</td><td>50% 機率 +1</td></tr>
                 </tbody>
               </table>
             </div>

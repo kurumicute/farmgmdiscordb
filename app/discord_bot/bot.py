@@ -12,6 +12,7 @@ from discord.ext import commands
 from app.config import Settings, get_settings
 from app.db.check import StartupCheckError, check_database
 from app.db.session import make_engine, make_session_factory
+from app.discord_bot import latency
 from app.discord_bot.commands import FarmCommands, register
 from app.discord_bot.runner import ServiceRunner
 from app.music import player as music
@@ -104,12 +105,14 @@ class FarmBot(commands.Bot):
         if music_embedded(settings):
             music.setup(self, music_config(settings))
         self._settle_task: asyncio.Task | None = None
+        self._latency_task: asyncio.Task | None = None
 
     async def setup_hook(self) -> None:
         await self.cleanup_fishing()
         await self.sync_commands()
         if music_embedded(self.settings):
             await music.connect_lavalink(self)
+        self._latency_task = asyncio.create_task(self._latency_loop())
         if self.settings.background_tasks_runner == "bot":
             self._settle_task = asyncio.create_task(self._settle_loop())
             logger.info("背景結算由 Bot 執行（每 %.0f 秒）", self.settings.ranking_settle_interval_seconds)
@@ -161,9 +164,19 @@ class FarmBot(commands.Bot):
                 logger.warning("自動結算失敗：%s", type(exc).__name__)
             await asyncio.sleep(self.settings.ranking_settle_interval_seconds)
 
+    async def _latency_loop(self) -> None:
+        """定期把面板延遲統計（開啟、換頁、操作的次數、平均、P95…）寫入日誌後歸零。"""
+        while not self.is_closed():
+            await asyncio.sleep(latency.LOG_INTERVAL_SECONDS)
+            try:
+                latency.STATS.log_and_reset()
+            except Exception:  # 統計失敗不影響 Bot
+                logger.exception("寫入面板延遲統計失敗")
+
     async def close(self) -> None:
-        if self._settle_task is not None:
-            self._settle_task.cancel()
+        for task in (self._settle_task, self._latency_task):
+            if task is not None:
+                task.cancel()
         await super().close()
 
 

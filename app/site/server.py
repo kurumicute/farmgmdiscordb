@@ -249,8 +249,8 @@ def build_progress() -> dict:
 
 
 def build_pets(crops) -> dict:
-    """寵物規則；cat_odds：每種啟用中的作物在貓咪 Lv1～最高級時，每格實際多收多少（與遊戲相同算法）。"""
-    levels = range(1, pets.MAX_LEVEL + 1)
+    """寵物規則；cat_odds：每種啟用中的作物在貓咪 Lv0～最高級時，每格實際多收多少（與遊戲相同算法）。"""
+    levels = range(0, pets.MAX_LEVEL + 1)
     return {
         "cat_odds": [
             {"name": c.name, "quantity": c.harvest_quantity,
@@ -258,7 +258,8 @@ def build_pets(crops) -> dict:
             for c in crops
         ],
         "buy_price": pets.BUY_PRICE, "upgrade_prices": list(pets.UPGRADE_PRICES),
-        "pct_per_level": pets.PCT_PER_LEVEL, "max_level": pets.MAX_LEVEL,
+        "base_pct": pets.BASE_PCT, "pct_per_level": pets.PCT_PER_LEVEL, "max_level": pets.MAX_LEVEL,
+        "max_pct": pets.bonus_pct(pets.MAX_LEVEL),
         "pets": [{"name": f"{p.emoji} {p.name}", "role": p.role, "effect": p.effect.format(pct="X")}
                  for p in pets.PETS.values()],
     }

@@ -1,6 +1,6 @@
 """寵物（貓、狗）：規則與數值，不碰資料庫。
 
-- 購買後是 Lv0（出現在農場圖的左上／右上，還沒有加成），之後升級到 Lv1–Lv4，每級加成 PCT_PER_LEVEL%。
+- 購買後是 Lv0（出現在農場圖的左上／右上），加成 BASE_PCT%；之後升級到 Lv1–Lv4，每級再 +PCT_PER_LEVEL%（Lv4 = 25%）。
 - 貓：趕走偷吃作物的老鼠，主人收成時收成數量 +X%（小數部分依機率多 1 個，見 bonus_quantity）。
 - 狗：趕走偷菜的小偷。防守設施（稻草人、警戒犬、防盜圍欄）都沒擋住時，狗再判定一次 X%；
   不受防守設施 60% 整體上限限制。擋下時偷菜紀錄的 blocked_by = DOG_BLOCKER。
@@ -13,7 +13,8 @@ from app.game import balance
 CAT, DOG = "cat", "dog"
 BUY_PRICE = 5_000
 UPGRADE_PRICES = (10_000, 20_000, 30_000, 40_000)  # Lv0→1、1→2、2→3、3→4
-PCT_PER_LEVEL = 5
+BASE_PCT = 5  # Lv0 的加成
+PCT_PER_LEVEL = 5  # 每升一級再加
 MAX_LEVEL = len(UPGRADE_PRICES)
 DOG_BLOCKER = "pet_dog"  # steal_records.blocked_by（狗擋下時）
 
@@ -42,7 +43,7 @@ def bonus_pct(level: int | None) -> int:
     """level 為 None 表示沒有這隻寵物。"""
     if level is None:
         return 0
-    return max(0, min(level, MAX_LEVEL)) * PCT_PER_LEVEL
+    return BASE_PCT + max(0, min(level, MAX_LEVEL)) * PCT_PER_LEVEL
 
 
 def upgrade_price(level: int) -> int | None:

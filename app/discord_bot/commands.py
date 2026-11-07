@@ -12,6 +12,7 @@
 import asyncio
 import io
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -20,6 +21,7 @@ from discord import app_commands
 
 from app.cli.commands import CommandHandler
 from app.clock import TAIPEI_TZ
+from app.discord_bot.latency import STATS as LATENCY
 from app.discord_bot.panels import FarmPanel, help_embed
 from app.discord_bot.render import Reply, to_messages
 from app.discord_bot.runner import RetryingService, ServiceRunner, player_message
@@ -243,6 +245,7 @@ class FarmCommands:
     async def open_panel(self, interaction: discord.Interaction) -> None:
         """開啟私密的農場面板。先 defer（3 秒規則），讀取資料後以 followup 送出面板。"""
         w = who(interaction)
+        started = time.perf_counter()
         try:
             await interaction.response.defer(ephemeral=True, thinking=True)
         except discord.NotFound:
@@ -266,6 +269,7 @@ class FarmCommands:
                 embed=embed, view=panel, ephemeral=True, wait=True, **({"files": panel.files} if panel.files else {})
             )
             panel.sent_digest = panel.image_digest
+            LATENCY.record("開啟面板", (time.perf_counter() - started) * 1000)
         except discord.HTTPException as exc:
             logger.warning("送出面板失敗：%s %s", type(exc).__name__, getattr(exc, "text", "")[:300])
 

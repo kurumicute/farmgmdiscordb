@@ -110,7 +110,7 @@ class FishingPages:
             await asyncio.sleep(max(0.0, delay))
             if self.page == "fish_game" and not self.is_finished():
                 try:
-                    await self.refresh(interaction)
+                    await self.refresh(interaction, metric=None)  # 自動更新不算玩家操作的延遲
                 except Exception:  # 計時更新失敗（例如互動權杖過期）不影響遊戲，玩家可手動重新整理
                     logger.warning("釣魚畫面自動更新失敗", exc_info=True)
 

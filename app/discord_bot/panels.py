@@ -27,6 +27,7 @@ from app.cli.commands import CommandHandler
 from app.config import OFFICIAL_GUILD_URL
 from app.discord_bot import farm_image
 from app.discord_bot.fishing_panel import FishingPages, fish_line
+from app.discord_bot.latency import STATS as LATENCY
 from app.discord_bot.progress_panel import ProgressPages
 from app.discord_bot.runner import player_message
 from app.discord_bot.special_shop_panel import SpecialShopPages
@@ -399,8 +400,11 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
 
     async def refresh(
         self, interaction: discord.Interaction, notice: str | None = None, *, budget: float | None = None,
-        prepared: tuple | None = None,
+        prepared: tuple | None = None, metric: str | None = "重繪", started: float | None = None,
     ) -> None:
+        """metric：延遲統計的項目（「換頁」「操作」…，加上頁面名稱；None 不記錄，例如釣魚畫面的自動更新）；
+        started：計時起點（time.perf_counter()），預設為呼叫當下。"""
+        started = time.perf_counter() if started is None else started
         # 重繪到送出畫面整段持有鎖：重繪會改寫面板共用的元件與圖片狀態（files／image_digest），
         # 連點時另一次重繪不能夾在這次「重繪完、送出前」之間（否則圖片會被拿掉再重新上傳）。
         # 等鎖的時間也算在直接回覆的時限內，超過時照常先 defer。
@@ -420,12 +424,15 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
             try:
                 # attachments：傳新檔案會取代舊圖，傳 [] 會移除，傳訊息上既有的附件則保留不重傳
                 attachments = self._attachments(interaction)
-                started = time.perf_counter()
+                deferred = interaction.response.is_done()
+                upload_started = time.perf_counter()
                 await self._show(interaction, embed, attachments)
                 self.sent_digest = self.image_digest
                 if attachments and attachments is self.files:  # 真的上傳了新圖片（沿用既有附件時不記錄）
                     logger.info("面板上傳圖片（玩家 #%s，頁面 %s，%d KB，%.0f ms）", self.player_id, self.page,
-                                self.image_size // 1024, (time.perf_counter() - started) * 1000)
+                                self.image_size // 1024, (time.perf_counter() - upload_started) * 1000)
+                if metric:
+                    LATENCY.record(f"{metric} {self.page}", (time.perf_counter() - started) * 1000, deferred)
             except discord.HTTPException as exc:
                 self.sent_digest = None  # 不確定訊息上現在是哪張圖，下次重新上傳
                 logger.warning("更新面板失敗：%s", type(exc).__name__)
@@ -445,7 +452,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
     async def goto(self, interaction: discord.Interaction, page: str, notice: str | None = None) -> None:
         self.page, self.picker, self.confirm = page, None, None
         self.fish_sell_ids = None
-        await self.refresh(interaction, notice)
+        await self.refresh(interaction, notice, metric="換頁")
 
     async def act(
         self, interaction: discord.Interaction, work: Callable[[], str], page: str | None = None, *, keep: bool = False,
@@ -456,6 +463,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         self.confirm = None
         loop = asyncio.get_running_loop()
         started = loop.time()
+        clock_started = time.perf_counter()  # 延遲統計用
         target = page or self.page
 
         async def perform() -> tuple[str | None, str | None, tuple | None]:
@@ -469,7 +477,9 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
 
         notice, error, prepared = await self._in_time(interaction, perform())
         if error is not None:
+            deferred = interaction.response.is_done()
             await self.show_error(interaction, error)
+            LATENCY.record(f"操作失敗 {target}", (time.perf_counter() - clock_started) * 1000, deferred)
             return
         if not keep:  # 購買後保留已選商品與數量按鈕，方便確認與加購
             self.picker = None
@@ -477,7 +487,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
             self.page = page
         # 操作與重新讀取共用同一段直接回覆的時間
         await self.refresh(interaction, cut(notice, 1500), budget=DIRECT_REPLY_SECONDS - (loop.time() - started),
-                           prepared=prepared)
+                           prepared=prepared, metric="操作", started=clock_started)
 
     def _work_then_prepare(self, work: Callable[[], str], page: str) -> tuple[str, tuple]:
         """在執行緒中：執行操作後接著讀取新畫面（一次排隊；原本操作與重讀各排隊一次）。
@@ -1324,13 +1334,13 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
             if x["next_price"] is None:
                 step = "✅ 已達最高等級"
             elif not x["owned"]:
-                step = f"🛒 領養 **{money(x['next_price'])}** 金（Lv0，升到 Lv1 後才有加成）"
+                step = f"🛒 領養 **{money(x['next_price'])}** 金（Lv0 就有 {x['next_pct']}%）"
             else:
                 step = f"⬆️ 升到 Lv{x['level'] + 1}：**{money(x['next_price'])}** 金 → {x['next_pct']}%"
             block = f"{pet_line(x)}\n　📝 {x['role']}\n　{step}"
             odds = x.get("odds")
             if odds:
-                when = f"目前 +{odds['pct']}%" if odds["current"] else f"升到 Lv1（+{odds['pct']}%）後"
+                when = f"目前 +{odds['pct']}%" if odds["current"] else f"領養後（+{odds['pct']}%）"
                 block += f"\n　🎲 **每格實際多收**（{when}）：\n" + "\n".join(
                     f"　　{crop_emoji(c['code'])} {c['name']}（每格 {c['quantity']} 個）：{c['text']}"
                     for c in odds["crops"])
@@ -1339,8 +1349,9 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         e = discord.Embed(title="🐾 ✦ 寵物 ✦", color=GREEN, description=sections(
             f"💰 你的金幣：**{money(d['gold'])}**",
             ("", blocks, "\n\n"),
-            f"領養 {money(pets.BUY_PRICE)} 金（Lv0）；升級 {ladder} 金，每級 +{pets.PCT_PER_LEVEL}%，"
-            f"最高 Lv{pets.MAX_LEVEL}。寵物會出現在農場圖的左上（狗）與右上（貓），不佔畜舍欄位。",
+            f"領養 {money(pets.BUY_PRICE)} 金（Lv0 +{pets.BASE_PCT}%）；升級 {ladder} 金，"
+            f"每級再 +{pets.PCT_PER_LEVEL}%，最高 Lv{pets.MAX_LEVEL}（{pets.bonus_pct(pets.MAX_LEVEL)}%）。"
+            "寵物會出現在農場圖的左上（狗）與右上（貓），不佔畜舍欄位。",
         ))
         pending = self.confirm.split(":", 1)[1] if (self.confirm or "").startswith("pet:") else None
         for x in d["pets"]:
@@ -2304,7 +2315,8 @@ def help_embed() -> discord.Embed:
     e.add_field(name="🐔 養殖與加工", inline=False, value=(
         "先建造畜舍再買動物，餵食後等待生產再收集。磨坊、烘焙坊、果醬工坊可以把作物加工成更值錢的商品。\n"
         f"「🐾 寵物」可以領養貓咪（收成數量增加）和狗狗（多擋一次偷菜），領養 {pets.BUY_PRICE:,} 金，"
-        f"升級後每級 +{pets.PCT_PER_LEVEL}%，最高 Lv{pets.MAX_LEVEL}；寵物會出現在農場圖上，不佔畜舍。"))
+        f"Lv0 就有 {pets.BASE_PCT}%，每升一級再 +{pets.PCT_PER_LEVEL}%，"
+        f"最高 Lv{pets.MAX_LEVEL}（{pets.bonus_pct(pets.MAX_LEVEL)}%）；寵物會出現在農場圖上，不佔畜舍。"))
     e.add_field(name="🥷 偷菜與防守", inline=False, value=(
         "可以偷同一伺服器成員已成熟的作物：在「🥷 偷菜」選一位玩家打開他的農田，再選要偷哪一格；"
         f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田，每人每天最多被 "
