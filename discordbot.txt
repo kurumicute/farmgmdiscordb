@@ -17,6 +17,9 @@
 
 **不需要再安裝**（舊版音樂才需要，現在已改用 Lavalink）：ffmpeg、yt-dlp、deno、Java。
 Lavalink 需要的 Java 已包含在 Docker 映像中，電腦本身不用裝 Java。
+例外：在使用者的 PC 用 `start.bat` **原生**執行音樂節點（不開 Docker Desktop，省記憶體）時，需要 Java 17 以上、Deno 與 Git；
+第一次執行會呼叫 `setup_music_node.bat` 下載 Lavalink.jar 並把 yt-cipher 編譯成 `music_node/yt-cipher/server.exe`
+（`music_node/` 不進 Git，新電腦要重新安裝），`stop_music.bat` 停止，日誌在 `music_node/logs`；Docker 版是 `start_music_node.bat`。
 
 ### Docker 映像（第一次 `docker compose up -d` 會自動下載）
 
@@ -107,7 +110,7 @@ Lavalink 需要的 Java 已包含在 Docker 映像中，電腦本身不用裝 Ja
    .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
    ```
 
-5. 建立資料表（目前 Migration head 為 0029；兩種方式擇一，第二種不需要步驟 4 的 .venv）：
+5. 建立資料表（目前 Migration head 為 0031；兩種方式擇一，第二種不需要步驟 4 的 .venv）：
    ```powershell
    .\.venv\Scripts\python.exe -m alembic upgrade head
    docker compose run --rm web python -m alembic upgrade head
@@ -128,7 +131,7 @@ Lavalink 需要的 Java 已包含在 Docker 映像中，電腦本身不用裝 Ja
    ```
 
 8. 啟動：管理網站、介紹網站、Discord Bot 都在 Docker 的 Linux 容器執行（同一個映像 `farmgm-app`，由專案的 `Dockerfile` 建置）。
-   雙擊 `start.bat`，或：
+   雙擊 `start_docker.bat`，或：
    ```powershell
    docker compose up -d --build --wait     # 管理網站 http://127.0.0.1:8000、介紹網站 http://127.0.0.1:24444、Bot
    docker compose ps                       # web／site 應顯示 healthy
@@ -179,7 +182,7 @@ docker exec farmgm-postgres-1 sh -c 'pg_restore -U "$POSTGRES_USER" --clean --if
 - 開發時建議設定 `DISCORD_DEV_GUILD_ID`（指令立即同步到測試伺服器）。
 - 只有 `MUSIC_PREFIX_COMMANDS=true`（使用 `!play` 等前綴指令）時，才需要在 Developer Portal 開啟 Message Content Intent。
 - 想把音樂拆成獨立程序：另建一個 Discord 應用程式，設定 `MUSIC_BOT_TOKEN`（兩個程序不可共用 Token），
-  再另外執行 `docker compose --profile music up -d`（`start.bat` 偵測到 `MUSIC_BOT_TOKEN` 會自動啟動）。
+  再另外執行 `docker compose --profile music up -d`（`start_docker.bat` 偵測到 `MUSIC_BOT_TOKEN` 會自動啟動）。
 
 ---
 
@@ -199,10 +202,11 @@ docker exec farmgm-postgres-1 sh -c 'pg_restore -U "$POSTGRES_USER" --clean --if
 ## 八、資源需求（原電腦實測）
 
 - 全部容器合計約 560–620 MiB（優化前約 1,050 MiB；`docker stats` 實測）：
-  Lavalink 約 260 MiB（SerialGC、`-Xms64M`，上限 `LAVALINK_MAX_HEAP` 預設 512M）、yt-cipher 約 95 MiB（`MAX_THREADS=2`）、
+  Lavalink 約 170–260 MiB（SerialGC、`-Xms32M`、只用 C1 編譯器、`MALLOC_ARENA_MAX=2`，heap 上限 `LAVALINK_MAX_HEAP` 預設 256M；
+  2026-11-08 由約 400 MiB 降下來）、yt-cipher 約 30–95 MiB（`MAX_THREADS=1`）、
   PostgreSQL 約 30 MiB（`shared_buffers=32MB`，資料變大時再調高）、Bot／網站／介紹網站各約 70–80 MiB。
 - Windows 上的 VmmemWSL 還包含 Docker 本身（約 475 MiB）與 Linux 的磁碟快取，會停在上限附近；可用 `%UserProfile%\.wslconfig` 的
-  `[wsl2] memory=` 限制上限（改完要 `wsl --shutdown` 再重開 Docker Desktop，期間所有容器會停止；註解只用 ASCII，格式錯誤時 WSL 會直接忽略）。
+  `[wsl2] memory=` 限制上限、`[experimental] autoMemoryReclaim=dropcache` 讓閒置的快取還給 Windows（改完要 `wsl --shutdown` 再重開 Docker Desktop，期間所有容器會停止；註解只用 ASCII，格式錯誤時 WSL 會直接忽略）。
   原電腦實測 `memory=2GB` ＋ `.env` 的 `LAVALINK_MAX_HEAP=384M`：重建映像、loadtest 100 萬筆、bot_stresstest 200 人＋300 伺服器、
   music_stresstest 都通過，VM 程式用量高峰約 1.2 GB、swap 最多約 80 MB，VmmemWSL 約 2.05 GB。swap 持續增加時改回 3GB。
 - Docker 映像約 1.5 GB 磁碟空間。

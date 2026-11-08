@@ -42,7 +42,7 @@ from app.repositories import players as players_repo
 from app.repositories import steals as steals_repo
 from app.services.dto import ActionResult, ExternalContext, FarmStatus, GroupInfo, StealFarmView, StealTarget
 from app.services.fishing_service import FishingService
-from app.services.game_service import genetics_label
+from app.services.game_service import genetics_label, is_rare
 
 GUILD_ID_RE = re.compile(r"^[0-9]{1,20}$")
 LEADERBOARD_MAX = 50
@@ -451,9 +451,13 @@ class SocialService(FishingService):
                     item_code=item,
                     context_group_id=group_id,
                 )
+                if blocked_by == pets.DOG_BLOCKER:
+                    text = (f"🐶 偷菜失敗！{victim.display_name} 的狗狗發現了你，汪汪大叫把你趕跑，"
+                            f"第 {plot_number} 格的{crop_label}一個也沒偷到。")
+                else:
+                    text = f"🛡️ 偷菜失敗！{victim.display_name} 的{device}守住了第 {plot_number} 格的{crop_label}。"
                 return ActionResult(
-                    f"偷菜失敗！{victim.display_name} 的{device}守住了第 {plot_number} 格的{crop_label}。"
-                    "這株作物你已無法再偷。",
+                    text + "這株作物你已無法再偷。",
                     thief_farm.gold,
                     item_code=item,
                     quantity=0,
@@ -504,8 +508,11 @@ class SocialService(FishingService):
                 mutation=mutation,
             )
             tail = "，這塊土地已被偷光，恢復為空地" if emptied else ""
+            value = self._estimate_value(session, crop, quantity, quality, mutation)
+            head = "✨ 偷到稀有貨！" if is_rare(quality, mutation) else "🥷 得手了！"
             return ActionResult(
-                f"成功從 {victim.display_name} 的第 {plot_number} 格偷走 {quantity} 個{crop_label}{tail}。",
+                f"{head}成功從 {victim.display_name} 的第 {plot_number} 格偷走 {quantity} 個{crop_label}{tail}。\n"
+                f"📦 約值 {value:,} 金\n👀 {victim.display_name} 下次打開農場時會知道是你偷的",
                 thief_farm.gold,
                 item_code=item,
                 quantity=quantity,

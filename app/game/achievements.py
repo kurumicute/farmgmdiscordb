@@ -3,12 +3,18 @@
 - 每個成就看一個指標（metric）是否達到 target；指標由服務層從既有資料計算，因此歷史進度也會算進去。
 - 達成後在「成就」頁按領取才發獎（金幣、道具、稱號）；每個成就每座農場只能領一次。
 - 獎勵以道具與稱號為主、金幣少量，避免通膨；道具放不進倉庫時改發等值金幣（同每日簽到）。
-- 代碼一旦上線就不要改（已領取紀錄以代碼保存）；要調整門檻或獎勵可以直接改數值。
+- 代碼一旦上線就不要改（已領取紀錄以代碼保存）。門檻、金幣、道具與稱號可在管理網站調整
+  （feature_config 的 "achievements"，只存有修改的成就），一律經 active()／by_code() 讀取套用設定後的成就。
+- 改稱號名稱只影響之後領取的人，已經拿到的稱號維持原本的名稱。
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
-from app.game import balance
+from app.game import balance, feature_config
+from app.game.errors import ValidationError
+
+CONFIG_KEY = "achievements"
+PCT_METRICS = frozenset({"codex_crop_pct", "codex_fish_pct", "codex_pct"})
 
 TITLE_MAX_LEN = 20
 
@@ -75,7 +81,8 @@ class Achievement:
 
 F, E, P = balance.ITEM_FERTILIZER, balance.ITEM_EARTHWORM, balance.ITEM_PATROL_TICKET
 
-ACHIEVEMENTS: tuple[Achievement, ...] = (
+# 預設的成就（程式內建）；實際生效的是 active()（套用管理網站的設定）
+BASE_ACHIEVEMENTS: tuple[Achievement, ...] = (
     # 農耕
     Achievement("crops_100", "farm", "🌱", "初出茅廬", "crops", 100, gold=200),
     Achievement("crops_1000", "farm", "🌾", "勤勞農夫", "crops", 1_000, items={F: 10}, title="勤勞農夫"),
@@ -118,21 +125,95 @@ ACHIEVEMENTS: tuple[Achievement, ...] = (
     Achievement("codex_half", "collect", "📗", "收藏家", "codex_pct", 50, items={E: 2}),
     Achievement("codex_all", "collect", "📚", "博物學家", "codex_pct", 100, gold=5_000, title="博物學家"),
 )
-BY_CODE = {a.code: a for a in ACHIEVEMENTS}
+BASE_BY_CODE = {a.code: a for a in BASE_ACHIEVEMENTS}
 
 
 def _validate() -> None:
-    assert len(BY_CODE) == len(ACHIEVEMENTS), "成就代碼重複"
+    assert len(BASE_BY_CODE) == len(BASE_ACHIEVEMENTS), "成就代碼重複"
     cats = {c for c, _e, _n in CATEGORIES}
-    titles = [a.title for a in ACHIEVEMENTS if a.title]
+    titles = [a.title for a in BASE_ACHIEVEMENTS if a.title]
     assert len(titles) == len(set(titles)), "成就稱號重複"
-    for a in ACHIEVEMENTS:
+    for a in BASE_ACHIEVEMENTS:
         assert a.category in cats and a.metric in METRICS and a.target > 0, a.code
         assert not a.title or len(a.title) <= TITLE_MAX_LEN, a.code
         assert all(code in balance.ITEMS for code in a.items), a.code
 
 
 _validate()
+
+
+# ---------- 可調整的設定：{"items": {成就代碼: {"target", "gold", "items", "title"}}}（只列有修改的成就） ----------
+
+
+def editable(a: Achievement) -> dict:
+    return {"target": a.target, "gold": a.gold, "items": dict(a.items), "title": a.title}
+
+
+def _defaults() -> dict:
+    return {"items": {}}
+
+
+def validate_config(raw: dict) -> dict:
+    items = raw.get("items")
+    if not isinstance(items, dict):
+        raise ValidationError("成就設定格式不正確。")
+    out = {}
+    for code, values in items.items():
+        base = BASE_BY_CODE.get(code)
+        if base is None:
+            raise ValidationError(f"沒有「{code}」這個成就。")
+        if not isinstance(values, dict):
+            raise ValidationError(f"成就「{base.name}」的設定格式不正確。")
+        v = feature_config
+        high = 100 if base.metric in PCT_METRICS else 1_000_000_000_000
+        entry = {
+            "target": v.int_value(values.get("target", base.target), f"「{base.name}」的門檻", 1, high),
+            "gold": v.int_value(values.get("gold", base.gold), f"「{base.name}」的金幣", 0, 10_000_000),
+            "items": v.items_value(values.get("items", base.items), f"「{base.name}」的道具", max_kinds=3),
+            "title": v.title_value(values.get("title", base.title), f"「{base.name}」的稱號", TITLE_MAX_LEN),
+        }
+        if entry != editable(base):  # 和預設一樣的不必存
+            out[code] = entry
+    config = {"items": out}
+    titles = [a.title for a in apply_config(config) if a.title]
+    dup = {t for t in titles if titles.count(t) > 1}
+    if dup:
+        raise ValidationError(f"成就稱號不可重複：{'、'.join(sorted(dup))}。")
+    return config
+
+
+def apply_config(config: dict) -> tuple[Achievement, ...]:
+    """把設定套用到預設成就上（不改變目前生效的設定；存檔前檢查用）。"""
+    over = config["items"]
+    return tuple(replace(a, **{**over[a.code], "items": dict(over[a.code]["items"])}) if a.code in over else a
+                 for a in BASE_ACHIEVEMENTS)
+
+
+feature_config.register(CONFIG_KEY, "成就", _defaults, validate_config)
+
+_cache: tuple[int, tuple[Achievement, ...], dict[str, Achievement]] | None = None
+
+
+def _current() -> tuple[tuple[Achievement, ...], dict[str, Achievement]]:
+    global _cache
+    version = feature_config.version()
+    if _cache is None or _cache[0] != version:
+        rows = apply_config(feature_config.get(CONFIG_KEY))
+        _cache = (version, rows, {a.code: a for a in rows})
+    return _cache[1], _cache[2]
+
+
+def active() -> tuple[Achievement, ...]:
+    """目前生效的成就（套用管理網站的設定）。"""
+    return _current()[0]
+
+
+def by_code() -> dict[str, Achievement]:
+    return _current()[1]
+
+
+def titles() -> set[str]:
+    return {a.title for a in active() if a.title}
 
 
 def reached(a: Achievement, metrics: dict) -> bool:

@@ -48,8 +48,8 @@ def reward_gold(session_factory):
 
 
 def test_definitions_are_consistent():
-    assert 30 <= len(achievements.ACHIEVEMENTS) <= 40
-    assert all(a.description and achievements.reward_text(a) != "無" for a in achievements.ACHIEVEMENTS)
+    assert 30 <= len(achievements.active()) <= 40
+    assert all(a.description and achievements.reward_text(a) != "無" for a in achievements.active())
 
 
 def test_progress_counts_history_and_claim_once(admin, pid, clock, session_factory):

@@ -318,3 +318,30 @@ def test_admin_write_protection_and_group_endpoints_removed(client, service, soc
 
 def test_untrusted_host_rejected(client):
     assert client.get("/api/monitor/summary", headers={"host": "evil.example"}).status_code == 400
+
+
+def test_snapshot_reused_until_data_changes(session_factory, clock, service, player_id):
+    """沒有任何遊戲操作時沿用上一份快照（不重新掃描），有操作或超過最長沿用時間才重新查詢。"""
+    import asyncio
+
+    from app.services.monitor_service import MonitorService
+
+    monitor = MonitorService(session_factory, clock)
+    cache = SnapshotCache()
+
+    async def scenario():
+        first = await cache.get(monitor, 0)
+        clock.advance(5)
+        again = await cache.get(monitor, 0)
+        assert cache.builds == 1 and again["generated_at"] == first["generated_at"]
+        assert again["server_time"] != first["server_time"]  # 伺服器時間仍然更新
+        service.buy_seeds(player_id, "wheat", 1)
+        changed = await cache.get(monitor, 0)
+        assert cache.builds == 2 and changed["summary"]["total_gold"] == 490
+        await cache.get(monitor, 0, force=True)  # 使用者按重新整理：一定重新查詢
+        assert cache.builds == 3
+        cache._built_at -= SnapshotCache.STALE_MAX_SECONDS  # 超過最長沿用時間
+        await cache.get(monitor, 0)
+        assert cache.builds == 4
+
+    asyncio.run(scenario())

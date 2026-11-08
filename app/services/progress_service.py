@@ -22,17 +22,19 @@ from app.db.models import (
     WeeklyShopPurchase,
     WorldBossRewardClaim,
 )
-from app.game import achievements, balance, checkin, exploration, rules, special_shop
+from app.game import achievements, balance, checkin, exploration, pets, rules, special_shop
 from app.game.errors import AlreadyExistsError, InsufficientGoldError, NotFoundError, ValidationError
-from app.game.rules import EventType
+from app.game.rules import EventType, PlotState
 from app.repositories import animals as animals_repo
 from app.repositories import codex as codex_repo
 from app.repositories import crops as crops_repo
 from app.repositories import farms as farms_repo
+from app.repositories import feedback as feedback_repo
 from app.repositories import fishing as fishing_repo
 from app.repositories import inventory as inventory_repo
 from app.repositories import titles as titles_repo
 from app.services.dto import ActionResult
+from app.services.game_service import long_duration
 from app.services.world_boss_service import WorldBossService
 
 # 圖鑑分類：(代碼, 圖示, 名稱)
@@ -44,9 +46,18 @@ CODEX_CATEGORIES = (
     ("fish", "🐟", "魚類"),
 )
 QUALITY_NAMES = list(balance.QUALITIES.values())  # 依 0–3 排列：普通、優良、稀有、傳說
-TITLE_SOURCES = {"world_boss": "世界 Boss", "shop": "稱號商店"}
+TITLE_SOURCES = {"world_boss": "世界 Boss", "shop": "稱號商店", "admin": "管理員"}
 
-assert not {a.title for a in achievements.ACHIEVEMENTS} & set(special_shop.TITLE_PRICES), "商店稱號與成就稱號重複"
+assert not {a.title for a in achievements.BASE_ACHIEVEMENTS} & {t for t, _p in special_shop.title_shop()}, \
+    "商店稱號與成就稱號重複"
+
+
+def title_source(source: str) -> str:
+    """稱號來源的顯示名稱：成就名稱、世界 Boss、稱號商店或管理員。"""
+    if source.startswith("achievement:"):
+        a = achievements.BASE_BY_CODE.get(source.split(":", 1)[1])
+        return a.name if a else source
+    return TITLE_SOURCES.get(source, source)
 
 
 def _pct(value: int, total: int) -> int:
@@ -264,7 +275,7 @@ class ProgressService(WorldBossService):
         metrics = self._achievement_metrics(session, farm, categories)
         claimed = self._claimed(session, farm.id)
         rows = []
-        for a in achievements.ACHIEVEMENTS:
+        for a in achievements.active():
             value = metrics.get(a.metric, 0)
             state = "claimed" if a.code in claimed else ("ready" if value >= a.target else "progress")
             rows.append({
@@ -281,6 +292,70 @@ class ProgressService(WorldBossService):
             "total": len(rows),
         }
 
+    # ---------- 操作回饋：圖鑑與成就標記、歡迎回來摘要 ----------
+
+    def _progress_marks(self, session: Session, farm: Farm) -> dict:
+        """已登記的圖鑑項目與可領取的成就（面板比較操作前後，顯示「新圖鑑」「成就達成」）。"""
+        cats = self._codex_categories(session, farm.id)
+        view = self._achievement_view(session, farm, cats)
+        codex = {f"{c['key']}:{e['code']}": e["name"] for c in cats for e in c["entries"] if e["got"]}
+        return {
+            "codex": codex, "codex_total": sum(c["total"] for c in cats),
+            "ready": {r["code"]: f"{r['emoji']} {r['name']}" for r in view["rows"] if r["state"] == "ready"},
+        }
+
+    def progress_marks(self, player_id: int) -> dict:
+        """只讀取不鎖。"""
+        with self._transaction() as session:
+            return self._progress_marks(session, self._farm_for_read(session, player_id))
+
+    AWAY_MIN_SECONDS = 1800  # 離開超過 30 分鐘才顯示「你不在的時候」
+
+    def welcome_back(self, player_id: int) -> dict:
+        """打開面板時呼叫：記錄這次的時間，離開夠久時回傳期間發生的事（lines），並附上圖鑑與成就標記。"""
+        now = self._clock.now()
+        with self._transaction() as session:
+            farm = self._farm_for_read(session, player_id)
+            prev = feedback_repo.touch_seen(session, farm.id, now)
+            marks = self._progress_marks(session, farm)
+            lines = []
+            if prev is not None and (now - prev).total_seconds() >= self.AWAY_MIN_SECONDS:
+                lines = self._away_lines(session, farm, prev, now, marks)
+            return {"lines": lines, "marks": marks}
+
+    def _away_lines(self, session: Session, farm: Farm, since: datetime, now: datetime, marks: dict) -> list[str]:
+        s = feedback_repo.steals_against(session, farm.player_id, since)
+        lines = []
+        if s["stolen_times"]:
+            who = "、".join(s["thieves"])
+            lines.append(f"🥷 被偷了 {s['stolen_times']} 次，共 {s['stolen_quantity']} 個作物（{who}）")
+        dog = s["blocked"].pop(pets.DOG_BLOCKER, 0)
+        if dog:
+            lines.append(f"🐶 狗狗擋下了 {dog} 次偷菜")
+        if s["blocked"]:
+            lines.append(f"🛡️ 防守設施擋下了 {sum(s['blocked'].values())} 次偷菜")
+        states = [rules.plot_state(p.crop_type_id, p.watered_at, p.ready_at, now)
+                  for p in farms_repo.list_plots(session, farm.id)]
+        ready = states.count(PlotState.READY)
+        if ready:
+            lines.append(f"🌾 {ready} 格作物成熟了，可以收成")
+        withered = states.count(PlotState.WITHERED)
+        if withered:
+            lines.append(f"🥀 {withered} 格作物乾枯了，記得清除")
+        back = session.scalar(
+            select(func.count()).select_from(ExplorationLog)
+            .where(ExplorationLog.farm_id == farm.id, ExplorationLog.claimed_at.is_(None),
+                   ExplorationLog.next_available_at <= now)
+        )
+        if back:
+            lines.append("⛰️ 探險隊回來了，到「山洞」領取戰利品")
+        if marks["ready"]:
+            lines.append(f"🏅 有 {len(marks['ready'])} 個成就可以領取")
+        if not lines:
+            return []
+        away = long_duration(int((now - since).total_seconds()))
+        return [f"🌙 歡迎回來！你離開了 {away}，這段時間："] + [f"・{x}" for x in lines]
+
     def claim_achievements(self, player_id: int) -> ActionResult:
         """一次領取所有已達成但還沒領的成就獎勵（金幣、道具、稱號）。"""
         with self._transaction() as session:
@@ -288,7 +363,7 @@ class ProgressService(WorldBossService):
             now = self._clock.now()
             metrics = self._achievement_metrics(session, farm)
             claimed = self._claimed(session, farm.id)
-            ready = [a for a in achievements.ACHIEVEMENTS if a.code not in claimed and achievements.reached(a, metrics)]
+            ready = [a for a in achievements.active() if a.code not in claimed and achievements.reached(a, metrics)]
             if not ready:
                 raise ValidationError("目前沒有可以領取的成就獎勵。")
             lines, titles, converted_any = [], [], False
@@ -322,10 +397,7 @@ class ProgressService(WorldBossService):
     @staticmethod
     def _titles(session: Session, farm: Farm) -> dict:
         owned = [
-            {"title": t.title, "obtained_at": t.obtained_at,
-             "source": (achievements.BY_CODE[t.source.split(":", 1)[1]].name
-                        if t.source.startswith("achievement:") and t.source.split(":", 1)[1] in achievements.BY_CODE
-                        else TITLE_SOURCES.get(t.source, t.source))}
+            {"title": t.title, "obtained_at": t.obtained_at, "source": title_source(t.source)}
             for t in titles_repo.owned(session, farm.id)
         ]
         return {"current": farm.title, "owned": owned}
@@ -370,10 +442,10 @@ class ProgressService(WorldBossService):
             return {
                 "gold": farm.gold,
                 "greenhouse": {
-                    "level": level, "max": special_shop.GREENHOUSE_MAX_LEVEL,
+                    "level": level, "max": special_shop.greenhouse_max_level(),
                     "pct": special_shop.greenhouse_pct(level), "next_price": special_shop.greenhouse_price(level),
                     "next_pct": special_shop.greenhouse_pct(level + 1),
-                    "per_level": special_shop.GREENHOUSE_PCT_PER_LEVEL,
+                    "per_level": special_shop.greenhouse_pct_per_level(),
                 },
                 "weekly": {
                     "week_start": start, "ends_at": special_shop.week_ends_at(start),
@@ -384,7 +456,7 @@ class ProgressService(WorldBossService):
                         for o in self._weekly_offers(session, start)
                     ],
                 },
-                "titles": [{"title": t, "price": price, "owned": t in owned} for t, price in special_shop.TITLE_SHOP],
+                "titles": [{"title": t, "price": price, "owned": t in owned} for t, price in special_shop.title_shop()],
             }
 
     def buy_weekly_deal(self, player_id: int, crop_code: str, quantity: int) -> ActionResult:
@@ -426,7 +498,7 @@ class ProgressService(WorldBossService):
 
     def buy_title(self, player_id: int, title: str) -> ActionResult:
         """稱號商店：用金幣買稱號，買到後可以在「🎖️ 稱號」選用。每個稱號只能買一次。"""
-        price = special_shop.TITLE_PRICES.get(title)
+        price = special_shop.title_price(title)
         if price is None:
             raise NotFoundError(f"稱號商店沒有「{title}」。")
         with self._transaction() as session:

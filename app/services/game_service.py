@@ -44,6 +44,8 @@ from app.repositories import crops as crops_repo
 from app.repositories import events as events_repo
 from app.repositories import farm_stats as farm_stats_repo
 from app.repositories import farms as farms_repo
+from app.repositories import feature_settings as feature_settings_repo
+from app.repositories import feedback as feedback_repo
 from app.repositories import genetics as genetics_repo
 from app.repositories import groups as groups_repo
 from app.repositories import inventory as inventory_repo
@@ -60,6 +62,7 @@ from app.services.dto import (
     CropInfo,
     EffectStatus,
     FarmStatus,
+    HarvestDetail,
     Inventory,
     InventoryEntry,
     PlayerInfo,
@@ -127,6 +130,7 @@ class GameService:
         batch = self._current_batch()
         if batch is None:
             with self._session_factory.begin() as session:
+                feature_settings_repo.refresh(session)  # 管理網站調整的新功能規則（每 10 秒最多讀一次）
                 yield session
             return
         # 在 run_batch 中：沿用共用交易，由 run_batch 統一提交或回滾
@@ -155,6 +159,7 @@ class GameService:
             registry = _batches.by_factory = {}
         key = id(self._session_factory)
         with self._session_factory.begin() as session, txcache.read_scope(session):
+            feature_settings_repo.refresh(session)
             registry[key] = batch = _Batch(session)
             try:
                 result = fn()
@@ -751,12 +756,18 @@ class GameService:
                 raise PlotNotReadyError(f"第 {plot_number} 格的{crop.name}尚未成熟，還需要 {left}。")
             if state == PlotState.WITHERED:
                 raise PlotWitheredError(f"第 {plot_number} 格的{crop.name}已經乾枯，請用 clear {plot_number} 清除。")
-            message, quantity, item = self._harvest_locked(session, farm, plot, crop)
+            details: list[HarvestDetail] = []
+            message, quantity, item = self._harvest_locked(session, farm, plot, crop, details)
+            message = harvest_highlight(details) + message + harvest_value_note(details)
+            message += self._record_note(session, farm, "harvest_quantity", quantity)
             message += self._auto_plant(session, farm)
             return ActionResult(message, farm.gold, item_code=item, quantity=quantity)
 
-    def _harvest_locked(self, session: Session, farm: Farm, plot, crop: CropType) -> tuple[str, int, str]:
-        """收成一格已成熟、已鎖定的土地；倉庫不足時在修改任何資料前丟出 WarehouseFullError。"""
+    def _harvest_locked(
+        self, session: Session, farm: Farm, plot, crop: CropType, details: list[HarvestDetail] | None = None,
+    ) -> tuple[str, int, str]:
+        """收成一格已成熟、已鎖定的土地；倉庫不足時在修改任何資料前丟出 WarehouseFullError。
+        details：要產生結果摘要時傳入，收成成功後加入這格的明細。"""
         # 大風颳走：收成時每格少 N 個，至少保留 1 個（在收成當下判斷）
         wind = event_rules.bonus(self._active_events(session), "harvest_loss", crop.id)
         lost = min(wind.value, max(0, plot.remaining_quantity - 1))
@@ -800,7 +811,35 @@ class GameService:
         if auto_sell:
             price, income = self._sell_locked(session, farm, crop, quantity, quality, mutation, source="自動販售機：")
             message += f" 🏪 自動販售機賣出（單價 {price}），金幣 +{income}。"
+            value = income
+        elif details is not None:
+            value = self._estimate_value(session, crop, quantity, quality, mutation)
+        if details is not None:
+            details.append(HarvestDetail(name, quantity, quality, mutation, cat_bonus, stolen, lost, value, auto_sell))
         return message, quantity, item
+
+    def _record_note(self, session: Session, farm: Farm, key: str, value: int) -> str:
+        """value 打破個人紀錄時回傳「🏆 新紀錄！」那一行（第一次記錄不顯示）；呼叫端必須已鎖定農場。"""
+        if value <= 0:
+            return ""
+        old = feedback_repo.bump_record(session, farm.id, key, value)
+        return record_note(key, value, old) if old is not None else ""
+
+    def note_sale(self, player_id: int, income: int) -> str:
+        """面板販售後檢查「一次販售」個人紀錄（全部販售是多筆交易，由面板加總後呼叫）。"""
+        if income <= 0:
+            return ""
+        with self._transaction() as session:
+            farm = self._locked_farm(session, player_id)
+            return self._record_note(session, farm, "sale_income", income)
+
+    def _estimate_value(self, session: Session, crop: CropType, quantity: int, quality: str, mutation: str) -> int:
+        """依目前價目（含活動售價加成）估計這批作物賣掉能拿多少金幣；只用於訊息，不改任何資料。"""
+        sell = event_rules.bonus(self._active_events(session), "sell_price_pct", crop.id)
+        price = event_rules.apply_sell_bonus(
+            genetics.unit_price(crop.sell_price, quality, mutation, self._genetics(session)), sell.value
+        )
+        return price * quantity
 
     def clear_withered(self, player_id: int, plot_number: int) -> ActionResult:
         with self._transaction() as session:
@@ -892,21 +931,24 @@ class GameService:
             if not plots:
                 raise ValidationError("目前沒有可收成的作物。")
             done, total, stopped = 0, 0, ""
+            details: list[HarvestDetail] = []
             with self._bulk(session):
                 for plot in plots:
                     try:
                         _msg, quantity, _item = self._harvest_locked(
-                            session, farm, plot, crops_repo.get(session, plot.crop_type_id)
+                            session, farm, plot, crops_repo.get(session, plot.crop_type_id), details
                         )
                     except WarehouseFullError as exc:
-                        stopped = f" 還有 {len(plots) - done} 格沒收：{exc}"
+                        stopped = f"\n⚠️ 還有 {len(plots) - done} 格沒收：{exc}"
                         break
                     done += 1
                     total += quantity
                 if not done:
-                    raise WarehouseFullError(stopped.strip())
+                    raise WarehouseFullError(stopped.replace("⚠️", "").strip())
+                record = self._record_note(session, farm, "harvest_quantity", total)
                 auto = self._auto_plant(session, farm)
-            return ActionResult(f"收成 {done} 格，共 {total} 個作物。{stopped}{auto}", farm.gold, quantity=total)
+            return ActionResult(harvest_summary(details) + record + stopped + (f"\n{auto.strip()}" if auto else ""),
+                                farm.gold, quantity=total)
 
     def clear_all_withered(self, player_id: int) -> ActionResult:
         with self._transaction() as session:
@@ -948,7 +990,8 @@ class GameService:
             name = genetics.produce_name(crop, mutation) + genetics_label(quality, mutation)
             price, income = self._sell_locked(session, farm, crop, quantity, quality, mutation)
             return ActionResult(
-                f"已出售 {quantity} 個{name}（單價 {price}），獲得 {income} 金幣。", farm.gold, income, item, quantity
+                f"已出售 {quantity} 個{name}（單價 {price}），獲得 {income} 金幣。{gold_change(farm.gold, income)}",
+                farm.gold, income, item, quantity,
             )
 
     def _sell_locked(
@@ -1008,7 +1051,9 @@ class GameService:
             tail = f"下一次擴建需要 {nxt} 金幣。" if nxt else "農田已達上限。"
             return ActionResult(
                 f"擴建完成！農場升到 {farm.level} 級，新增第 {numbers[0]} 格，"
-                f"共 {total} 格土地，花費 {cost} 金幣。{tail}{auto}",
+                f"共 {total} 格土地，花費 {cost} 金幣。\n"
+                f"🌱 農田 {total - len(numbers)} → {total} 格｜⭐ 等級 {farm.level - 1} → {farm.level}"
+                f"{gold_change(farm.gold, -cost)}\n{tail}{auto}",
                 farm.gold,
                 -cost,
                 quantity=len(numbers),
@@ -1038,7 +1083,9 @@ class GameService:
             nxt = balance.warehouse_expansion_price(farm.warehouse_capacity)
             tail = f"下一次擴大需要 {nxt} 金幣。" if nxt else "已達最大容量。"
             return ActionResult(
-                f"倉庫擴大為 {farm.warehouse_capacity} 格，花費 {price} 金幣。{tail}", farm.gold, -price,
+                f"倉庫擴大為 {farm.warehouse_capacity} 格，花費 {price} 金幣。\n"
+                f"📦 倉庫 {before} → {farm.warehouse_capacity} 格{gold_change(farm.gold, -price)}\n{tail}",
+                farm.gold, -price,
                 balance.WAREHOUSE_EXPANSION_CODE, 1,
             )
 
@@ -1048,7 +1095,7 @@ class GameService:
             farm = self._locked_farm(session, player_id)
             price = special_shop.greenhouse_price(farm.greenhouse_level)
             if price is None:
-                raise ValidationError(f"溫室已經是最高等級 {special_shop.GREENHOUSE_MAX_LEVEL} 級。")
+                raise ValidationError(f"溫室已經是最高等級 {special_shop.greenhouse_max_level()} 級。")
             if farm.gold < price:
                 raise InsufficientGoldError(f"金幣不足：溫室升級需要 {price}，目前只有 {farm.gold}。")
             farm.gold -= price
@@ -1062,7 +1109,9 @@ class GameService:
             nxt = special_shop.greenhouse_price(farm.greenhouse_level)
             tail = f"下一級需要 {nxt:,} 金幣。" if nxt else "已達最高等級。"
             return ActionResult(
-                f"🏡 溫室升到 {farm.greenhouse_level} 級，之後澆水的作物生長時間 -{pct}%。{tail}", farm.gold, -price,
+                f"🏡 溫室升到 {farm.greenhouse_level} 級，之後澆水的作物生長時間 -{pct}%。\n"
+                f"⏱️ 生長時間 -{special_shop.greenhouse_pct(farm.greenhouse_level - 1)}% → -{pct}%"
+                f"{gold_change(farm.gold, -price)}\n{tail}", farm.gold, -price,
                 special_shop.GREENHOUSE_CODE, 1,
             )
 
@@ -1508,6 +1557,81 @@ class GameService:
                 now,
             )
             return _crop_info(crop).__dict__
+
+
+RARE_QUALITIES = ("rare", "legendary")
+RARE_MUTATIONS = ("giant", "golden", "variant")
+
+
+RECORD_LABELS = {"harvest_quantity": ("一次收成", "個作物"), "sale_income": ("一次販售", "金")}
+
+
+def record_note(key: str, value: int, old: int) -> str:
+    label, unit = RECORD_LABELS[key]
+    return f"\n🏆 新紀錄！{label} {value:,} {unit}（舊紀錄 {old:,}）"
+
+
+def is_rare(quality: str | None, mutation: str | None) -> bool:
+    return quality in RARE_QUALITIES or mutation in RARE_MUTATIONS
+
+
+def gold_change(gold_after: int, delta: int) -> str:
+    """金幣變化，例如「💰 3,000 → 4,240」。"""
+    return f"\n💰 金幣 {gold_after - delta:,} → {gold_after:,}"
+
+
+def _rare(d: HarvestDetail) -> bool:
+    return is_rare(d.quality, d.mutation)
+
+
+def _group_names(details: list[HarvestDetail]) -> list[tuple[str, int]]:
+    grouped: dict[str, int] = {}
+    for d in details:
+        grouped[d.name] = grouped.get(d.name, 0) + d.quantity
+    return list(grouped.items())
+
+
+def harvest_highlight(details: list[HarvestDetail]) -> str:
+    """有稀有品質或突變時的醒目第一行；沒有時為空字串。"""
+    rare = [x for x in details if _rare(x)]
+    if not rare:
+        return ""
+    legendary = any(x.quality == "legendary" or x.mutation in ("golden", "variant") for x in rare)
+    head = "🎉 大豐收！" if legendary else "✨ 稀有收穫！"
+    names = "、".join(f"{name} ×{qty}" for name, qty in _group_names(rare)[:6])
+    return f"{head}{names}\n"
+
+
+def harvest_value_note(details: list[HarvestDetail]) -> str:
+    """收成的價值與寵物加成（單格收成時接在訊息後面）。"""
+    parts = []
+    sold = sum(x.value for x in details if x.sold)
+    kept = sum(x.value for x in details if not x.sold)
+    if kept:
+        parts.append(f"📦 約值 {kept:,} 金（到「販售」賣出）")
+    if sold:
+        parts.append(f"🏪 自動販售機賣出，金幣 +{sold:,}")
+    cat = sum(x.cat_bonus for x in details)
+    if cat:
+        parts.append(f"🐱 貓咪多收 +{cat} 個")
+    return "".join(f"\n{p}" for p in parts)
+
+
+def harvest_summary(details: list[HarvestDetail]) -> str:
+    """一鍵收成的結果：稀有收穫、各作物數量、價值、寵物加成與損失。"""
+    total = sum(x.quantity for x in details)
+    lines = [f"🧺 收成 {len(details)} 格，共 {total} 個作物。"]
+    groups = _group_names(details)
+    shown = "、".join(f"{name} ×{qty}" for name, qty in groups[:8])
+    if len(groups) > 8:
+        shown += f" 等 {len(groups)} 種"
+    lines.append(shown)
+    text = harvest_highlight(details) + "\n".join(lines) + harvest_value_note(details)
+    stolen, lost = sum(x.stolen for x in details), sum(x.lost for x in details)
+    losses = ([f"被偷走 {stolen} 個"] if stolen else []) + ([f"大風颳走 {lost} 個"] if lost else [])
+    if losses:
+        text += f"\n😢 {'、'.join(losses)}"
+    return text
 
 
 def genetics_label(quality: str | None, mutation: str | None) -> str:

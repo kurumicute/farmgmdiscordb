@@ -75,15 +75,21 @@ class SnapshotCache:
     """所有 WebSocket 連線共用的監控快照：同時開多個分頁時，同一段時間內只查詢一次資料庫。
 
     快照在 max_age 秒內直接沿用；同時有多個連線要更新時，由鎖保證只有一個去查詢，其餘等它完成後沿用結果。
+    超過 max_age 時先查「資料版本」（幾個主鍵最大值）：沒有任何遊戲操作就沿用上一份快照（只更新 server_time），
+    不再掃描全部土地與交易；但最長 STALE_MAX_SECONDS 秒仍會重新查詢一次（土地成熟、枯萎是隨時間變化的）。
     查詢失敗不快取（下一個連線會重試）。"""
 
     FORCE_MAX_AGE = 0.5  # 使用者按「重新整理」時：半秒內剛查過的結果仍可沿用（多分頁同時重新整理只查一次）
+    STALE_MAX_SECONDS = 60.0
 
     def __init__(self) -> None:
         self._value: dict | None = None
         self._at = 0.0
+        self._built_at = 0.0  # 上一次完整查詢的時間
+        self._version: tuple | None = None
         self._lock: asyncio.Lock | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self.builds = 0  # 完整查詢的次數（測試用）
 
     def _get_lock(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
@@ -91,13 +97,23 @@ class SnapshotCache:
             self._lock, self._loop = asyncio.Lock(), loop
         return self._lock
 
-    async def get(self, service: MonitorService, max_age: float) -> dict:
+    async def get(self, service: MonitorService, max_age: float, *, force: bool = False) -> dict:
+        """force：使用者按「重新整理」，一定重新查詢（但 FORCE_MAX_AGE 內剛查過的仍沿用）。"""
         async with self._get_lock():
-            loop_time = asyncio.get_running_loop().time()
-            if self._value is not None and loop_time - self._at < max_age:
+            loop = asyncio.get_running_loop()
+            if self._value is not None and loop.time() - self._at < max_age:
+                return self._value
+            version = await run_in_threadpool(service.data_version)
+            if (not force and self._value is not None and version == self._version
+                    and loop.time() - self._built_at < self.STALE_MAX_SECONDS):
+                # 沒有任何遊戲操作：沿用上一份（generated_at 不變，前端不重繪），只更新伺服器時間
+                self._value = {**self._value, "server_time": jsonable_encoder(service.now())}
+                self._at = loop.time()
                 return self._value
             snapshot = jsonable_encoder(await run_in_threadpool(service.snapshot))
-            self._value, self._at = snapshot, asyncio.get_running_loop().time()
+            self._value, self._version = snapshot, version
+            self._at = self._built_at = loop.time()
+            self.builds += 1
             return snapshot
 
 
@@ -122,7 +138,7 @@ async def monitor_ws(websocket: WebSocket) -> None:
     try:
         while True:
             try:
-                snapshot = await cache.get(service, max_age)
+                snapshot = await cache.get(service, max_age, force=max_age == SnapshotCache.FORCE_MAX_AGE)
                 await websocket.send_json({"type": "snapshot", "data": snapshot})
             except SQLAlchemyError as exc:
                 logger.warning("監控快照讀取失敗：%s", type(exc).__name__)

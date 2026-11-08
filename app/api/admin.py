@@ -435,6 +435,109 @@ async def set_inventory(request: Request, player_id: PlayerId, body: InventoryBo
     )
 
 
+# ---------- 新功能：規則設定（簽到、寵物、特賣與升級、成就） ----------
+
+FeatureKey = Annotated[str, Path(pattern="^(checkin|pets|special_shop|achievements)$")]
+
+
+@router.get("/feature-settings")
+async def get_feature_settings(request: Request) -> dict:
+    return await _call(_social(request).feature_settings)
+
+
+@router.put("/feature-settings/{key}")
+async def update_feature_settings(request: Request, key: FeatureKey, body: dict, actor: Actor) -> dict:
+    return await _call(_social(request).update_feature_settings, actor, key, body)
+
+
+@router.delete("/feature-settings/{key}")
+async def reset_feature_settings(request: Request, key: FeatureKey, actor: Actor) -> dict:
+    return await _call(_social(request).reset_feature_settings, actor, key)
+
+
+# ---------- 新功能：單一玩家（溫室、寵物、稱號、簽到、成就、圖鑑、每週特賣） ----------
+
+
+class LevelBody(BaseModel):
+    level: int | None = Field(default=None, ge=0, le=100)  # 寵物：None = 移除
+
+
+class TitleBody(BaseModel):
+    title: str | None = Field(default=None, max_length=40)
+
+
+class StreakBody(BaseModel):
+    streak: int = Field(ge=1, le=10_000)
+
+
+class ClaimedBody(BaseModel):
+    claimed: bool
+
+
+class CodexBody(BaseModel):
+    quantity: int = Field(ge=0, le=1_000_000_000_000)
+    best_quality: int = Field(ge=0, le=3)
+
+
+ItemCode = Annotated[str, Path(min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_]{1,63}$")]
+
+
+@router.get("/players/{player_id}/progress")
+async def get_player_progress(request: Request, player_id: PlayerId) -> dict:
+    return await _call(_social(request).admin_progress, player_id)
+
+
+@router.put("/players/{player_id}/greenhouse")
+async def set_greenhouse(request: Request, player_id: PlayerId, body: LevelBody, actor: Actor) -> dict:
+    if body.level is None:
+        raise HTTPException(status_code=422, detail="請填寫溫室等級。")
+    return await _call(_social(request).set_greenhouse_level, actor, player_id, body.level)
+
+
+@router.put("/players/{player_id}/pets/{pet_code}")
+async def set_pet(request: Request, player_id: PlayerId, pet_code: Annotated[str, Path(pattern="^(cat|dog)$")],
+                  body: LevelBody, actor: Actor) -> dict:
+    return await _call(_social(request).set_pet_level, actor, player_id, pet_code, body.level)
+
+
+@router.post("/players/{player_id}/titles", status_code=201)
+async def grant_title(request: Request, player_id: PlayerId, body: TitleBody, actor: Actor) -> dict:
+    return await _call(_social(request).grant_title, actor, player_id, body.title)
+
+
+@router.post("/players/{player_id}/titles/revoke")
+async def revoke_title(request: Request, player_id: PlayerId, body: TitleBody, actor: Actor) -> dict:
+    return await _call(_social(request).revoke_title, actor, player_id, body.title or "")
+
+
+@router.put("/players/{player_id}/title")
+async def set_active_title(request: Request, player_id: PlayerId, body: TitleBody, actor: Actor) -> dict:
+    return await _call(_social(request).set_active_title, actor, player_id, body.title)
+
+
+@router.put("/players/{player_id}/checkin")
+async def set_checkin_streak(request: Request, player_id: PlayerId, body: StreakBody, actor: Actor) -> dict:
+    return await _call(_social(request).set_checkin_streak, actor, player_id, body.streak)
+
+
+@router.put("/players/{player_id}/achievements/{code}")
+async def set_achievement(request: Request, player_id: PlayerId, code: CatalogCode, body: ClaimedBody,
+                          actor: Actor) -> dict:
+    return await _call(_social(request).set_achievement_claimed, actor, player_id, code, body.claimed)
+
+
+@router.put("/players/{player_id}/codex/{item_code}")
+async def set_codex(request: Request, player_id: PlayerId, item_code: ItemCode, body: CodexBody,
+                    actor: Actor) -> dict:
+    return await _call(_social(request).set_codex_entry, actor, player_id, item_code, body.quantity,
+                       body.best_quality)
+
+
+@router.delete("/players/{player_id}/weekly-purchases")
+async def reset_weekly(request: Request, player_id: PlayerId, actor: Actor) -> dict:
+    return await _call(_social(request).reset_weekly_purchases, actor, player_id)
+
+
 @router.put("/players/{player_id}/farm")
 async def set_farm_values(request: Request, player_id: PlayerId, body: FarmValuesBody, actor: Actor) -> dict:
     return await _call(

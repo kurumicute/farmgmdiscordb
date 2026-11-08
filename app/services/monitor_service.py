@@ -60,6 +60,9 @@ class MonitorService:
         local = now.astimezone(TAIPEI_TZ)
         return local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
 
+    def now(self) -> datetime:
+        return self._clock.now()
+
     # ---------- 個別查詢 ----------
 
     def summary(self) -> dict:
@@ -151,12 +154,24 @@ class MonitorService:
 
     # ---------- WebSocket 快照 ----------
 
+    def data_version(self) -> tuple:
+        """資料有沒有變的指標（只讀幾個主鍵索引的最大值，很便宜）：
+        遊戲交易（含建立農場、世界 Boss 捐獻）、偷菜、管理操作、釣魚。
+
+        值相同代表這段期間沒有任何遊戲操作，快照可以沿用（土地成熟等隨時間變化的部分由快照的最長沿用時間處理）。"""
+        with self._read_only() as session:
+            return tuple(session.execute(text(
+                "SELECT (SELECT max(id) FROM game_transactions), (SELECT max(id) FROM steal_records), "
+                "(SELECT max(id) FROM admin_actions), (SELECT max(id) FROM fishing_sessions)"
+            )).one())
+
     def snapshot(self, farm_limit: int = 200) -> dict:
         now = self._clock.now()
         with self._read_only() as session:
             rows, total = monitor_repo.farms(session, now, self._wither_cutoff(now), None, farm_limit, 0)
             return {
                 "server_time": now,
+                "generated_at": now,  # 快照實際查詢資料庫的時間（沿用時不變，前端據此判斷要不要重繪）
                 "summary": monitor_repo.summary(session, now, self._today_start(now), self._wither_cutoff(now)),
                 "farms": {"items": rows, "total": total},
                 "transactions": monitor_repo.transactions(session, 20),

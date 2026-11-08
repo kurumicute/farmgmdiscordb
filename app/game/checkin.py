@@ -1,25 +1,56 @@
 """每日簽到：以台灣日期為準每天一次，開啟農場面板時自動簽到並發放獎勵。
 
 - 昨天有簽到時連續天數 +1，中斷一天就從 1 重新計算。
-- 獎勵 7 天一輪（第 7 天最多），之後重新循環；以道具為主、金幣少量，避免通膨。
+- 獎勵預設 7 天一輪（第 7 天最多），之後重新循環；以道具為主、金幣少量，避免通膨。
+  每天的獎勵與循環天數可在管理網站調整（feature_config 的 "checkin"），一律經 rewards()／reward_for() 讀取。
 - 道具放不進倉庫時改發等值金幣（道具商店價格），自動簽到不會因倉庫滿而失敗。
 """
 
 from datetime import date, timedelta
 
-from app.game import balance
+from app.game import balance, feature_config
+from app.game.errors import ValidationError
 
-CYCLE_DAYS = 7
-# 第 1–7 天的獎勵：{"gold": 金幣, "items": {道具代碼: 數量}}
-REWARDS: tuple[dict, ...] = (
-    {"gold": 100, "items": {}},
-    {"gold": 0, "items": {balance.ITEM_FERTILIZER: 3}},
-    {"gold": 200, "items": {}},
-    {"gold": 0, "items": {balance.ITEM_PATROL_TICKET: 2}},
-    {"gold": 300, "items": {}},
-    {"gold": 0, "items": {balance.ITEM_FERTILIZER: 5}},
-    {"gold": 500, "items": {balance.ITEM_EARTHWORM: 1}},
-)
+CONFIG_KEY = "checkin"
+MAX_CYCLE_DAYS = 31
+
+
+def _defaults() -> dict:
+    # 第 1–7 天的獎勵：{"gold": 金幣, "items": {道具代碼: 數量}}
+    return {"rewards": [
+        {"gold": 100, "items": {}},
+        {"gold": 0, "items": {balance.ITEM_FERTILIZER: 3}},
+        {"gold": 200, "items": {}},
+        {"gold": 0, "items": {balance.ITEM_PATROL_TICKET: 2}},
+        {"gold": 300, "items": {}},
+        {"gold": 0, "items": {balance.ITEM_FERTILIZER: 5}},
+        {"gold": 500, "items": {balance.ITEM_EARTHWORM: 1}},
+    ]}
+
+
+def validate_config(raw: dict) -> dict:
+    days = raw.get("rewards")
+    if not isinstance(days, list) or not 1 <= len(days) <= MAX_CYCLE_DAYS:
+        raise ValidationError(f"簽到獎勵必須有 1–{MAX_CYCLE_DAYS} 天。")
+    out = []
+    for i, day in enumerate(days, 1):
+        if not isinstance(day, dict):
+            raise ValidationError(f"第 {i} 天的獎勵格式不正確。")
+        gold = feature_config.int_value(day.get("gold", 0), f"第 {i} 天的金幣", 0, 1_000_000)
+        items = feature_config.items_value(day.get("items"), f"第 {i} 天", max_kinds=3, max_qty=100)
+        out.append({"gold": gold, "items": items})
+    return {"rewards": out}
+
+
+feature_config.register(CONFIG_KEY, "每日簽到", _defaults, validate_config)
+
+
+def rewards() -> list[dict]:
+    return feature_config.get(CONFIG_KEY)["rewards"]
+
+
+def cycle_days() -> int:
+    return len(rewards())
 
 
 def next_streak(last_day: date | None, last_streak: int, today: date) -> int:
@@ -30,8 +61,9 @@ def next_streak(last_day: date | None, last_streak: int, today: date) -> int:
 
 
 def reward_for(streak: int) -> dict:
-    """連續第 streak 天的獎勵（7 天一輪）。"""
-    return REWARDS[(max(1, streak) - 1) % CYCLE_DAYS]
+    """連續第 streak 天的獎勵（cycle_days() 天一輪）。"""
+    days = rewards()
+    return days[(max(1, streak) - 1) % len(days)]
 
 
 def item_gold_value(item_code: str) -> int:

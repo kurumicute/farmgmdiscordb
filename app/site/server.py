@@ -40,6 +40,7 @@ from app.repositories import animals as animals_repo
 from app.repositories import catalog as catalog_repo
 from app.repositories import crops as crops_repo
 from app.repositories import events as events_repo
+from app.repositories import feature_settings as feature_settings_repo
 from app.repositories import fishing as fishing_repo
 from app.repositories import genetics as genetics_repo
 from app.services.world_boss_service import event_view
@@ -238,11 +239,11 @@ def build_progress() -> dict:
     """每日簽到、成就與圖鑑的規則（只有固定設定，沒有玩家資料）。"""
     cats = {key: (emoji, name) for key, emoji, name in achievements.CATEGORIES}
     return {
-        "checkin": [{"day": i, "reward": checkin.reward_text(r)} for i, r in enumerate(checkin.REWARDS, 1)],
+        "checkin": [{"day": i, "reward": checkin.reward_text(r)} for i, r in enumerate(checkin.rewards(), 1)],
         "achievements": [
             {"category": f"{cats[a.category][0]} {cats[a.category][1]}", "name": f"{a.emoji} {a.name}",
              "description": a.description, "reward": achievements.reward_text(a), "title": a.title}
-            for a in achievements.ACHIEVEMENTS
+            for a in achievements.active()
         ],
         "codex": ["作物（含珍稀變種）", "動物產品", "加工品", "山洞素材", "魚類"],
     }
@@ -250,16 +251,16 @@ def build_progress() -> dict:
 
 def build_pets(crops) -> dict:
     """寵物規則；cat_odds：每種啟用中的作物在貓咪 Lv0～最高級時，每格實際多收多少（與遊戲相同算法）。"""
-    levels = range(0, pets.MAX_LEVEL + 1)
+    levels = range(0, pets.max_level() + 1)
     return {
         "cat_odds": [
             {"name": c.name, "quantity": c.harvest_quantity,
              "levels": [pets.odds_text(c.harvest_quantity, pets.bonus_pct(lv)) for lv in levels]}
             for c in crops
         ],
-        "buy_price": pets.BUY_PRICE, "upgrade_prices": list(pets.UPGRADE_PRICES),
-        "base_pct": pets.BASE_PCT, "pct_per_level": pets.PCT_PER_LEVEL, "max_level": pets.MAX_LEVEL,
-        "max_pct": pets.bonus_pct(pets.MAX_LEVEL),
+        "buy_price": pets.buy_price(), "upgrade_prices": list(pets.upgrade_prices()),
+        "base_pct": pets.base_pct(), "pct_per_level": pets.pct_per_level(), "max_level": pets.max_level(),
+        "max_pct": pets.bonus_pct(pets.max_level()),
         "pets": [{"name": f"{p.emoji} {p.name}", "role": p.role, "effect": p.effect.format(pct="X")}
                  for p in pets.PETS.values()],
     }
@@ -271,14 +272,14 @@ def build_special_shop(session: Session, now: datetime) -> dict:
     crops = [special_shop.CropRef(c.code, c.name, c.seed_price, c.shop_buyable)
              for c in crops_repo.list_all(session, active_only=True)]
     return {
-        "greenhouse": {"per_level": special_shop.GREENHOUSE_PCT_PER_LEVEL,
-                       "prices": list(special_shop.GREENHOUSE_PRICES)},
+        "greenhouse": {"per_level": special_shop.greenhouse_pct_per_level(),
+                       "prices": list(special_shop.greenhouse_prices())},
         "weekly": {
             "week_start": start.isoformat(), "ends_at": special_shop.week_ends_at(start).isoformat(),
             "offers": [{"name": f"{o.crop_name}種子", "price": o.price, "original_price": o.original_price,
                         "limit": o.limit, "rare": o.rare} for o in special_shop.weekly_offers(start, crops)],
         },
-        "titles": [{"title": t, "price": p} for t, p in special_shop.TITLE_SHOP],
+        "titles": [{"title": t, "price": p} for t, p in special_shop.title_shop()],
     }
 
 
@@ -343,6 +344,7 @@ def build_world_boss(session: Session, names: dict[str, str], now: datetime) -> 
 
 def build_guide(session: Session, now: datetime) -> dict:
     """操作手冊需要的遊戲設定。只輸出規則與數值，不含任何玩家、農場或群組資料。"""
+    feature_settings_repo.refresh(session)  # 管理網站調整過的簽到、寵物、特賣與成就數值
     crops = [c for c in crops_repo.list_all(session) if c.active]
     animals = [a for a in animals_repo.list_all(session) if a.active]
     version, g = genetics_repo.current(session)

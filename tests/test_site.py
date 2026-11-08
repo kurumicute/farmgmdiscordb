@@ -178,10 +178,10 @@ def test_guide_has_checkin_achievements_and_codex(session_factory):
     page = c.get("/").text
     for slot in ('id="progress"', 'id="g-checkin"', 'id="g-achievements"', 'id="g-codex-cats"', 'id="c-achievements"'):
         assert slot in page
-    assert all(a.name in page for a in achievements.ACHIEVEMENTS)  # API 失敗時的預設表格
+    assert all(a.name in page for a in achievements.active())  # API 失敗時的預設表格
     p = c.get("/api/guide").json()["progress"]
-    assert [x["day"] for x in p["checkin"]] == list(range(1, checkin.CYCLE_DAYS + 1))
-    assert len(p["achievements"]) == len(achievements.ACHIEVEMENTS)
+    assert [x["day"] for x in p["checkin"]] == list(range(1, checkin.cycle_days() + 1))
+    assert len(p["achievements"]) == len(achievements.active())
     assert any(a["title"] == "傳說農夫" for a in p["achievements"]) and "魚類" in p["codex"]
 
 
@@ -194,10 +194,10 @@ def test_guide_has_special_shop(session_factory):
     for slot in ('id="special-shop"', 'id="g-weekly"', 'id="g-title-shop"', 'id="g-gh-prices"', "上一場排行榜"):
         assert slot in page
     sp = c.get("/api/guide").json()["special_shop"]
-    assert sp["greenhouse"]["prices"] == list(special_shop.GREENHOUSE_PRICES)
-    assert [t["title"] for t in sp["titles"]] == [t for t, _p in special_shop.TITLE_SHOP]
+    assert sp["greenhouse"]["prices"] == list(special_shop.greenhouse_prices())
+    assert [t["title"] for t in sp["titles"]] == [t for t, _p in special_shop.title_shop()]
     offers = sp["weekly"]["offers"]
-    assert len(offers) == special_shop.NORMAL_DEALS_PER_WEEK + 1 and sum(o["rare"] for o in offers) == 1
+    assert len(offers) == special_shop.config()["normal_deals"] + 1 and sum(o["rare"] for o in offers) == 1
 
 
 def test_guide_has_pets(session_factory):
@@ -207,9 +207,9 @@ def test_guide_has_pets(session_factory):
     page = c.get("/").text
     assert 'id="g-pets"' in page and 'id="g-pet-ladder"' in page and "寵物（貓狗）" in page
     p = c.get("/api/guide").json()["pets"]
-    assert p["buy_price"] == pets.BUY_PRICE and p["upgrade_prices"] == list(pets.UPGRADE_PRICES)
+    assert p["buy_price"] == pets.buy_price() and p["upgrade_prices"] == list(pets.upgrade_prices())
     assert len(p["pets"]) == len(pets.PETS)
     assert 'id="g-cat-odds"' in page and "50% 機率 +1" in page  # 預設表格：小麥滿級
     wheat = next(c for c in p["cat_odds"] if c["name"] == "小麥")
-    assert len(wheat["levels"]) == pets.MAX_LEVEL + 1
-    assert wheat["levels"][-1] == pets.odds_text(wheat["quantity"], pets.bonus_pct(pets.MAX_LEVEL))
+    assert len(wheat["levels"]) == pets.max_level() + 1
+    assert wheat["levels"][-1] == pets.odds_text(wheat["quantity"], pets.bonus_pct(pets.max_level()))

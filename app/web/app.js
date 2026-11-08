@@ -255,13 +255,14 @@ if (typeof document !== "undefined") {
     overview: ["儀表板", "即時營運狀態・資料來源：PostgreSQL・台灣時間（UTC+8）"],
     farms: ["農場監控", "所有農場的土地、作物與倉庫狀態，點選一列查看詳情"],
     groups: ["群組", "Discord 群組與成員；群組建立與成員管理由 Discord 端處理"],
-    players: ["玩家調整", "修改玩家金幣、等級、背包、土地、建築與動物（需管理員）"],
+    players: ["玩家調整", "修改玩家金幣、等級、背包、土地、建築、動物，以及溫室、寵物、稱號、簽到、成就與圖鑑（需管理員）"],
     backpack: ["玩家背包", "查看玩家持有的種子、農產品、道具與限時效果"],
     crops: ["作物種類", "作物價格、生長時間、收成數量與停用狀態"],
     genetics: ["品質與突變", "作物品質機率、突變效果與實際統計"],
     animals: ["動物種類", "動物價格、生產週期、飼料與產品設定"],
     ranch: ["養殖與加工", "玩家飼養的動物、生產狀態與加工訂單"],
     fishing: ["釣魚管理", "釣魚數據、玩家釣魚紀錄、魚類與釣具管理、釣魚機率設定"],
+    features: ["新功能設定", "每日簽到、寵物、特賣與升級、成就的獎勵與數值（需管理員；儲存後 Bot 最晚 10 秒內套用）"],
     events: ["限時活動", "加成活動的效果、排程與啟用狀態"],
     community: ["任務與競賽", "群組任務進度、群組競賽排名與結算"],
     worldboss: ["世界 Boss", "群組後勤活動：建立與控制 Boss、補給與獎勵設定、捐獻與領獎紀錄"],
@@ -988,11 +989,14 @@ if (typeof document !== "undefined") {
   function onSnapshot(data) {
     showError("");
     document.body.classList.remove("stale");
+    // 伺服器沿用上一份快照（這段期間沒有任何遊戲操作）：只更新時間，不重繪也不重新載入分頁資料
+    const unchanged = state.snapshot && data.generated_at && data.generated_at === state.snapshot.generated_at;
     state.snapshot = data;
     state.serverOffsetMs = new Date(data.server_time).getTime() - Date.now();
     state.lastSync = new Date();
     $("last-sync").textContent = dtFmt.format(state.lastSync);
     setStatus("ok", "已連線・即時更新中");
+    if (unchanged) return;
     renderSummary(data.summary);
     renderTransactions(data.transactions);
     renderCropChart(data.charts.crops);
@@ -1419,6 +1423,8 @@ if (typeof document !== "undefined") {
       extra.admin = { enabled: false, loggedIn: false, username: null };
     }
     renderAdmin();
+    // 需要管理員的分頁（例如新功能設定）在確認登入狀態後才能載入；快照沒變時不會再觸發分頁載入
+    if (extra.admin.loggedIn && state.tab === "features") loadFeatureSettings(false);
   }
 
   async function adminLogin() {
@@ -1433,7 +1439,7 @@ if (typeof document !== "undefined") {
       $("admin-menu").open = false;
       toast(`已登入管理員 ${extra.admin.username || ""}`, "good");
       await Promise.all([loadCommunity(), loadGenetics(), loadCatalog(), loadPlayerAdmin(), loadRankingRewards(),
-        loadWorldBoss()]);
+        loadWorldBoss(), loadFeatureSettings(true)]);
     } catch (err) {
       $("admin-note").textContent = `登入失敗：${err.message}`;
     }
@@ -2429,8 +2435,14 @@ if (typeof document !== "undefined") {
     if (!pid) { body.replaceChildren(el("p", { className: "muted", text: "請輸入玩家名稱或 ID，從建議清單選擇。" })); return; }
     try {
       if (!manage.catalog) await loadCatalog();
-      const f = await fetchJson(`/api/monitor/players/${encodeURIComponent(pid)}/admin-farm`);
+      const [f, p] = await Promise.all([
+        fetchJson(`/api/monitor/players/${encodeURIComponent(pid)}/admin-farm`),
+        sendAdminRequest("GET", `/api/admin/players/${encodeURIComponent(pid)}/progress`).catch((err) => err),
+      ]);
       if (pid !== manage.playerId) return;
+      const progress = p instanceof Error
+        ? [el("p", { className: "is-error", text: `新功能資料載入失敗：${p.message}` })]
+        : progressBlocks(f, p);
       const chip = (label, value) => el("span", {}, [document.createTextNode(`${label} `), el("strong", { text: value })]);
       body.replaceChildren(
         el("div", { className: "pa-summary" }, [
@@ -2441,6 +2453,8 @@ if (typeof document !== "undefined") {
         farmValuesBlock(f),
         transferBlock(f),
         el("div", { className: "pa-grid" }, [inventoryBlock(f, manage.catalog), plotsBlock(f, manage.catalog), ranchBlock(f, manage.catalog)]),
+        el("h2", { text: "新功能（溫室、寵物、稱號、簽到、成就、圖鑑）" }),
+        ...progress,
       );
     } catch (err) {
       body.replaceChildren(el("p", { className: "is-error", text: `玩家資料載入失敗：${err.message}` }));
@@ -2465,6 +2479,7 @@ if (typeof document !== "undefined") {
     $("atf-reset").addEventListener("click", () => { resetAnimalForm(); clearDirty("animal-form-box"); setNote("atf-note", ""); });
     $("catalog-refresh").addEventListener("click", loadCatalog);
     $("pa-refresh").addEventListener("click", loadPlayerAdmin);
+    $("fs-refresh").addEventListener("click", () => loadFeatureSettings(true));
     $("pa-player").addEventListener("change", (e) => {
       const pid = pickedPlayerId(e.target, extra.players);
       manage.playerId = pid || null;
@@ -3574,6 +3589,493 @@ if (typeof document !== "undefined") {
     });
   }
 
+  // ---------- 新功能設定（每日簽到、寵物、特賣與升級、成就）：存在資料庫，儲存後網站立即生效、Bot 最晚 10 秒內套用 ----------
+  const features = { data: null };
+
+  const itemName = (code) => {
+    const found = features.data && features.data.items.find((i) => i.code === code);
+    return found ? found.name : code;
+  };
+  const itemsText = (items) => Object.entries(items || {}).map(([c, q]) => `${itemName(c)} ×${q}`).join("、") || "—";
+  const listText = (list) => (list || []).map((n) => fmtNum(n)).join(" → ");
+
+  // 「10000, 20000」→ [10000, 20000]；格式不對回傳 null
+  function parseIntList(text) {
+    const parts = String(text).split(/[,，、\s]+/).filter(Boolean);
+    if (!parts.length || parts.some((p) => !/^\d+$/.test(p))) return null;
+    return parts.map(Number);
+  }
+
+  function textInput(value, maxLength, placeholder) {
+    const input = el("input");
+    input.type = "text";
+    input.value = value || "";
+    if (maxLength) input.maxLength = maxLength;
+    if (placeholder) input.placeholder = placeholder;
+    return input;
+  }
+
+  // 道具獎勵編輯：最多 maxKinds 組「道具＋數量」，read() 回傳 {代碼: 數量}
+  function itemsEditor(items, maxKinds = 3) {
+    const entries = Object.entries(items || {});
+    const options = [["", "（無道具）"], ...features.data.items.map((i) => [i.code, i.name])];
+    const pairs = [];
+    for (let i = 0; i < maxKinds; i += 1) {
+      const [code, qty] = entries[i] || ["", 1];
+      const sel = selectEl(null, options, code);
+      const num = numInput(null, qty, 1, 999);
+      pairs.push([sel, num]);
+    }
+    const node = el("div", { className: "controls" }, pairs.flatMap(([s, n]) => [s, n]));
+    const read = () => {
+      const out = {};
+      for (const [s, n] of pairs) {
+        if (!s.value) continue;
+        const q = Number(n.value);
+        if (!Number.isInteger(q) || q < 1) throw new Error(`${itemName(s.value)}的數量必須是 1 以上的整數。`);
+        out[s.value] = (out[s.value] || 0) + q;
+      }
+      return out;
+    };
+    return { node, read };
+  }
+
+  const featureKey = (key) => features.data.keys.find((k) => k.key === key);
+
+  async function saveFeature(key, value, diff) {
+    const k = featureKey(key);
+    if (!diff.length) { setNote("fs-note", `「${k.label}」沒有變更。`, "bad"); return; }
+    const answer = await confirmDialog({
+      title: `儲存「${k.label}」設定`, diff,
+      message: "儲存後網站立即生效，Discord Bot 最晚 10 秒內套用；只影響之後的操作，已發出的獎勵不變。",
+      confirmText: "確認儲存",
+    });
+    if (!answer.ok) return;
+    try {
+      await adminRequest("PUT", `/api/admin/feature-settings/${key}`, value);
+      setNote("fs-note", `「${k.label}」設定已儲存。`, "good");
+      toast(`「${k.label}」設定已儲存。`, "good");
+      await loadFeatureSettings(true);
+    } catch (err) {
+      setNote("fs-note", `失敗：${err.message}`, "bad");
+      toast(err.message, "bad");
+    }
+  }
+
+  async function resetFeature(key) {
+    const k = featureKey(key);
+    const answer = await confirmDialog({
+      title: `「${k.label}」還原成預設值`, danger: true, confirmText: "確認還原",
+      message: "會刪除目前的自訂設定，改回程式內的預設值（已發出的獎勵不變）。",
+    });
+    if (!answer.ok) return;
+    try {
+      await adminRequest("DELETE", `/api/admin/feature-settings/${key}`);
+      setNote("fs-note", `「${k.label}」已還原成預設值。`, "good");
+      toast(`「${k.label}」已還原成預設值。`, "good");
+      await loadFeatureSettings(true);
+    } catch (err) {
+      setNote("fs-note", `失敗：${err.message}`, "bad");
+      toast(err.message, "bad");
+    }
+  }
+
+  // 每個設定區塊：標題、狀態、內容與「儲存／還原預設」；collect() 回傳 [送出的值, 調整前後]，格式錯誤時丟出 Error
+  function featureCard(key, description, body, collect) {
+    const k = featureKey(key);
+    const meta = k.is_default ? "目前使用預設值" : `已自訂・上次修改 ${fmtTime(k.updated_at)}（${k.updated_by}）`;
+    const save = smallButton("儲存", () => {
+      if (!validateForm(card)) return;
+      let result;
+      try { result = collect(); } catch (err) { setNote("fs-note", err.message, "bad"); return; }
+      saveFeature(key, result[0], result[1]);
+    }, "primary");
+    const reset = smallButton("還原預設值", () => resetFeature(key), "danger");
+    reset.disabled = k.is_default;
+    const card = el("details", { className: "subpanel feature-card" }, [
+      el("summary", {}, [el("strong", { text: k.label }), document.createTextNode(" "), badge(k.is_default ? "預設" : "已自訂", k.is_default ? "muted" : "info")]),
+      el("p", { className: "muted small", text: `${description}（${meta}）` }),
+      body,
+      el("div", { className: "controls" }, [save, reset]),
+    ]);
+    return card;
+  }
+
+  const diffRow = (label, before, after) => (before === after ? null : [label, before, after]);
+
+  function checkinCard() {
+    const k = featureKey("checkin");
+    let days = k.current.rewards.map((r) => ({ ...r }));
+    const rowsBox = el("div");
+    let editors = [];
+    const readDays = () => editors.map(({ gold, items }, i) => {
+      const g = Number(gold.value);
+      if (!Number.isInteger(g) || g < 0) throw new Error(`第 ${i + 1} 天的金幣必須是 0 以上的整數。`);
+      return { gold: g, items: items.read() };
+    });
+    const render = () => {
+      editors = days.map((d) => ({ gold: numInput(null, d.gold, 0, 1000000), items: itemsEditor(d.items) }));
+      rowsBox.replaceChildren(el("div", { className: "table-wrap" }, [el("table", {}, [
+        el("thead", {}, [el("tr", {}, ["天數", "金幣", "道具（最多 3 種）"].map((t) => el("th", { text: t })))]),
+        el("tbody", {}, editors.map((e, i) => el("tr", {}, [td(`第 ${i + 1} 天`), el("td", {}, [e.gold]), el("td", {}, [e.items.node])]))),
+      ])]));
+    };
+    render();
+    const limit = features.data.limits.checkin_days;
+    const add = smallButton("新增一天", () => {
+      try { days = readDays(); } catch (err) { setNote("fs-note", err.message, "bad"); return; }
+      if (days.length >= limit) { setNote("fs-note", `最多 ${limit} 天一輪。`, "bad"); return; }
+      days.push({ gold: 0, items: {} });
+      render();
+    });
+    const remove = smallButton("移除最後一天", () => {
+      try { days = readDays(); } catch (err) { setNote("fs-note", err.message, "bad"); return; }
+      if (days.length <= 1) { setNote("fs-note", "至少要有 1 天。", "bad"); return; }
+      days.pop();
+      render();
+    });
+    const body = el("div", {}, [rowsBox, el("div", { className: "controls" }, [add, remove])]);
+    return featureCard("checkin", "每天第一次開面板自動簽到；連續簽到依這張表循環發獎，中斷一天從第 1 天重新算。道具放不進倉庫時改發等值金幣", body, () => {
+      const value = { rewards: readDays() };
+      const fmt = (r) => [r.gold ? `${fmtNum(r.gold)} 金幣` : "", itemsText(r.items) !== "—" ? itemsText(r.items) : ""].filter(Boolean).join("、") || "無";
+      const before = k.current.rewards;
+      const diff = [diffRow("循環天數", String(before.length), String(value.rewards.length))];
+      value.rewards.forEach((r, i) => diff.push(diffRow(`第 ${i + 1} 天`, before[i] ? fmt(before[i]) : "—", fmt(r))));
+      before.slice(value.rewards.length).forEach((r, i) => diff.push([`第 ${value.rewards.length + i + 1} 天`, fmt(r), "（移除）"]));
+      return [value, diff.filter(Boolean)];
+    });
+  }
+
+  function petsCard() {
+    const c = featureKey("pets").current;
+    const lim = features.data.limits.pet_levels;
+    const buy = numInput(null, c.buy_price, 1, 100000000);
+    const prices = textInput(c.upgrade_prices.join(", "), 200, "例如 10000, 20000, 30000, 40000");
+    prices.classList.add("reason-input");
+    const base = numInput(null, c.base_pct, 0, 100);
+    const per = numInput(null, c.pct_per_level, 0, 100);
+    const preview = el("p", { className: "muted small" });
+    const update = () => {
+      const list = parseIntList(prices.value);
+      const top = list ? Number(base.value) + list.length * Number(per.value) : NaN;
+      preview.textContent = list ? `Lv0 ${base.value}% → 最高 Lv${list.length} ${top}%${top > 100 ? "（不可超過 100%）" : ""}` : "升級價格格式不正確（用逗號分隔的整數）。";
+    };
+    for (const n of [prices, base, per]) n.addEventListener("input", update);
+    update();
+    const body = el("div", {}, [
+      el("div", { className: "controls" }, [
+        el("label", { className: "inline", text: "領養價格 " }, [buy]),
+        el("label", { className: "inline", text: "Lv0 加成 % " }, [base]),
+        el("label", { className: "inline", text: "每級再加 % " }, [per]),
+      ]),
+      el("label", { className: "inline", text: `升級價格（Lv0→1、1→2…，最多 ${lim} 級） ` }, [prices]),
+      preview,
+    ]);
+    return featureCard("pets", "貓咪：收成數量 +X%；狗狗：防守設施沒擋住時再有 X% 擋下偷菜。降低最高等級時，已超過的寵物以新的最高等級計算", body, () => {
+      const list = parseIntList(prices.value);
+      if (!list) throw new Error("升級價格請用逗號分隔的整數，例如 10000, 20000。");
+      const value = { buy_price: Number(buy.value), upgrade_prices: list, base_pct: Number(base.value), pct_per_level: Number(per.value) };
+      return [value, [
+        diffRow("領養價格", fmtNum(c.buy_price), fmtNum(value.buy_price)),
+        diffRow("升級價格", listText(c.upgrade_prices), listText(value.upgrade_prices)),
+        diffRow("Lv0 加成", `${c.base_pct}%`, `${value.base_pct}%`),
+        diffRow("每級再加", `${c.pct_per_level}%`, `${value.pct_per_level}%`),
+      ].filter(Boolean)];
+    });
+  }
+
+  function specialShopCard() {
+    const c = featureKey("special_shop").current;
+    const lim = features.data.limits;
+    const ghPrices = textInput(c.greenhouse_prices.join(", "), 200, "例如 5000, 15000, 40000");
+    ghPrices.classList.add("reason-input");
+    const ghPct = numInput(null, c.greenhouse_pct_per_level, 0, 50);
+    const deals = numInput(null, c.normal_deals, 0, 10);
+    const discount = numInput(null, c.normal_discount_pct, 0, 90);
+    const normalLimit = numInput(null, c.normal_limit, 1, 9999);
+    const rarePct = numInput(null, c.rare_price_pct, 1, 10000);
+    const rareLimit = numInput(null, c.rare_limit, 1, 9999);
+    let titles = c.titles.map((t) => ({ ...t }));
+    let titleEditors = [];
+    const titleBox = el("div");
+    const readTitles = () => titleEditors.map(({ name, price }, i) => {
+      const p = Number(price.value);
+      if (!name.value.trim()) throw new Error(`第 ${i + 1} 個商店稱號不可空白。`);
+      if (!Number.isInteger(p) || p < 1) throw new Error(`稱號「${name.value.trim()}」的價格必須是 1 以上的整數。`);
+      return { title: name.value.trim(), price: p };
+    });
+    const renderTitles = () => {
+      titleEditors = titles.map((t) => ({ name: textInput(t.title, lim.title_max_len), price: numInput(null, t.price, 1, 1000000000) }));
+      titleEditors.forEach((t) => t.price.classList.add("wide-num"));
+      titleBox.replaceChildren(el("div", { className: "table-wrap" }, [el("table", {}, [
+        el("thead", {}, [el("tr", {}, ["稱號", "價格（金幣）", ""].map((t) => el("th", { text: t })))]),
+        el("tbody", {}, titleEditors.length ? titleEditors.map((t, i) => el("tr", {}, [
+          el("td", {}, [t.name]), el("td", {}, [t.price]),
+          actionsTd([smallButton("移除", () => {
+            try { titles = readTitles(); } catch (err) { /* 未填完的列直接移除 */ titles = titleEditors.map((x) => ({ title: x.name.value, price: Number(x.price.value) || 1 })); }
+            titles.splice(i, 1);
+            renderTitles();
+          }, "danger")]),
+        ])) : [emptyRow("稱號商店沒有商品", 3)]),
+      ])]));
+    };
+    renderTitles();
+    const addTitle = smallButton("新增稱號", () => {
+      titles = titleEditors.map((x) => ({ title: x.name.value, price: Number(x.price.value) || 1 }));
+      titles.push({ title: "", price: 100000 });
+      renderTitles();
+    });
+    const body = el("div", {}, [
+      el("h4", { text: "🏡 溫室" }),
+      el("label", { className: "inline", text: `升級價格（第 1、2…級，最多 ${lim.greenhouse_levels} 級） ` }, [ghPrices]),
+      el("div", { className: "controls" }, [el("label", { className: "inline", text: "每級減少生長時間 % " }, [ghPct])]),
+      el("h4", { text: "🌰 每週特賣（每週一 00:00 換一批）" }),
+      el("div", { className: "controls" }, [
+        el("label", { className: "inline", text: "打折種子數 " }, [deals]),
+        el("label", { className: "inline", text: "折扣 % " }, [discount]),
+        el("label", { className: "inline", text: "每人每週限購 " }, [normalLimit]),
+      ]),
+      el("div", { className: "controls" }, [
+        el("label", { className: "inline", text: "稀有種子價格（種子價 %） " }, [rarePct]),
+        el("label", { className: "inline", text: "稀有種子限購 " }, [rareLimit]),
+      ]),
+      el("h4", { text: "🎖️ 稱號商店" }),
+      titleBox,
+      el("div", { className: "controls" }, [addTitle]),
+      el("p", { className: "muted small", text: "商店稱號不可和成就稱號重複。改名或移除只影響之後的購買，已買到的稱號會保留在玩家的稱號清單。" }),
+    ]);
+    return featureCard("special_shop", "商店第三個分頁「特賣與升級」。降低溫室最高等級時，已超過的玩家以新的最高等級計算", body, () => {
+      const gh = parseIntList(ghPrices.value);
+      if (!gh) throw new Error("溫室升級價格請用逗號分隔的整數，例如 5000, 15000。");
+      const value = {
+        greenhouse_prices: gh, greenhouse_pct_per_level: Number(ghPct.value), normal_deals: Number(deals.value),
+        normal_discount_pct: Number(discount.value), normal_limit: Number(normalLimit.value),
+        rare_price_pct: Number(rarePct.value), rare_limit: Number(rareLimit.value), titles: readTitles(),
+      };
+      const titleList = (ts) => ts.map((t) => `${t.title} ${fmtNum(t.price)}`).join("、") || "（無）";
+      return [value, [
+        diffRow("溫室升級價格", listText(c.greenhouse_prices), listText(value.greenhouse_prices)),
+        diffRow("溫室每級加速", `${c.greenhouse_pct_per_level}%`, `${value.greenhouse_pct_per_level}%`),
+        diffRow("打折種子數", String(c.normal_deals), String(value.normal_deals)),
+        diffRow("一般種子折扣", `${c.normal_discount_pct}%`, `${value.normal_discount_pct}%`),
+        diffRow("一般種子限購", String(c.normal_limit), String(value.normal_limit)),
+        diffRow("稀有種子價格", `${c.rare_price_pct}%`, `${value.rare_price_pct}%`),
+        diffRow("稀有種子限購", String(c.rare_limit), String(value.rare_limit)),
+        diffRow("稱號商店", titleList(c.titles), titleList(value.titles)),
+      ].filter(Boolean)];
+    });
+  }
+
+  function achievementsCard() {
+    const list = features.data.achievements;
+    const maxLen = features.data.limits.title_max_len;
+    const editors = list.map((a) => {
+      const target = numInput(null, a.current.target, 1, a.max_target);
+      target.classList.add("wide-num");
+      const gold = numInput(null, a.current.gold, 0, 10000000);
+      gold.classList.add("wide-num");
+      return { a, target, gold, items: itemsEditor(a.current.items), title: textInput(a.current.title, maxLen, "（無稱號）") };
+    });
+    const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+    const rows = editors.map(({ a, target, gold, items, title }) => el("tr", {}, [
+      td(a.category_name), td(`${a.emoji} ${a.name}`),
+      el("td", {}, [document.createTextNode(`${a.metric}（${a.unit}） `), target]),
+      el("td", {}, [gold]), el("td", {}, [items.node]), el("td", {}, [title]),
+      el("td", {}, [badge(same(a.current, a.default) ? "預設" : "已修改", same(a.current, a.default) ? "muted" : "info")]),
+    ]));
+    const body = el("div", { className: "table-wrap" }, [el("table", {}, [
+      el("thead", {}, [el("tr", {}, ["分類", "成就", "門檻", "金幣", "道具（最多 3 種）", "稱號", ""].map((t) => el("th", { text: t })))]),
+      el("tbody", {}, rows),
+    ])]);
+    return featureCard("achievements", "成就代碼與指標固定，可調整門檻與獎勵。改稱號名稱只影響之後領取的人；調低門檻後，已達成的玩家可以直接領取", body, () => {
+      const items = {};
+      const diff = [];
+      const fmt = (v) => [`門檻 ${fmtNum(v.target)}`, v.gold ? `${fmtNum(v.gold)} 金幣` : "", itemsText(v.items) !== "—" ? itemsText(v.items) : "", v.title ? `稱號「${v.title}」` : ""].filter(Boolean).join("、");
+      for (const { a, target, gold, items: it, title } of editors) {
+        const v = { target: Number(target.value), gold: Number(gold.value), items: it.read(), title: title.value.trim() || null };
+        if (!Number.isInteger(v.target) || v.target < 1) throw new Error(`「${a.name}」的門檻必須是 1 以上的整數。`);
+        if (!Number.isInteger(v.gold) || v.gold < 0) throw new Error(`「${a.name}」的金幣必須是 0 以上的整數。`);
+        items[a.code] = v;
+        if (!same(v, a.current)) diff.push([`${a.emoji} ${a.name}`, fmt(a.current), fmt(v)]);
+      }
+      return [{ items }, diff];
+    });
+  }
+
+  function renderFeatureSettings() {
+    $("fs-body").replaceChildren(checkinCard(), petsCard(), specialShopCard(), achievementsCard());
+  }
+
+  async function loadFeatureSettings(force = false) {
+    if (!extra.admin.loggedIn) return;
+    if (features.data && !force) return; // 表單只在進入分頁或按「重新載入」時建立，自動更新不會蓋掉正在編輯的內容
+    try {
+      features.data = await sendAdminRequest("GET", "/api/admin/feature-settings");
+      renderFeatureSettings();
+    } catch (err) {
+      $("fs-body").replaceChildren(el("p", { className: "is-error", text: `新功能設定載入失敗：${err.message}` }));
+    }
+  }
+
+  // ----- 玩家調整：新功能（溫室、寵物、稱號、簽到、成就、圖鑑、每週特賣） -----
+  function progressBlocks(f, p) {
+    const sub = (title, children) => el("div", { className: "subpanel" }, [el("h3", { text: title }), ...children]);
+    const table = (heads, rows, emptyText) => el("div", { className: "table-wrap" }, [el("table", {}, [
+      el("thead", {}, [el("tr", {}, heads.map((t) => el("th", { text: t })))]),
+      el("tbody", {}, rows.length ? rows : [emptyRow(emptyText, heads.length)]),
+    ])]);
+
+    // 溫室與寵物
+    const gh = numInput(null, p.greenhouse.level, 0, p.greenhouse.max);
+    const ghSave = smallButton("設定溫室等級", async () => {
+      if (!checkField(gh)) { gh.focus(); return; }
+      const n = Number(gh.value);
+      if (n === p.greenhouse.level) { setNote("pa-note", "溫室等級沒有變更。", "bad"); return; }
+      if (await confirmPlayerChange(`調整 ${f.player_name} 的溫室`, [["溫室等級", String(p.greenhouse.level), String(n)]])) {
+        playerAction("PUT", "/greenhouse", { level: n }, "溫室等級已更新。");
+      }
+    }, "primary");
+    const petControls = p.pets.map((pet) => {
+      const levelText = (lv) => (lv === null ? "沒有" : `Lv${lv}`);
+      const options = [["", "沒有（移除）"], ...Array.from({ length: pet.max + 1 }, (_, i) => [String(i), `Lv${i}`])];
+      const sel = selectEl(null, options, pet.level === null ? "" : String(Math.min(pet.level, pet.max)));
+      const save = smallButton(`設定${pet.name}`, async () => {
+        const level = sel.value === "" ? null : Number(sel.value);
+        if (level === pet.level) { setNote("pa-note", `${pet.name}沒有變更。`, "bad"); return; }
+        if (await confirmPlayerChange(`調整 ${f.player_name} 的${pet.name}`, [[pet.name, levelText(pet.level), levelText(level)]],
+          level === null ? "移除後不退費，並寫入管理員調整紀錄。" : null, level === null)) {
+          playerAction("PUT", `/pets/${pet.code}`, { level }, `${pet.name}已更新。`);
+        }
+      }, "primary");
+      return el("label", { className: "inline", text: `${pet.emoji} ${pet.name}（目前 ${levelText(pet.level)}${pet.level !== null ? `，+${pet.pct}%` : ""}） ` }, [sel, save]);
+    });
+    const ghBox = sub("溫室與寵物", [
+      el("div", { className: "controls" }, [el("label", { className: "inline", text: `溫室等級（0–${p.greenhouse.max}，目前 -${p.greenhouse.pct}% 生長時間） ` }, [gh]), ghSave]),
+      el("div", { className: "controls" }, petControls),
+    ]);
+
+    // 稱號
+    const titleRows = p.titles.owned.map((t) => el("tr", {}, [
+      td(t.title), td(t.source), td(fmtTime(t.obtained_at)),
+      td(p.titles.current === t.title ? "顯示中" : "—"),
+      actionsTd([
+        smallButton("設為顯示", async () => {
+          if (await confirmPlayerChange(`設定 ${f.player_name} 顯示的稱號`, [["顯示稱號", p.titles.current || "無", t.title]])) {
+            playerAction("PUT", "/title", { title: t.title }, "顯示稱號已更新。");
+          }
+        }),
+        smallButton("移除", async () => {
+          if (await confirmPlayerChange(`移除 ${f.player_name} 的稱號`, [["稱號", t.title, "（移除）"]], "移除後玩家要重新取得才會再擁有（成就稱號不會因此重發）。", true)) {
+            playerAction("POST", "/titles/revoke", { title: t.title }, `已移除稱號「${t.title}」。`);
+          }
+        }, "danger"),
+      ]),
+    ]));
+    const newTitle = textInput("", 20, "輸入或選擇稱號");
+    const listId = "pa-title-options";
+    newTitle.setAttribute("list", listId);
+    const datalist = el("datalist", {}, p.titles.known.map((t) => { const o = el("option"); o.value = t; return o; }));
+    datalist.id = listId;
+    const grant = smallButton("給予稱號", async () => {
+      const t = newTitle.value.trim();
+      if (!t) { setNote("pa-note", "請輸入稱號。", "bad"); newTitle.focus(); return; }
+      if (await confirmPlayerChange(`給予 ${f.player_name} 稱號`, [["稱號", "—", t]])) {
+        playerAction("POST", "/titles", { title: t }, `已給予稱號「${t}」。`);
+      }
+    }, "primary");
+    const hide = smallButton("不顯示稱號", async () => {
+      if (!p.titles.current) { setNote("pa-note", "玩家目前沒有顯示稱號。", "bad"); return; }
+      if (await confirmPlayerChange(`取消 ${f.player_name} 顯示的稱號`, [["顯示稱號", p.titles.current, "無"]])) {
+        playerAction("PUT", "/title", { title: null }, "已取消顯示稱號。");
+      }
+    });
+    const titleBox = sub(`稱號（顯示中：${p.titles.current || "無"}）`, [
+      table(["稱號", "來源", "取得時間", "狀態", ""], titleRows, "沒有稱號"),
+      el("div", { className: "controls" }, [newTitle, datalist, grant, hide]),
+    ]);
+
+    // 每日簽到與每週特賣
+    const c = p.checkin;
+    const streak = numInput(null, Math.max(1, c.streak || 1), 1, 10000);
+    const setStreak = smallButton("設定連續天數", async () => {
+      if (!checkField(streak)) { streak.focus(); return; }
+      const n = Number(streak.value);
+      const how = c.last_day && c.last_day >= c.today ? "直接改今天的簽到紀錄" : (c.streak ? "直接改昨天的簽到紀錄" : "補登一筆昨天的簽到（不發獎），玩家今天簽到就會接續");
+      if (await confirmPlayerChange(`設定 ${f.player_name} 的連續簽到`, [["連續天數", String(c.streak), String(n)]], `${how}。`)) {
+        playerAction("PUT", "/checkin", { streak: n }, "連續簽到天數已更新。");
+      }
+    }, "primary");
+    const weeklyRows = p.weekly.purchases.map((x) => el("tr", {}, [td(x.name), td(fmtNum(x.quantity), "num")]));
+    const resetWeekly = smallButton("重設本週購買量", async () => {
+      if (!p.weekly.purchases.length) { setNote("pa-note", "玩家本週沒有買過特賣商品。", "bad"); return; }
+      if (await confirmPlayerChange(`重設 ${f.player_name} 的本週特賣購買量`, p.weekly.purchases.map((x) => [x.name, fmtNum(x.quantity), "0"]), "玩家可以重新買到本週的限購數量。")) {
+        playerAction("DELETE", "/weekly-purchases", null, "本週特賣購買量已重設。");
+      }
+    }, "danger");
+    const checkinBox = sub("每日簽到與每週特賣", [
+      el("p", { className: "muted small", text: `${c.checked_today ? "今天已簽到" : "今天還沒簽到"}｜最近簽到：${c.last_day || "從未"}｜目前連續 ${c.streak} 天｜下一次獎勵：${c.next_reward_text}` }),
+      el("div", { className: "controls" }, [el("label", { className: "inline", text: "連續天數 " }, [streak]), setStreak]),
+      el("p", { className: "muted small", text: "斷簽時（例如 Bot 停機）可以補回：最近一次簽到是今天或昨天就直接修改，否則補登一筆昨天的簽到（不發獎）。" }),
+      el("h4", { text: `本週特賣購買量（${p.weekly.week_start} 起）` }),
+      table(["商品", "已購買"], weeklyRows, "本週沒有購買"),
+      el("div", { className: "controls" }, [resetWeekly]),
+    ]);
+
+    // 成就
+    const STATES = { claimed: ["已領取", "good"], ready: ["可領取", "info"], progress: ["進行中", "muted"] };
+    const achRows = p.achievements.map((a) => {
+      const [label, tone] = STATES[a.state] || [a.state, "muted"];
+      const button = a.state === "claimed"
+        ? smallButton("重設為未領取", async () => {
+          if (await confirmPlayerChange(`重設 ${f.player_name} 的成就`, [[a.name, "已領取", "未領取"]], "玩家達成條件後可以再領一次獎勵；已給的稱號不會收回。", true)) {
+            playerAction("PUT", `/achievements/${encodeURIComponent(a.code)}`, { claimed: false }, `成就「${a.name}」已重設。`);
+          }
+        }, "danger")
+        : smallButton("標記已領取", async () => {
+          if (await confirmPlayerChange(`標記 ${f.player_name} 的成就`, [[a.name, label, "已領取（不發獎）"]])) {
+            playerAction("PUT", `/achievements/${encodeURIComponent(a.code)}`, { claimed: true }, `成就「${a.name}」已標記為已領取。`);
+          }
+        });
+      return el("tr", {}, [td(`${a.emoji} ${a.name}`), td(`${fmtNum(a.value)} / ${fmtNum(a.target)} ${a.unit}`), statusTd(label, tone), td(a.reward_text, "wrap"), actionsTd([button])]);
+    });
+    const done = p.achievements.filter((a) => a.state === "claimed").length;
+    const achBox = sub(`成就（已領取 ${done}/${p.achievements.length}）`, [
+      table(["成就", "進度", "狀態", "獎勵", ""], achRows, "沒有成就"),
+    ]);
+
+    // 圖鑑
+    const codexParts = p.codex.map((cat) => {
+      if (!cat.editable) {
+        return el("p", { className: "muted small", text: `${cat.name}：${cat.discovered}/${cat.total}（來自魚簍紀錄，不能在這裡調整）` });
+      }
+      const rows = cat.entries.map((e) => {
+        const qty = numInput(null, e.quantity, 0, 1000000000000);
+        qty.classList.add("wide-num");
+        const qual = selectEl(null, p.quality_names.map((n, i) => [String(i), n]), String(e.best_quality));
+        const save = smallButton("儲存", async () => {
+          if (!checkField(qty)) { qty.focus(); return; }
+          const n = Number(qty.value);
+          const qn = Number(qual.value);
+          if (n === e.quantity && (n === 0 || qn === e.best_quality)) { setNote("pa-note", `${e.name}沒有變更。`, "bad"); return; }
+          const fmt = (q, b) => (q ? `${fmtNum(q)}（${p.quality_names[b]}）` : "未取得");
+          if (await confirmPlayerChange(`調整 ${f.player_name} 的圖鑑`, [[e.name, fmt(e.quantity, e.best_quality), fmt(n, qn)]], "會影響圖鑑與以圖鑑計算的成就進度。")) {
+            playerAction("PUT", `/codex/${encodeURIComponent(e.code)}`, { quantity: n, best_quality: qn }, `圖鑑「${e.name}」已更新。`);
+          }
+        });
+        return el("tr", {}, [td(e.name), statusTd(e.got ? "已取得" : "未取得", e.got ? "good" : "muted"), el("td", {}, [qty]), el("td", {}, [qual]), actionsTd([save])]);
+      });
+      return el("details", {}, [
+        el("summary", { text: `${cat.name}：${cat.discovered}/${cat.total}` }),
+        table(["項目", "狀態", "累計數量", "最高品質", ""], rows, "沒有項目"),
+      ]);
+    });
+    const codexBox = sub("圖鑑", [
+      ...codexParts,
+      el("p", { className: "muted small", text: "數量設為 0 = 改回未取得。圖鑑也會影響「收成作物」「圖鑑完成度」等成就的進度。" }),
+    ]);
+    return [ghBox, titleBox, checkinBox, achBox, codexBox];
+  }
+
   // ---------- 自動更新：只更新目前分頁；使用者操作中暫停，避免下拉選單、輸入與按鈕被重建 ----------
   const EDIT_PAUSE_MS = 20000;
   let lastInteraction = 0;
@@ -3592,6 +4094,7 @@ if (typeof document !== "undefined") {
     crops: [loadCatalog],
     animals: [loadCatalog],
     players: [loadCatalog],
+    features: [() => loadFeatureSettings(false)],
     rewards: [loadRankingRewards],
     logs: [loadCommunity],
   };

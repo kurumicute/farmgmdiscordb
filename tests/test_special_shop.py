@@ -50,8 +50,8 @@ def test_week_start_and_offers_rotate():
     w1 = special_shop.weekly_offers(date(2026, 1, 12), crops)
     assert [o.crop_code for o in w0] == ["wheat", "carrot", "amber_melon"]
     assert [o.crop_code for o in w1] == ["tomato", "strawberry", "moonflower"]
-    assert (w0[1].price, w0[1].limit) == (9, special_shop.NORMAL_LIMIT)  # 12 × 0.7 = 8.4 → 9
-    assert (w1[2].price, w1[2].limit, w1[2].rare) == (600, special_shop.RARE_LIMIT, True)
+    assert (w0[1].price, w0[1].limit) == (9, special_shop.config()["normal_limit"])  # 12 × 0.7 = 8.4 → 9
+    assert (w1[2].price, w1[2].limit, w1[2].rare) == (600, special_shop.config()["rare_limit"], True)
 
 
 def test_greenhouse_levels_speed_up_growth(admin, pid, clock, session_factory):
@@ -59,7 +59,7 @@ def test_greenhouse_levels_speed_up_growth(admin, pid, clock, session_factory):
     admin.plant_crop(pid, 1, "strawberry")
     admin.water_crop(pid, 1)
     base = admin.get_farm_status(pid).plots[0].remaining_seconds
-    for level, price in enumerate(special_shop.GREENHOUSE_PRICES, 1):
+    for level, price in enumerate(special_shop.greenhouse_prices(), 1):
         before = admin.get_farm_status(pid).gold
         assert f"{level} 級" in admin.upgrade_greenhouse(pid).message
         assert admin.get_farm_status(pid).gold == before - price
@@ -68,7 +68,7 @@ def test_greenhouse_levels_speed_up_growth(admin, pid, clock, session_factory):
     admin.plant_crop(pid, 2, "strawberry")
     admin.water_crop(pid, 2)
     fast = admin.get_farm_status(pid).plots[1].remaining_seconds
-    pct = special_shop.greenhouse_pct(special_shop.GREENHOUSE_MAX_LEVEL)
+    pct = special_shop.greenhouse_pct(special_shop.greenhouse_max_level())
     assert fast == base * (100 - pct) // 100
     assert admin.special_shop(pid)["greenhouse"]["next_price"] is None
     assert gold_matches_transactions(session_factory)
@@ -106,7 +106,7 @@ def test_weekly_deal_limit_resets_next_week(admin, pid, clock, session_factory):
 
 
 def test_title_shop(admin, pid, session_factory, home_group):
-    title, price = special_shop.TITLE_SHOP[0]
+    title, price = special_shop.title_shop()[0]
     before = admin.get_farm_status(pid).gold
     assert title in admin.buy_title(pid, title).message
     assert admin.get_farm_status(pid).gold == before - price
@@ -133,7 +133,7 @@ def test_panel_special_shop(cmds, admin, session_factory):  # noqa: F811
     p.choose("選擇要買的商品", "greenhouse")
     p.click("確認購買")
     assert "溫室升到 1 級" in p.text
-    title = special_shop.TITLE_SHOP[0][0]
+    title = special_shop.title_shop()[0][0]
     p.choose("選擇要買的商品", f"title:{title}")
     p.click("確認購買")
     assert f"買到稱號「{title}」" in p.text

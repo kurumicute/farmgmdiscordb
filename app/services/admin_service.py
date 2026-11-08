@@ -1,4 +1,5 @@
 """管理員操作：作物／動物種類、限時事件，以及調整單一玩家的金幣、等級、背包、土地、建築、動物與作物。
+新功能（簽到、寵物、特賣與升級、成就、稱號、圖鑑）的規則設定與玩家調整在 progress_admin.ProgressAdmin。
 
 - 每個方法都是一筆資料庫交易，並寫入管理操作紀錄（admin_actions）。
 - 調整玩家資料時另外寫入一筆 admin_adjust 交易紀錄，玩家查詢紀錄時可看到；不計入任務或競賽。
@@ -42,6 +43,7 @@ from app.repositories import inventory as inventory_repo
 from app.repositories import ranch as ranch_repo
 from app.services.fishing_service import fish_type_view, gear_view
 from app.services.game_service import genetics_label
+from app.services.progress_admin import ProgressAdmin
 from app.services.progress_service import ProgressService
 from app.services.ranch_service import animal_type_view
 
@@ -98,7 +100,7 @@ ANIMAL_FIELDS = (
 )
 
 
-class AdminService(ProgressService):
+class AdminService(ProgressAdmin, ProgressService):
     # ---------- 共用 ----------
 
     def _audit(self, session, actor: str, action: str, target_type: str, target_id, details: dict) -> None:

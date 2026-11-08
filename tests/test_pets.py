@@ -50,10 +50,10 @@ def test_buy_and_upgrade(admin, pid, session_factory, home_group):
         admin.upgrade_pet(pid, pets.CAT)  # 還沒領養
     before = gold(admin, pid)
     assert "領養了貓咪" in admin.buy_pet(pid, pets.CAT).message
-    assert gold(admin, pid) == before - pets.BUY_PRICE
+    assert gold(admin, pid) == before - pets.buy_price()
     with pytest.raises(AlreadyExistsError):
         admin.buy_pet(pid, pets.CAT)
-    for level, price in enumerate(pets.UPGRADE_PRICES, 1):
+    for level, price in enumerate(pets.upgrade_prices(), 1):
         before = gold(admin, pid)
         assert f"Lv{level}" in admin.upgrade_pet(pid, pets.CAT).message
         assert gold(admin, pid) == before - price
@@ -61,7 +61,7 @@ def test_buy_and_upgrade(admin, pid, session_factory, home_group):
         admin.upgrade_pet(pid, pets.CAT)
     status = {x["code"]: x for x in admin.pet_status(pid)}
     assert status["cat"]["level"] == 4 and status["cat"]["pct"] == 25 and status["cat"]["next_price"] is None
-    assert not status["dog"]["owned"] and status["dog"]["next_price"] == pets.BUY_PRICE
+    assert not status["dog"]["owned"] and status["dog"]["next_price"] == pets.buy_price()
     assert admin.get_farm_status(pid).pets == {"cat": 4}
     with pytest.raises(NotFoundError):
         admin.buy_pet(pid, "hamster")
@@ -158,7 +158,7 @@ def test_cat_odds_text_on_pets_page(admin, pid, cmds):  # noqa: F811
     cat = next(x for x in admin.pet_status(pid) if x["code"] == pets.CAT)
     assert not cat["odds"]["current"] and cat["odds"]["pct"] == pets.bonus_pct(0)  # 還沒領養：看領養後的 Lv0
     admin.buy_pet(pid, pets.CAT)
-    for _ in range(pets.MAX_LEVEL):
+    for _ in range(pets.max_level()):
         admin.upgrade_pet(pid, pets.CAT)
     cat = next(x for x in admin.pet_status(pid) if x["code"] == pets.CAT)
     odds = {c["code"]: c["text"] for c in cat["odds"]["crops"]}

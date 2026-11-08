@@ -67,6 +67,7 @@
         <button type="button" data-tab="animals" title="動物種類"><svg class="icon"><use href="#i-paw"/></svg><span>動物種類</span></button>
         <button type="button" data-tab="ranch" title="養殖與加工"><svg class="icon"><use href="#i-factory"/></svg><span>養殖與加工</span></button>
         <button type="button" data-tab="fishing" title="釣魚管理"><svg class="icon"><use href="#i-fish"/></svg><span>釣魚管理</span></button>
+        <button type="button" data-tab="features" title="新功能設定"><svg class="icon"><use href="#i-gift"/></svg><span>新功能設定</span></button>
 
         <p class="nav-group">活動管理</p>
         <button type="button" data-tab="events" title="限時活動"><svg class="icon"><use href="#i-calendar"/></svg><span>限時活動</span></button>
@@ -1114,9 +1115,25 @@
                 <button id="pa-refresh" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>重新整理</button>
               </div>
             </div>
-            <p class="muted small">直接修改玩家的金幣、農場等級、背包、土地、建築、動物與作物。每次調整都會寫入玩家交易紀錄（管理員調整）與管理操作紀錄，且不計入任務或競賽。</p>
+            <p class="muted small">直接修改玩家的金幣、農場等級、背包、土地、建築、動物與作物，以及溫室、寵物、稱號、簽到、成就與圖鑑。每次調整都會寫入玩家交易紀錄（管理員調整）與管理操作紀錄，且不計入任務或競賽。</p>
             <p id="pa-note" class="form-note" role="status" aria-live="polite"></p>
             <div id="pa-body"><p class="muted">請輸入玩家名稱或 ID，從建議清單選擇。</p></div>
+          </section>
+        </div>
+
+        <!-- ===== 新功能設定（每日簽到、寵物、特賣與升級、成就） ===== -->
+        <div class="tab-panel" data-tab-panel="features" hidden>
+          <p class="guest-hint guest-only"><svg class="icon" aria-hidden="true"><use href="#i-lock"/></svg>調整新功能的數值需要管理員權限，請先從右上角登入。</p>
+          <section id="feature-settings" class="panel admin-only" aria-labelledby="fs-title" hidden>
+            <div class="panel-head">
+              <h2 id="fs-title">新功能設定</h2>
+              <div class="controls">
+                <button id="fs-refresh" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>重新載入</button>
+              </div>
+            </div>
+            <p class="muted small">每日簽到、寵物、特賣與升級、成就的數值存在資料庫：儲存後網站立即生效，Discord Bot 最晚 10 秒內套用，不需要改程式或重新部署。每次儲存都會寫入管理操作紀錄。個別玩家的寵物、溫室、稱號、簽到、成就與圖鑑請到「玩家調整」。</p>
+            <p id="fs-note" class="form-note" role="status" aria-live="polite"></p>
+            <div id="fs-body"><p class="muted">載入中…</p></div>
           </section>
         </div>
 

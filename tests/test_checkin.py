@@ -47,7 +47,7 @@ def test_first_checkin_and_once_per_day(admin, pid, clock, session_factory):
     assert gold(session_factory, pid) == balance.INITIAL_GOLD + 100
     status = admin.checkin_status(pid)
     assert status["checked_today"] and status["streak"] == 1
-    assert status["next_reward_text"] == checkin.reward_text(checkin.REWARDS[1])
+    assert status["next_reward_text"] == checkin.reward_text(checkin.rewards()[1])
     # 台灣時間跨過 00:00 就是新的一天
     clock.advance(60)
     assert admin.checkin_status(pid)["checked_today"] is False
@@ -64,7 +64,7 @@ def test_streak_resets_after_missing_a_day_and_cycles(admin, pid, clock):
     for day in range(1, 9):
         r = admin.daily_checkin(pid)
         assert r["streak"] == day
-        assert r["reward_text"] == checkin.reward_text(checkin.REWARDS[(day - 1) % 7])
+        assert r["reward_text"] == checkin.reward_text(checkin.rewards()[(day - 1) % 7])
         clock.advance(DAY)
     clock.advance(DAY)  # 中斷一天
     assert admin.checkin_status(pid)["streak"] == 0

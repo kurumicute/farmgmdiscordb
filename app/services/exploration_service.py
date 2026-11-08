@@ -27,6 +27,7 @@ from app.repositories import items as items_repo
 from app.repositories import players as players_repo
 from app.repositories import ranch as ranch_repo
 from app.services.dto import ActionResult
+from app.services.game_service import harvest_highlight
 from app.services.ranch_service import RanchService
 
 INCUBATOR = "rare_incubator"
@@ -402,15 +403,16 @@ class ExplorationService(RanchService):
         if not targets:
             return ""
         done, total, stopped = 0, 0, ""
+        details: list = []
         for plot in targets:
             try:
-                _msg, qty, _item = self._harvest_locked(session, farm, plot, plot.crop_type)
+                _msg, qty, _item = self._harvest_locked(session, farm, plot, plot.crop_type, details)
             except WarehouseFullError:
                 stopped = f"倉庫已滿，還有 {len(targets) - done} 格沒收。"
                 break
             done += 1
             total += qty
-        text = f"🚜 自動收割機收成 {done} 格，共 {total} 個作物。" if done else ""
+        text = harvest_highlight(details) + f"🚜 自動收割機收成 {done} 格，共 {total} 個作物。" if done else ""
         text += stopped
         if done:
             text += self._auto_plant(session, farm)

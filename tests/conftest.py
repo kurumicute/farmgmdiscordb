@@ -26,8 +26,8 @@ GAME_TABLES = (
     "fish_shares, farm_fish, fishing_sessions, farm_fishing_gear, fishing_settings, "
     "craft_orders, farm_animals, farm_buildings, farm_defenses, steal_records, group_members, groups, "
     "gamble_prizes, farm_daily_stats, farm_stats, farm_effects, farm_tools, game_transactions, inventory_items, "
-    "farm_plots, farms, "
-    "players"
+    "farm_feedback, farm_plots, farms, "
+    "players, feature_settings"
 )
 
 
@@ -155,6 +155,12 @@ def clean_db(request):
             {"s": json.dumps(BASELINE_GENETICS)},
         )
     set_test_crop_times(engine)
+    # 新功能規則回到預設值（feature_settings 已清空；程序內快取也要重設）
+    from app.game import feature_config
+    from app.repositories import feature_settings as feature_settings_repo
+
+    feature_config.reset()
+    feature_settings_repo.invalidate()
     yield
 
 

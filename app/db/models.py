@@ -207,7 +207,7 @@ class Farm(Base):
     gold: Mapped[int] = mapped_column(BigInteger, nullable=False)
     warehouse_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str | None] = mapped_column(String(20))  # 目前選用的稱號（必須在 farm_titles 中），NULL 不顯示
-    # 溫室等級（0 = 沒有溫室）：每一級讓之後澆水的作物生長時間減少 special_shop.GREENHOUSE_PCT_PER_LEVEL%
+    # 溫室等級（0 = 沒有溫室）：每一級讓之後澆水的作物生長時間減少 special_shop.greenhouse_pct_per_level()%
     greenhouse_level: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
@@ -1367,3 +1367,26 @@ class FarmPet(Base):
     pet_code: Mapped[str] = mapped_column(String(16), primary_key=True)
     level: Mapped[int] = mapped_column(Integer, nullable=False)
     bought_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FeatureSetting(Base):
+    """可在管理網站調整的新功能規則（每日簽到、寵物、特賣與升級、成就）：每個 key 一列 JSON。
+
+    沒有資料列的 key 使用程式內的預設值；驗證與預設值在 game/feature_config.py 與各規則模組。"""
+
+    __tablename__ = "feature_settings"
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class FarmFeedback(Base):
+    """操作回饋用的玩家資料（只用於顯示）：上次打開 Discord 面板的時間與個人紀錄（{紀錄代碼: 數值}）。"""
+
+    __tablename__ = "farm_feedback"
+
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    records: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

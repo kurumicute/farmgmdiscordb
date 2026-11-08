@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 農場經營遊戲：Discord Bot（主要介面）+ CMD（開發維護）+ PostgreSQL（唯一資料來源）+ FastAPI 即時監控／管理網站。程式註解、訊息與文件皆為繁體中文，新程式碼請沿用。
 
-`discordbot.txt` 是移植到其他電腦的安裝指南（需要的軟體、套件版本、步驟與常見問題；改依賴或部署方式時要同步更新）。`discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求；已實作（`app/discord_bot/`、Migration 0010；0011 為作物時間與每日活動，0012 為賭場，0013 為作物價格調整，0014 為山洞冒險，0015 改為一次一趟的探險，0016 為釣魚，0017 讓魚的售價不受稀有度限制，0018 為放生動物，0019 為世界 Boss，0020 為全服世界 Boss 與固定排程（深淵魔龍），0021 讓釣到的魚售價跟隨魚種、不再限 1–200，0022 為世界 Boss 參與門檻 min_points，0023 為農場改名（交易類型 rename_farm），0024 為每日簽到（`daily_checkins`、交易類型 checkin_reward），0025 為圖鑑（`farm_codex`，從歷史補建），0026 為成就與稱號（`farm_achievements`、`farm_titles`、`farms.title`、交易類型 achievement_reward，匯入既有世界 Boss 稱號），0027 為 `farm_stats` 的偷菜／防守／賭場次數（成就進度用），0028 為溫室等級 `farms.greenhouse_level` 與每週特賣限購 `weekly_shop_purchases`，0029 為寵物 `farm_pets`），README「Discord Bot」一節是操作與故障排查文件。
+`discordbot.txt` 是移植到其他電腦的安裝指南（需要的軟體、套件版本、步驟與常見問題；改依賴或部署方式時要同步更新）。`discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求；已實作（`app/discord_bot/`、Migration 0010；0011 為作物時間與每日活動，0012 為賭場，0013 為作物價格調整，0014 為山洞冒險，0015 改為一次一趟的探險，0016 為釣魚，0017 讓魚的售價不受稀有度限制，0018 為放生動物，0019 為世界 Boss，0020 為全服世界 Boss 與固定排程（深淵魔龍），0021 讓釣到的魚售價跟隨魚種、不再限 1–200，0022 為世界 Boss 參與門檻 min_points，0023 為農場改名（交易類型 rename_farm），0024 為每日簽到（`daily_checkins`、交易類型 checkin_reward），0025 為圖鑑（`farm_codex`，從歷史補建），0026 為成就與稱號（`farm_achievements`、`farm_titles`、`farms.title`、交易類型 achievement_reward，匯入既有世界 Boss 稱號），0027 為 `farm_stats` 的偷菜／防守／賭場次數（成就進度用），0028 為溫室等級 `farms.greenhouse_level` 與每週特賣限購 `weekly_shop_purchases`，0029 為寵物 `farm_pets`，0030 為管理網站可調整的新功能規則 `feature_settings`，0031 為操作回饋 `farm_feedback`），README「Discord Bot」一節是操作與故障排查文件。
 尚未在真實 Discord 驗證（需要使用者提供 Bot Token 與測試伺服器），包括 Lavalink 實際語音播放與 DAVE 語音加密；舊玩家清除腳本尚未對開發資料庫執行。
 
 ## 協作規範（使用者的固定要求）
@@ -30,7 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    `.env` 必須有 `COMPOSE_PROJECT_NAME=farmgm`（`.env.example` 沒列）：否則 compose 以資料夾名稱建立另一組專案與**空的** Volume，看不到原本的資料。
 2. `docker compose up -d postgres lavalink yt-cipher`：啟動 PostgreSQL、Lavalink 與 YouTube 簽章服務（`LAVALINK_PASSWORD`／`YT_CIPHER_TOKEN` 未設定時 compose 會直接報錯；網站與 Bot 要等 Migration 完成再啟動）。第一次啟動時 `docker/initdb` 會建立 `farmgm` 與 `farmgm_test`（只在 Volume 為空時執行；若測試資料庫不存在需手動 `CREATE DATABASE farmgm_test`）；Lavalink 每次建立容器都會從網路下載插件。
 3. `python -m venv .venv` → `.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt`。
-4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0029）。
+4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0031）。
 5. 驗證：`pytest`、`ruff check app tests migrations scripts`、`node --test tests/web/connection.test.js` 都應通過。
 6. 若要搬移舊電腦的資料（PowerShell 的 `>` 會破壞二進位檔，一律在容器內產生檔案再 `docker cp`）：
    - 舊電腦：`docker exec farmgm-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" -Fc -f /tmp/farmgm.dump farmgm'`，再 `docker cp farmgm-postgres-1:/tmp/farmgm.dump .`
@@ -44,7 +44,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```powershell
 docker compose up -d --build --wait      # 全部在 Linux 容器：PostgreSQL 16（127.0.0.1:5434）、Lavalink 4.2.2（127.0.0.1:2333）、yt-cipher、
-                                          # web（8000）、site（24444）、bot；start.bat 同等；--profile music 另啟獨立音樂 Bot
+                                          # web（8000）、site（24444）、bot；start_docker.bat 同等；--profile music 另啟獨立音樂 Bot
 docker compose run --rm web python -m alembic upgrade head   # 在容器內升級 Migration（先備份）
 docker compose logs lavalink              # 確認 Loaded 'youtube-plugin…' 與 Lavalink is ready
 .\.venv\Scripts\python.exe -m alembic upgrade head
@@ -78,7 +78,7 @@ node --test tests/web/connection.test.js                               # 指定�
 - 對外連線走 Cloudflare Tunnel（遠端管理，cloudflared 以 systemd 服務跑在 VPS 主機上，不開任何防火牆 Port；ufw 只允許 OpenSSH）：`dc.kurumicute.com` → `localhost:24444`（介紹網站，公開），`addmin.kurumicute.com`（兩個 d，是使用者設定的實際名稱）→ `localhost:8000`（監控網站，前面有 Cloudflare Access，只允許使用者本人的 Email）。VPS 的 `ALLOWED_HOSTS` 必須包含 admin 網域，否則回「Invalid host header」；改網域時 Cloudflare 與 `ALLOWED_HOSTS` 要一起改，改完 `docker compose up -d --force-recreate web`。
 - 資料庫每日備份：`/opt/backup/backup.sh`（`pg_dump -Fc`，保留 14 天），root crontab 每天主機時間 21:00（≈ 台灣 04:00）執行，紀錄在 `/opt/backup/backup.log`；備份只在同一台 VPS 上。
 - 同一個 Bot Token 只能有一處執行：2026-11-05 已切換到 VPS（資料無遺漏），本機的 `bot`／`web` 容器已停止，不要在本機重新啟動它們，除非使用者要切回本機；本機 postgres 的資料停在切換當下，不再是最新資料。
-- 音樂節點在使用者的 PC：VPS（VMware）會不定時停頓（ping 本機 Docker bridge 偶爾 40ms+，CPU 閒置），在 VPS 播放會卡，所以 Lavalink＋yt-cipher 改在 PC 以 `start_music_node.bat`（compose 專案 `farmgm-music`，同一份 `docker-compose.yml`／`.env`）執行，經 PC 的 Tunnel「Kurumicute」公開成 `https://lavalink.kurumicute.com`（只靠 Lavalink 密碼保護），VPS 的 `.env` 設 `LAVALINK_REMOTE_URI` 讓 compose 的 `LAVALINK_URI` 改連它。PC 關機時只有音樂不能用（watchdog 會自動重連）。PC 上 `farmgm` 與 `farmgm-music` 的 lavalink 都綁 127.0.0.1:2333，不能同時執行。
+- 音樂節點在使用者的 PC：VPS（VMware）會不定時停頓（ping 本機 Docker bridge 偶爾 40ms+，CPU 閒置），在 VPS 播放會卡，所以 Lavalink＋yt-cipher 改在 PC 執行：預設用 `start.bat` **原生**執行（不開 Docker Desktop，省下約 2GB 的 Linux 虛擬機記憶體；`setup_music_node.bat` 第一次下載 Lavalink.jar 並依 yt-cipher 官方 Dockerfile 的步驟把同一版本編譯成 `server.exe`，都放在 gitignore 的 `music_node/`，日誌在 `music_node/logs`，`stop_music.bat` 停止；設定沿用 `.env` 與 `docker/lavalink/application.yml`，啟動時以環境變數把 remoteCipher 改成 127.0.0.1:8001，JVM 參數與 compose 相同），Docker 版 `start_music_node.bat`（compose 專案 `farmgm-music`）保留備用，經 PC 的 Tunnel「Kurumicute」公開成 `https://lavalink.kurumicute.com`（只靠 Lavalink 密碼保護），VPS 的 `.env` 設 `LAVALINK_REMOTE_URI` 讓 compose 的 `LAVALINK_URI` 改連它。PC 關機時只有音樂不能用（watchdog 會自動重連）。PC 上原生版、`farmgm` 與 `farmgm-music` 的 lavalink 都綁 127.0.0.1:2333，不能同時執行（start.bat 會先停掉 Docker 版）。本機 `farmgm-postgres-1` 只在跑測試時啟動，跑完就停。
 - 已知風險：Tunnel 到網站是 HTTP，登入 cookie 不帶 `Secure`（`app/api/auth.py` 依 `request.url.scheme`，uvicorn 沒信任 `X-Forwarded-Proto`）；機房 IP 較易被 YouTube 擋，`/play` 可能失敗。
 
 ## 架構
@@ -152,6 +152,20 @@ node --test tests/web/connection.test.js                               # 指定�
   商店稱號不可和成就稱號重複（`progress_service` 匯入時檢查）。化肥 `FERTILIZER_TIME_FACTOR` 0.85、蚯蚓 ×0.85（2026-11-06 調降），
   說明文字由常數產生。世界 Boss 介紹區「上一場排行榜」用 `boss_last_leaderboard`（同排程或同範圍的最近一場已結束活動），
   戰鬥區「目前排行」（`boss_live_board`）用 `boss_leaderboard`。
+- **可調整的新功能規則**（`game/feature_config.py`）：每日簽到、寵物、特賣與升級、成就的數值由各規則模組
+  `feature_config.register` 預設值與驗證，一律經函式讀取（`checkin.rewards()`、`pets.buy_price()`／`bonus_pct()`、
+  `special_shop.greenhouse_prices()`／`title_shop()`、`achievements.active()`／`by_code()`），不要再用模組常數。
+  設定存在 `feature_settings`（Migration 0030，只有修改過的 key 有資料列），`repositories/feature_settings.refresh` 在
+  `GameService._transaction`／`run_batch` 開始時每 10 秒最多讀一次（Bot 因此最晚 10 秒內套用），存檔不合法時退回預設值。
+  管理員讀寫與玩家的新功能資料調整在 `services/progress_admin.ProgressAdmin`（AdminService 繼承），API 在 `/api/admin/feature-settings`
+  與 `/api/admin/players/{id}/progress|greenhouse|pets|titles|title|checkin|achievements|codex|weekly-purchases`；
+  conftest 每個測試重設 `feature_config` 與快取。
+- **操作回饋**：收成結果由 `_harvest_locked(..., details)` 收集 `HarvestDetail`，`game_service.harvest_summary`／
+  `harvest_highlight`／`harvest_value_note` 產生訊息（約值用 `_estimate_value`，不改資料）；`gold_change` 產生金幣前後一行。
+  個人紀錄 `_record_note`（`farm_feedback.records`，第一次只記錄不顯示，呼叫端要先鎖農場），面板販售後呼叫 `note_sale`。
+  面板 `_work_then_prepare` 在操作後呼叫 `_progress_note`（比較 `progress_marks` 的圖鑑與可領成就，`progress_diff`），
+  `_prepare` 第一次讀農場頁面時呼叫 `_welcome_note`（`welcome_back`：記錄打開時間，離開 30 分鐘以上才回傳摘要）；
+  頂端提示用 `quote()` 包成引用區塊，含 `HIGHLIGHT_MARKS` 時 Embed 改金色。
 - **寵物（貓、狗）**：規則只在 `game/pets.py`（領養 Lv0 就有 5%，每級再 +5%，Lv4 25%）；`farm_pets` 存等級，服務在
   `RanchService.pet_status`／`buy_pet`／`upgrade_pet`（記 `buy_item`，item_code `pet_cat`／`pet_dog`）。貓在
   `_harvest_locked` 加收成數量（`_pet_rng` 決定小數部分）；狗在 `steal_crop` 的設施判定沒擋住時再擲一次 `_rng`，
@@ -162,7 +176,8 @@ node --test tests/web/connection.test.js                               # 指定�
 - **排名獎勵**：`game/ranking.py`（期間、驗證）+ `services/ranking_service.py`；背景結算 `run_background_settlement`（advisory lock，排名＋競賽；`WorldBossService` 覆寫後另外結束到期的世界 Boss 並建立排程的下一場，回傳多 `world_boss`／`world_boss_spawned`）由 `BACKGROUND_TASKS_RUNNER` 指定的網站（`main._auto_settle`，注入 `session_factory` 的測試中不啟動）或 Bot 執行，CLI／Bot 的 `leaderboard groups|rewards` 查詢時補結算，`(rule_id, period_start)` 唯一保證只發一次。
   項目 `money` 在有期間時（本日／本週／本月與所有排名獎勵）= 期間內**作物**販售收入（使用者要求：買東西不能影響排名；動物產品、加工品、魚與獎勵不算），只有「全部期間」才是目前金幣；`net_gold`／`NET_GOLD_EXCLUDED` 仍會計算與回傳，但不再是排名分數。
 - **排行榜**：`repositories/leaderboard.py` 全部期間讀 `farm_stats`、台灣日期對齊的期間讀 `farm_daily_stats`，只有非標準期間才回退掃描交易紀錄；`tests/test_farm_stats.py` 驗證與直接加總交易紀錄的結果完全相同。
-- **網站安全**：`/api/monitor/*` 唯讀；寫入只在 `/api/admin/*`，需管理員登入（HttpOnly cookie，`app/auth.py`，記憶體 session）、`X-Farmgm-Admin: 1` 標頭與同源 Origin；`TrustedHostMiddleware` 只接受本機 Host。前端 `app.js` 一律用 `el()`／`textContent` 建 DOM（不使用 innerHTML）。WebSocket 每數秒推快照（所有連線共用 `SnapshotCache`，前端分頁在背景 30 秒後 `pause()`）；分頁資料只更新目前分頁，且使用者操作中暫停（`userBusy()`），避免表單被重建。
+- **網站安全**：`/api/monitor/*` 唯讀；寫入只在 `/api/admin/*`，需管理員登入（HttpOnly cookie，`app/auth.py`，記憶體 session）、`X-Farmgm-Admin: 1` 標頭與同源 Origin；`TrustedHostMiddleware` 只接受本機 Host。前端 `app.js` 一律用 `el()`／`textContent` 建 DOM（不使用 innerHTML）。WebSocket 每數秒推快照（所有連線共用 `SnapshotCache`，先查 `MonitorService.data_version()`（幾個主鍵最大值），沒變就沿用上一份、
+`generated_at` 不變，前端 `onSnapshot` 據此跳過重繪與分頁資料載入；最長 60 秒或按重新整理才完整重查；前端分頁在背景 30 秒後 `pause()`）；分頁資料只更新目前分頁，且使用者操作中暫停（`userBusy()`），避免表單被重建。
 - **管理網站前端**（`app/web/`，原生 JS，無建置步驟）：CSP 為 `default-src 'self'`，不能用 inline script／style 或外部資源（圖示是 `index.html` 內的 SVG sprite `<use href="#i-…">`；JS 設 `element.style` 可以）。側邊欄分頁由 `TAB_META`（標題／說明）、`data-tab`／`data-tab-panel` 與 `TAB_LOADERS`（每頁要載入的函式）三處對應，新增分頁三處都要改；舊網址 `#manage` 由 `TAB_ALIASES` 導向。管理操作一律經 `adminRequest()`（自動把最近點擊的按鈕設為送出中，防重複提交；401 會切回未登入並提示）；重要／危險操作用 `confirmDialog()`（可帶調整前後 `diff` 與必填原因），不要用 `window.confirm／prompt`；結果用 `toast()`／`setNote()`，不要用會被下一次快照清掉的 `showError()`。表單 `label.req` 標示必填，送出前呼叫 `validateForm()`；`details.form-box` 有輸入就標為 dirty（關閉頁面會提醒），成功或重設後 `clearDirty()`。`emptyRow()` 以訊息含「失敗／無法取得」判斷錯誤樣式，錯誤訊息要沿用這兩個用詞。`tests/test_monitor_api.py` 會檢查首頁含「農場即時監控」。
 - **介紹網站前端**（`app/site/static/`）：夜空銀河主題，背景是 `site.js` 的 canvas（視差、流星；尊重 prefers-reduced-motion）。手冊表格由 `/api/guide` 填入，`index.html` 裡的數值只是 API 失敗時的預設值（會顯示警告）；音樂說明的前綴簡寫、歌單上限等由 `/api/info` 的 `music` 填入。API 請求用 `cache: "no-store"`。CSP 只額外允許 Google Fonts。`tests/test_site.py` 檢查頁面含 `/farm`、`/play`、`id="guide"` 與「農場操作手冊」。
 

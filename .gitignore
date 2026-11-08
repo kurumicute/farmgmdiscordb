@@ -14,3 +14,6 @@ YTDiscordBot-main/
 
 # 從 VPS 下載的資料庫備份（scripts/pull_vps_backup.py）
 backup/
+
+# 在這台電腦原生執行的音樂節點（setup_music_node.bat 下載的 Lavalink.jar、插件、yt-cipher 與日誌）
+music_node/

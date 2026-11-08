@@ -24,7 +24,7 @@ from app.repositories import inventory as inventory_repo
 from app.repositories import pets as pets_repo
 from app.repositories import ranch as ranch_repo
 from app.services.dto import ActionResult
-from app.services.game_service import GameService
+from app.services.game_service import GameService, gold_change
 
 
 def _find(table: dict, key: str, alias_index: int) -> str | None:
@@ -606,7 +606,8 @@ class RanchService(GameService):
                 gold_delta=income,
                 unit_price=price,
             )
-            return ActionResult(f"已出售 {quantity} 個{name}，獲得 {income} 金幣。", farm.gold, income, code, quantity)
+            return ActionResult(f"已出售 {quantity} 個{name}，獲得 {income} 金幣。{gold_change(farm.gold, income)}",
+                                farm.gold, income, code, quantity)
 
     def sell(
         self, player_id: int, key: str, quantity: int, quality: str = "normal", mutation: str = "none"
@@ -630,10 +631,10 @@ class RanchService(GameService):
             out = []
             for code, pet in pets.PETS.items():
                 level = owned.get(code)
-                nxt = pets.BUY_PRICE if level is None else pets.upgrade_price(level)
+                nxt = pets.buy_price() if level is None else pets.upgrade_price(level)
                 view = {
                     "code": code, "name": pet.name, "emoji": pet.emoji, "role": pet.role, "owned": level is not None,
-                    "level": level, "max_level": pets.MAX_LEVEL, "pct": pets.bonus_pct(level),
+                    "level": level, "max_level": pets.max_level(), "pct": pets.bonus_pct(level),
                     "effect": pets.effect_text(code, level),
                     "next_price": nxt, "next_pct": pets.bonus_pct(0 if level is None else level + 1),
                 }
@@ -658,7 +659,7 @@ class RanchService(GameService):
             farm = self._locked_farm(session, player_id)
             if pets_repo.get(session, farm.id, pet_code) is not None:
                 raise AlreadyExistsError(f"你已經有{pet.name}了，可以幫牠升級。")
-            price = pets.BUY_PRICE
+            price = pets.buy_price()
             if farm.gold < price:
                 raise InsufficientGoldError(f"金幣不足：{pet.name}需要 {price:,}，目前只有 {farm.gold:,}。")
             farm.gold -= price
@@ -669,7 +670,7 @@ class RanchService(GameService):
             nxt = pets.upgrade_price(0)
             return ActionResult(
                 f"{pet.emoji} 領養了{pet.name}！牠會出現在農場上。現在是 Lv0：{pets.effect_text(pet_code, 0)}；"
-                f"升到 Lv1 需要 {nxt:,} 金幣：{pets.effect_text(pet_code, 1)}。",
+                f"升到 Lv1 需要 {nxt:,} 金幣：{pets.effect_text(pet_code, 1)}。{gold_change(farm.gold, -price)}",
                 farm.gold, -price, pets.item_code(pet_code), 1,
             )
 
@@ -681,10 +682,10 @@ class RanchService(GameService):
             farm = self._locked_farm(session, player_id)
             row = pets_repo.get(session, farm.id, pet_code)
             if row is None:
-                raise NotFoundError(f"你還沒有{pet.name}，先領養（{pets.BUY_PRICE:,} 金幣）。")
+                raise NotFoundError(f"你還沒有{pet.name}，先領養（{pets.buy_price():,} 金幣）。")
             price = pets.upgrade_price(row.level)
             if price is None:
-                raise ValidationError(f"{pet.name}已經是最高等級 Lv{pets.MAX_LEVEL}。")
+                raise ValidationError(f"{pet.name}已經是最高等級 Lv{pets.max_level()}。")
             if farm.gold < price:
                 raise InsufficientGoldError(f"金幣不足：升級需要 {price:,}，目前只有 {farm.gold:,}。")
             farm.gold -= price
@@ -694,5 +695,9 @@ class RanchService(GameService):
                          item_code=pets.item_code(pet_code), quantity=1, gold_delta=-price)
             nxt = pets.upgrade_price(row.level)
             tail = f"下一級需要 {nxt:,} 金幣。" if nxt else "已達最高等級。"
-            return ActionResult(f"{pet.emoji} {pet.name}升到 Lv{row.level}：{effect}。{tail}", farm.gold, -price,
-                                pets.item_code(pet_code), 1)
+            return ActionResult(
+                f"{pet.emoji} {pet.name}升到 Lv{row.level}：{effect}。\n"
+                f"📈 Lv{row.level - 1} → Lv{row.level}：{pets.bonus_pct(row.level - 1)}% → {pets.bonus_pct(row.level)}%"
+                f"{gold_change(farm.gold, -price)}\n{tail}",
+                farm.gold, -price, pets.item_code(pet_code), 1,
+            )

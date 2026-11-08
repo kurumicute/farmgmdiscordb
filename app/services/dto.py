@@ -86,6 +86,21 @@ class FarmStatus:
 
 
 @dataclass(frozen=True)
+class HarvestDetail:
+    """收成一格的明細（只用於產生操作結果訊息）。"""
+
+    name: str  # 含品質／突變標籤，例如「小麥【稀有】」
+    quantity: int
+    quality: str
+    mutation: str
+    cat_bonus: int = 0
+    stolen: int = 0
+    lost: int = 0
+    value: int = 0  # 依目前售價估計的價值；自動販售時為實際收入
+    sold: bool = False
+
+
+@dataclass(frozen=True)
 class ActionResult:
     """一次成功的遊戲操作結果。"""
 

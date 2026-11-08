@@ -10,7 +10,7 @@ x-farmgm-app: &farmgm-app
   environment: &farmgm-app-env
     # 容器內以服務名稱連線；POSTGRES_PASSWORD 只能用英數字與 . _ ~ -（直接放進網址，未做編碼）
     DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-farmgm}
-    # 預設連同一組 compose 的 lavalink；音樂節點在別台電腦時（start_music_node.bat），
+    # 預設連同一組 compose 的 lavalink；音樂節點在別台電腦時（那台電腦執行 start.bat 原生版，或 start_music_node.bat Docker 版），
     # 在 .env 設 LAVALINK_REMOTE_URI（例如 https://lavalink.example.com，經 Cloudflare Tunnel）
     LAVALINK_URI: ${LAVALINK_REMOTE_URI:-http://lavalink:2333}
     APP_HOST: 0.0.0.0
@@ -60,9 +60,16 @@ services:
     restart: unless-stopped
     environment:
       LAVALINK_SERVER_PASSWORD: ${LAVALINK_PASSWORD:?請在 .env 設定 LAVALINK_PASSWORD}
-      # SerialGC 的額外記憶體比預設 G1 少，Free Ratio 讓閒置時把用不到的 heap 還給系統（單一 Bot 規模不需要並行 GC）；
-      # -Xms 預設是 VM 記憶體的 1/64（約 250MB），heap 不會縮到比它小，所以明確設小
-      _JAVA_OPTIONS: "-Xms64M -Xmx${LAVALINK_MAX_HEAP:-512M} -XX:+UseSerialGC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30"
+      # 省記憶體（單一 Bot、少數伺服器同時播放的規模）：
+      # - SerialGC 的額外記憶體比預設 G1 少，Free Ratio 讓閒置時把用不到的 heap 還給系統；-Xms 明確設小（預設是 VM 記憶體的 1/64）
+      # - TieredStopAtLevel=1 只用 C1 編譯器：少一組 C2 編譯執行緒與大部分 JIT 程式碼快取（約省 50–100MB），
+      #   代價是熱點程式碼稍慢；Opus 編碼在原生程式庫，播放幾首歌的 CPU 影響很小
+      # - Xss512k：每個執行緒的堆疊減半（Lavalink 有數十個執行緒）
+      _JAVA_OPTIONS: >-
+        -Xms32M -Xmx${LAVALINK_MAX_HEAP:-256M} -XX:+UseSerialGC -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30
+        -XX:TieredStopAtLevel=1 -XX:ReservedCodeCacheSize=48M -Xss512k
+      # glibc 預設每個執行緒最多 8×CPU 個 malloc arena，JVM 的原生記憶體會因此膨脹；限制為 2 個
+      MALLOC_ARENA_MAX: "2"
       # youtube-plugin 的 remoteCipher 密碼（與 yt-cipher 的 API_TOKEN 相同）
       PLUGINS_YOUTUBE_REMOTECIPHER_PASSWORD: ${YT_CIPHER_TOKEN:?請在 .env 設定 YT_CIPHER_TOKEN}
       # 選用：YouTube OAuth refresh token（Google 分身帳號），未設定時 Lavalink 啟動會在日誌顯示授權代碼
@@ -91,8 +98,8 @@ services:
     environment:
       API_TOKEN: ${YT_CIPHER_TOKEN:?請在 .env 設定 YT_CIPHER_TOKEN}
       OVERRIDE_PLAYER_VARIANT: IAS
-      # 預設每個 CPU 執行緒一個 worker（這台 12 個）；只有點歌時才解析簽章，2 個就夠
-      MAX_THREADS: "2"
+      # 預設每個 CPU 執行緒一個 worker（這台 12 個）；只有點歌時才解析簽章（結果有快取），1 個就夠
+      MAX_THREADS: "1"
 
   # 監控／管理網站（python -m app.main）。程式啟動時只檢查 Migration，不會自動升級：
   # 有新 Migration 時先備份，再執行 docker compose run --rm web python -m alembic upgrade head

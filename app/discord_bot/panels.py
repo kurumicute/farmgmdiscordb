@@ -125,6 +125,28 @@ def clean_message(text: str) -> str:
     return _CLI_HINT.sub("", text)
 
 
+# 操作結果含這些字時面板換成金色（稀有收穫、新紀錄、成就達成、新圖鑑）
+HIGHLIGHT_MARKS = ("🎉", "✨ 稀有收穫", "✨ 偷到稀有貨", "🏆 新紀錄", "🏅 成就達成", "📖 新圖鑑")
+
+
+def progress_diff(old: dict, new: dict) -> str:
+    """操作前後的圖鑑與成就標記差異（新圖鑑、新達成的成就）。"""
+    lines = []
+    found = [name for key, name in new["codex"].items() if key not in old["codex"]]
+    if found:
+        more = f" 等 {len(found)} 項" if len(found) > 5 else ""
+        lines.append(f"📖 新圖鑑：{'、'.join(found[:5])}{more}（圖鑑 {len(new['codex'])}/{new['codex_total']}）")
+    reached = [name for code, name in new["ready"].items() if code not in old["ready"]]
+    if reached:
+        lines.append(f"🏅 成就達成：{'、'.join(reached[:3])}！到「🏅 成就圖鑑」領取獎勵")
+    return "".join(f"\n{x}" for x in lines)
+
+
+def quote(text: str) -> str:
+    """操作結果放在頁面頂端的引用區塊（Discord 顯示為左側有直線的區塊），和頁面內容分開。"""
+    return "\n".join(f"> {line}" if line.strip() else ">" for line in text.strip().splitlines())
+
+
 def plot_line(p, *, owner: bool = True) -> str:
     """一格土地的說明；owner=False 是查看別人的農田（偷菜），不顯示給主人的操作提示。"""
     emoji = PLOT_EMOJI[p.state]
@@ -233,6 +255,9 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         self.cave_result: dict | None = None
         self.exploring = False
         self.checkin_next_at: datetime | None = None  # 今天已簽到：這個時間（台灣隔天 00:00）前不再查詢
+        # 操作回饋：打開面板時的「歡迎回來」摘要只顯示一次；圖鑑與成就標記（操作前後比較）
+        self.welcomed = False
+        self.marks: dict | None = None
         self.files: list[discord.File] = []  # 本次畫面要附上的圖片；每次 render 重建
         # 圖片內容的雜湊：本次畫面的圖、面板訊息上目前掛著的圖；相同時沿用訊息上的附件，不重新上傳
         self.image_digest: bytes | None = None
@@ -312,7 +337,9 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
                                   description=f"### {clean_message(player_message(exc))}")
             self._nav_back(row=0)
         if notice:
-            embed.description = cut(f"{notice}\n\n{embed.description or ''}".strip(), 4096)
+            embed.description = cut(f"{quote(notice)}\n\n{embed.description or ''}".strip(), 4096)
+            if any(mark in notice for mark in HIGHLIGHT_MARKS):
+                embed.color = GOLD  # 稀有收穫、新紀錄、成就達成等：整個面板換成金色
         # Discord 限制單一 Embed 總長度 6000 字：超過時縮短主要內容（例如農田非常多時）
         overflow = len(embed) - 5900
         if overflow > 0 and embed.description:
@@ -333,7 +360,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
 
         回傳 (頂端提示, 頁面資料, 讀取錯誤)。機器與簽到各自是一筆交易，失敗不影響面板顯示；
         讀取失敗時仍回傳前兩步的提示（例如剛簽到的獎勵），錯誤由呼叫端顯示。"""
-        notes = [self._checkin_note()] if farm_page else []
+        notes = [self._welcome_note(), self._checkin_note()] if farm_page else []
 
         def load():
             # 自動機器與讀取整頁在同一筆交易：沒有機器時只是兩條讀取（與頁面共用讀取快取），
@@ -346,6 +373,31 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
             return notes + [machines], data, None
         except Exception as exc:
             return notes, None, exc
+
+    def _welcome_note(self) -> str | None:
+        """面板第一次讀取農場頁面時：「你不在的時候」摘要（離開夠久才有），同時記下圖鑑與成就標記。"""
+        if self.welcomed:
+            return None
+        self.welcomed = True
+        try:
+            result = self.svc.welcome_back(self.player_id)
+        except Exception as exc:
+            if not isinstance(exc, GameError):
+                logger.exception("歡迎回來摘要失敗（玩家 #%s）", self.player_id)
+            return None
+        self.marks = result["marks"]
+        return "\n".join(result["lines"]) or None
+
+    def _progress_note(self) -> str:
+        """操作後比較圖鑑與成就標記：新登記的圖鑑、新達成的成就；失敗時不影響操作結果。"""
+        try:
+            marks = self.svc.progress_marks(self.player_id)
+        except Exception as exc:
+            if not isinstance(exc, GameError):
+                logger.exception("圖鑑與成就標記讀取失敗（玩家 #%s）", self.player_id)
+            return ""
+        old, self.marks = self.marks, marks
+        return progress_diff(old, marks) if old is not None else ""
 
     def _machines_note(self) -> str | None:
         """自動收割機／自動加工機在開啟或切換頁面時運作；失敗不影響面板顯示。"""
@@ -493,6 +545,8 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         """在執行緒中：執行操作後接著讀取新畫面（一次排隊；原本操作與重讀各排隊一次）。
         操作失敗時例外直接往外丟（不讀取畫面）；讀取頁面需要的面板狀態都不會在操作之後才改變。"""
         text = work()
+        if page != "welcome":
+            text += self._progress_note()
         return text, (page, self._prepare(getattr(self, f"_load_{page}"), page != "welcome"))
 
     async def show_error(self, interaction: discord.Interaction, message: str) -> None:
@@ -1132,22 +1186,27 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         return rows
 
     def _sell_one(self, row: dict, quantity: int) -> str:
-        return self.svc.sell(self.player_id, row["code"], quantity, row["quality"], row["mutation"]).message
+        result = self.svc.sell(self.player_id, row["code"], quantity, row["quality"], row["mutation"])
+        return result.message + self.svc.note_sale(self.player_id, result.gold_delta or 0)
 
     def _sell_all(self) -> str:
         rows = self._sellables(self.svc.get_backpack(self.player_id))
         if not rows:
             raise ValidationError("沒有可以賣的東西。")
-        income, sold, failed = 0, 0, []
+        income, sold, failed, gold = 0, 0, [], None
         for row in rows:
             try:
                 result = self.svc.sell(self.player_id, row["code"], row["quantity"], row["quality"], row["mutation"])
                 income += result.gold_delta or 0
                 sold += row["quantity"]
+                gold = result.gold
             except GameError as exc:
                 failed.append(f"{row['name']}：{exc}")
         text = f"賣出 {sold} 個商品，獲得 {money(income)} 金幣。"
-        return text + (" 未賣出：" + "；".join(failed[:3]) if failed else "")
+        if gold is not None:
+            text += f"\n💰 金幣 {money(gold - income)} → {money(gold)}"
+            text += self.svc.note_sale(self.player_id, income)
+        return text + ("\n未賣出：" + "；".join(failed[:3]) if failed else "")
 
     def _build_sell(self, d):
         rows = self._sellables(d["backpack"])
@@ -1345,12 +1404,12 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
                     f"　　{crop_emoji(c['code'])} {c['name']}（每格 {c['quantity']} 個）：{c['text']}"
                     for c in odds["crops"])
             blocks.append(block)
-        ladder = " → ".join(money(v) for v in pets.UPGRADE_PRICES)
+        ladder = " → ".join(money(v) for v in pets.upgrade_prices())
         e = discord.Embed(title="🐾 ✦ 寵物 ✦", color=GREEN, description=sections(
             f"💰 你的金幣：**{money(d['gold'])}**",
             ("", blocks, "\n\n"),
-            f"領養 {money(pets.BUY_PRICE)} 金（Lv0 +{pets.BASE_PCT}%）；升級 {ladder} 金，"
-            f"每級再 +{pets.PCT_PER_LEVEL}%，最高 Lv{pets.MAX_LEVEL}（{pets.bonus_pct(pets.MAX_LEVEL)}%）。"
+            f"領養 {money(pets.buy_price())} 金（Lv0 +{pets.base_pct()}%）；升級 {ladder} 金，"
+            f"每級再 +{pets.pct_per_level()}%，最高 Lv{pets.max_level()}（{pets.bonus_pct(pets.max_level())}%）。"
             "寵物會出現在農場圖的左上（狗）與右上（貓），不佔畜舍欄位。",
         ))
         pending = self.confirm.split(":", 1)[1] if (self.confirm or "").startswith("pet:") else None
@@ -2314,9 +2373,9 @@ def help_embed() -> discord.Embed:
         "自動澆水器種下就澆水。溫室每一級讓生長時間再少一些（商店購買）。"))
     e.add_field(name="🐔 養殖與加工", inline=False, value=(
         "先建造畜舍再買動物，餵食後等待生產再收集。磨坊、烘焙坊、果醬工坊可以把作物加工成更值錢的商品。\n"
-        f"「🐾 寵物」可以領養貓咪（收成數量增加）和狗狗（多擋一次偷菜），領養 {pets.BUY_PRICE:,} 金，"
-        f"Lv0 就有 {pets.BASE_PCT}%，每升一級再 +{pets.PCT_PER_LEVEL}%，"
-        f"最高 Lv{pets.MAX_LEVEL}（{pets.bonus_pct(pets.MAX_LEVEL)}%）；寵物會出現在農場圖上，不佔畜舍。"))
+        f"「🐾 寵物」可以領養貓咪（收成數量增加）和狗狗（多擋一次偷菜），領養 {pets.buy_price():,} 金，"
+        f"Lv0 就有 {pets.base_pct()}%，每升一級再 +{pets.pct_per_level()}%，"
+        f"最高 Lv{pets.max_level()}（{pets.bonus_pct(pets.max_level())}%）；寵物會出現在農場圖上，不佔畜舍。"))
     e.add_field(name="🥷 偷菜與防守", inline=False, value=(
         "可以偷同一伺服器成員已成熟的作物：在「🥷 偷菜」選一位玩家打開他的農田，再選要偷哪一格；"
         f"每天只能偷同一位玩家 {balance.STEAL_PLOTS_PER_VICTIM_PER_DAY} 格田，每人每天最多被 "
