@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `世界Boss_移植說明.md`、`遺跡日報季節與新作物魚_移植說明.md`、`釣魚防腳本與效能優化_移植說明.md` 是功能移植說明（完整檔案清單與 SHA-256 核對碼）。
 `discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求（已實作：`app/discord_bot/`、Migration 0010）。README「Discord Bot」一節是操作與故障排查文件。
 
-Migration 一覽（0010 之後；目前 head = **0037**；VPS 已於 2026-11-09 升到 0036，0037 尚未套用）：
+Migration 一覽（0010 之後；目前 head = **0038**；VPS 已於 2026-11-09 升到 0037，0038 尚未套用）：
 - 0011 作物時間與每日活動、0012 賭場、0013 作物價格調整、0014 山洞冒險、0015 一次一趟的探險、0016 釣魚、0017／0021 魚的售價不受稀有度限制、
   0018 放生動物、0019 世界 Boss、0020 全服世界 Boss 與固定排程（深淵魔龍）、0022 世界 Boss 參與門檻 `min_points`、0023 農場改名（`rename_farm`）。
 - 0024 每日簽到（`daily_checkins`、`checkin_reward`）、0025 圖鑑（`farm_codex`，從歷史補建）、0026 成就與稱號（`farm_achievements`、`farm_titles`、
@@ -16,7 +16,7 @@ Migration 一覽（0010 之後；目前 head = **0037**；VPS 已於 2026-11-09 
   0029 寵物 `farm_pets`、0030 可調整的新功能規則 `feature_settings`、0031 操作回饋 `farm_feedback`。
 - 0032 古代遺跡（`group_ruins`、`ruins_contributions`、區域 ruins、`ruins_donate`）、遺跡守護者（`ruins_guardians`、`ruins_guardian_hits`、`ruins_guardian`）
   與傳聞挖寶（`rumor_digs`、`rumor_treasure`；農場日報不需要資料表）；0033 新作物（玉米、南瓜、葡萄、西瓜）、20 種魚、魚餌「深海誘餌」「龍涎香餌」與
-  `fish_types.required_baits`；0034 作物／魚的季節與時段限定（`seasons`、`hour_start`／`hour_end`）並把所有魚餌需要等級調低 2 級；0035 10 種季節／時段特殊魚；0036 釣魚防腳本（`fishing_guards`）；0037 所有魚價 ×1.5（魚種、未賣出的魚、進行中的拋竿；`fishing.INITIAL_FISH` 是調高後的值，0016／0033／0035 的常數是調高前的值）。
+  `fish_types.required_baits`；0034 作物／魚的季節與時段限定（`seasons`、`hour_start`／`hour_end`）並把所有魚餌需要等級調低 2 級；0035 10 種季節／時段特殊魚；0036 釣魚防腳本（`fishing_guards`）；0037、0038 所有魚價各 ×1.5（魚種、未賣出的魚、進行中的拋竿；`fishing.INITIAL_FISH` 是調高後的值，0016／0033／0035 的常數是調高前的值）。
 
 Bot 已在正式環境（VPS，見下）連線真實 Discord；新的面板訊息與音樂實際播放仍要請使用者在 Discord 確認，DAVE 語音加密尚未驗證；舊玩家清除腳本尚未對開發資料庫執行。
 
@@ -43,7 +43,7 @@ Bot 已在正式環境（VPS，見下）連線真實 Discord；新的面板訊�
    `.env` 必須有 `COMPOSE_PROJECT_NAME=farmgm`（`.env.example` 沒列）：否則 compose 以資料夾名稱建立另一組專案與**空的** Volume，看不到原本的資料。
 2. `docker compose up -d postgres lavalink yt-cipher`：啟動 PostgreSQL、Lavalink 與 YouTube 簽章服務（`LAVALINK_PASSWORD`／`YT_CIPHER_TOKEN` 未設定時 compose 會直接報錯；網站與 Bot 要等 Migration 完成再啟動）。第一次啟動時 `docker/initdb` 會建立 `farmgm` 與 `farmgm_test`（只在 Volume 為空時執行；若測試資料庫不存在需手動 `CREATE DATABASE farmgm_test`）；Lavalink 每次建立容器都會從網路下載插件。
 3. `python -m venv .venv` → `.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt`。
-4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0037）。
+4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0038）。
 5. 驗證：`pytest`、`ruff check app tests migrations scripts`、`node --test tests/web/connection.test.js` 都應通過。
 6. 若要搬移舊電腦的資料（PowerShell 的 `>` 會破壞二進位檔，一律在容器內產生檔案再 `docker cp`）：
    - 舊電腦：`docker exec farmgm-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" -Fc -f /tmp/farmgm.dump farmgm'`，再 `docker cp farmgm-postgres-1:/tmp/farmgm.dump .`
