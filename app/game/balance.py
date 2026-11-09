@@ -208,7 +208,8 @@ RECIPES = {
         "草莓果醬", "jam_workshop", {"strawberry": 3}, "strawberry_jam", 1, 60 * 60, ("草莓果醬", "果醬", "jam")
     ),
 }
-CRAFT_MAX_QUANTITY = 10  # 單張訂單最多份數；每座設施同時只能有 1 張加工中的訂單
+CRAFT_MAX_QUANTITY = 10  # 單張訂單最多份數
+CRAFT_QUEUE_MAX = 10  # 每種設施最多同時有幾張未完成的訂單（排隊依序加工，前一張完成才開始下一張）
 
 # ---------- 加工品（可販售商品；動物產品在資料庫 animal_types） ----------
 # code: (名稱, 單位售價, 別名)

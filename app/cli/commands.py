@@ -625,7 +625,8 @@ class CommandHandler:
                 f"{r['name']}（{r['code']}）：{inputs} → {r['output_quantity']} 份{r['output_name']}，"
                 f"{rules.format_duration(r['seconds'])}／份，{r['building_name']}（{built}），售價 {r['sell_price']}"
             )
-        lines.append(f"每座設施一次一張訂單，單張最多 {balance.CRAFT_MAX_QUANTITY} 份：craft <配方> <份數>")
+        lines.append(f"單張最多 {balance.CRAFT_MAX_QUANTITY} 份，設施忙碌時排隊（最多 {balance.CRAFT_QUEUE_MAX} 張）："
+                     "craft <配方> <份數>")
         return "\n".join(lines)
 
     def _craft(self, args: list[str]) -> str:

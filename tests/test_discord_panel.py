@@ -270,6 +270,25 @@ def test_animals_and_craft_pages(cmds, admin):
     assert "無法完成" not in p.text and "閒置中" in p.text
 
 
+def test_craft_buttons_follow_ingredients_and_queue(cmds, admin):
+    p = make_player(cmds, ALICE)
+    pid = p.panel.player_id
+    admin.set_farm_values("root", pid, gold=50_000)
+    p.go("build")
+    p.choose("選擇要建造的設施", "mill")
+    admin.set_inventory("root", pid, "wheat", "normal", "none", 21)  # 夠做 7 份
+    p.go("craft")
+    assert "現有原料可做 **7** 份" in p.text
+    p.choose("開始加工", "flour")
+    assert [x for x in p.labels() if x.startswith("做 ")] == ["做 1", "做 5", "做 7"]
+    p.click("做 7")
+    assert "✅" in p.text and "7 份麵粉" in p.text and "排在" not in p.text
+    admin.set_inventory("root", pid, "wheat", "normal", "none", 6)
+    p.choose("開始加工", "flour")
+    p.click("做 2")
+    assert "排在訂單 #1 之後" in p.text and "⏳ 排隊 1 張" in p.text
+
+
 def test_steal_from_panel_only_same_guild(cmds, clock, admin):
     alice = make_player(cmds, ALICE, name="Alice")
     bob = make_player(cmds, BOB, name="Bob")
@@ -409,7 +428,8 @@ def test_error_screen_hides_page_and_returns_with_selection(cmds, admin):
     p.choose("選擇要建造的設施", "mill")
     p.go("craft")
     p.choose("開始加工", "flour")
-    p.click("做 1")  # 沒有小麥：失敗
+    assert "原料不足，一份都做不了" in p.text and not any(x.startswith("做 ") for x in p.labels())
+    p.modal("自訂數量", 1)  # 沒有小麥：失敗
     assert p.text.startswith("⚠️ 無法完成") and "加工" not in p.text.split("\n", 1)[0]
     assert "workshop" not in p.text and "(" not in p.text  # 不顯示 CMD 指令提示
     assert [c.label for c in p.panel.children] == ["返回"]

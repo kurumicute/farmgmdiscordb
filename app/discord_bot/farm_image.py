@@ -91,8 +91,8 @@ def plant_layer(plot: dict, stage: str) -> str | None:
     crop = crops.get(plot.get("crop") or "", crops["_generic"])  # 網站新增的作物沒有專屬素材
     if stage == "empty":
         return None
-    if stage in ("seeds", "sprout", "young"):
-        return crops["_generic"][stage]
+    if stage in ("seeds", "sprout", "young"):  # 有專屬幼苗圖的作物用自己的，其他共用
+        return crop.get(stage, crops["_generic"][stage])
     if stage == "ready" and plot.get("mutation") == "variant" and "variant" in crop:
         return crop["variant"]["ready"]
     return crop[stage]

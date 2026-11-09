@@ -62,7 +62,9 @@
         "code": "black_tomato",
         "ready": "crops/tomato/variant_ready.png",
         "item": "crops/tomato/variant_item.png"
-      }
+      },
+      "sprout": "crops/tomato/sprout.png",
+      "young": "crops/tomato/young.png"
     },
     "strawberry": {
       "unripe": "crops/strawberry/unripe.png",
@@ -75,6 +77,41 @@
         "ready": "crops/strawberry/variant_ready.png",
         "item": "crops/strawberry/variant_item.png"
       }
+    },
+    "amber_melon": {
+      "sprout": "crops/amber_melon/sprout.png",
+      "young": "crops/amber_melon/young.png",
+      "unripe": "crops/amber_melon/unripe.png",
+      "ready": "crops/amber_melon/ready.png",
+      "withered": "crops/amber_melon/withered.png"
+    },
+    "moonflower": {
+      "sprout": "crops/moonflower/sprout.png",
+      "young": "crops/moonflower/young.png",
+      "unripe": "crops/moonflower/unripe.png",
+      "ready": "crops/moonflower/ready.png",
+      "withered": "crops/moonflower/withered.png"
+    },
+    "pumpkin": {
+      "sprout": "crops/pumpkin/sprout.png",
+      "young": "crops/pumpkin/young.png",
+      "unripe": "crops/pumpkin/unripe.png",
+      "ready": "crops/pumpkin/ready.png",
+      "withered": "crops/pumpkin/withered.png"
+    },
+    "grape": {
+      "sprout": "crops/grape/sprout.png",
+      "young": "crops/grape/young.png",
+      "unripe": "crops/grape/unripe.png",
+      "ready": "crops/grape/ready.png",
+      "withered": "crops/grape/withered.png"
+    },
+    "watermelon": {
+      "sprout": "crops/watermelon/sprout.png",
+      "young": "crops/watermelon/young.png",
+      "unripe": "crops/watermelon/unripe.png",
+      "ready": "crops/watermelon/ready.png",
+      "withered": "crops/watermelon/withered.png"
     }
   },
   "animals": {
@@ -406,14 +443,6 @@
           "ready": "field/presets/04_strawberry_ready.png",
           "withered": "field/presets/04_strawberry_withered.png"
         },
-        "tomato": {
-          "seeds": "field/presets/04_seeds.png",
-          "sprout": "field/presets/04_sprout.png",
-          "young": "field/presets/04_young.png",
-          "unripe": "field/presets/04_tomato_unripe.png",
-          "ready": "field/presets/04_tomato_ready.png",
-          "withered": "field/presets/04_tomato_withered.png"
-        },
         "wheat": {
           "seeds": "field/presets/04_seeds.png",
           "sprout": "field/presets/04_sprout.png",
@@ -440,14 +469,6 @@
           "unripe": "field/presets/06_strawberry_unripe.png",
           "ready": "field/presets/06_strawberry_ready.png",
           "withered": "field/presets/06_strawberry_withered.png"
-        },
-        "tomato": {
-          "seeds": "field/presets/06_seeds.png",
-          "sprout": "field/presets/06_sprout.png",
-          "young": "field/presets/06_young.png",
-          "unripe": "field/presets/06_tomato_unripe.png",
-          "ready": "field/presets/06_tomato_ready.png",
-          "withered": "field/presets/06_tomato_withered.png"
         },
         "wheat": {
           "seeds": "field/presets/06_seeds.png",
@@ -476,14 +497,6 @@
           "ready": "field/presets/08_strawberry_ready.png",
           "withered": "field/presets/08_strawberry_withered.png"
         },
-        "tomato": {
-          "seeds": "field/presets/08_seeds.png",
-          "sprout": "field/presets/08_sprout.png",
-          "young": "field/presets/08_young.png",
-          "unripe": "field/presets/08_tomato_unripe.png",
-          "ready": "field/presets/08_tomato_ready.png",
-          "withered": "field/presets/08_tomato_withered.png"
-        },
         "wheat": {
           "seeds": "field/presets/08_seeds.png",
           "sprout": "field/presets/08_sprout.png",
@@ -510,14 +523,6 @@
           "unripe": "field/presets/10_strawberry_unripe.png",
           "ready": "field/presets/10_strawberry_ready.png",
           "withered": "field/presets/10_strawberry_withered.png"
-        },
-        "tomato": {
-          "seeds": "field/presets/10_seeds.png",
-          "sprout": "field/presets/10_sprout.png",
-          "young": "field/presets/10_young.png",
-          "unripe": "field/presets/10_tomato_unripe.png",
-          "ready": "field/presets/10_tomato_ready.png",
-          "withered": "field/presets/10_tomato_withered.png"
         },
         "wheat": {
           "seeds": "field/presets/10_seeds.png",
@@ -546,14 +551,6 @@
           "ready": "field/presets/12_strawberry_ready.png",
           "withered": "field/presets/12_strawberry_withered.png"
         },
-        "tomato": {
-          "seeds": "field/presets/12_seeds.png",
-          "sprout": "field/presets/12_sprout.png",
-          "young": "field/presets/12_young.png",
-          "unripe": "field/presets/12_tomato_unripe.png",
-          "ready": "field/presets/12_tomato_ready.png",
-          "withered": "field/presets/12_tomato_withered.png"
-        },
         "wheat": {
           "seeds": "field/presets/12_seeds.png",
           "sprout": "field/presets/12_sprout.png",
@@ -581,14 +578,6 @@
           "ready": "field/presets/14_strawberry_ready.png",
           "withered": "field/presets/14_strawberry_withered.png"
         },
-        "tomato": {
-          "seeds": "field/presets/14_seeds.png",
-          "sprout": "field/presets/14_sprout.png",
-          "young": "field/presets/14_young.png",
-          "unripe": "field/presets/14_tomato_unripe.png",
-          "ready": "field/presets/14_tomato_ready.png",
-          "withered": "field/presets/14_tomato_withered.png"
-        },
         "wheat": {
           "seeds": "field/presets/14_seeds.png",
           "sprout": "field/presets/14_sprout.png",
@@ -615,14 +604,6 @@
           "unripe": "field/presets/16_strawberry_unripe.png",
           "ready": "field/presets/16_strawberry_ready.png",
           "withered": "field/presets/16_strawberry_withered.png"
-        },
-        "tomato": {
-          "seeds": "field/presets/16_seeds.png",
-          "sprout": "field/presets/16_sprout.png",
-          "young": "field/presets/16_young.png",
-          "unripe": "field/presets/16_tomato_unripe.png",
-          "ready": "field/presets/16_tomato_ready.png",
-          "withered": "field/presets/16_tomato_withered.png"
         },
         "wheat": {
           "seeds": "field/presets/16_seeds.png",

@@ -44,6 +44,31 @@ def test_same_crop_same_stage_uses_preset():
     assert farm_image.farm_png(plots) == preset("field/presets/16_sprout.png")
 
 
+@pytest.mark.parametrize("crop", ["amber_melon", "moonflower", "tomato", "pumpkin", "grape", "watermelon"])
+def test_crop_has_its_own_growth_stages(crop):
+    layers = {}
+    for stage, state, progress in (("sprout", "growing", 0.1), ("young", "growing", 0.5), ("unripe", "growing", 0.9),
+                                   ("ready", "ready", 1), ("withered", "withered", 1)):
+        rel = farm_image.plant_layer(plot(crop, state, progress), stage)
+        assert rel == f"crops/{crop}/{stage}.png"
+        with Image.open(ASSETS / rel) as im:
+            assert im.size == (64, 64) and im.mode == "RGBA" and im.getbbox()
+        layers[stage] = (ASSETS / rel).read_bytes()
+    assert len(set(layers.values())) == 5  # 每個階段的圖都不一樣
+    # 種滿同一種時也要畫出專屬的圖，不能命中舊的預先產生圖
+    assert farm_image.preset_for([plot(crop, "growing", 0.1)] * 4) is None
+    assert size_of(farm_image.farm_png([plot(crop, "ready")] * 16)) == (512, 502)
+
+
+def test_crop_without_own_art_falls_back_to_generic():
+    assert farm_image.plant_layer(plot("corn", "growing", 0.1), "sprout") == "crops/_generic/sprout.png"
+    assert farm_image.plant_layer(plot("corn", "ready"), "ready") == "crops/_generic/ready.png"
+    assert farm_image.plant_layer(plot("tomato", "waiting_water"), "seeds") == "crops/_generic/seeds.png"
+    variant = plot("tomato", "ready", mutation="variant")
+    assert farm_image.plant_layer(variant, "ready") == "crops/tomato/variant_ready.png"
+    assert farm_image.plant_layer(plot("grape", "ready", mutation="variant"), "ready") == "crops/grape/ready.png"
+
+
 def test_preset_with_quality_badges_is_redrawn():
     plots = [plot("wheat", "ready", quality="legendary")] + [plot("wheat", "ready")] * 3
     png = farm_image.farm_png(plots)

@@ -79,15 +79,25 @@ def get_order(session: Session, farm_id: int, order_id: int, *, for_update: bool
     return session.scalars(stmt).first()
 
 
-def busy_order(session: Session, farm_id: int, building_code: str, now: datetime) -> CraftOrder | None:
-    """該設施目前加工中（尚未完成）的訂單。"""
-    stmt = select(CraftOrder).where(
-        CraftOrder.farm_id == farm_id,
-        CraftOrder.building_code == building_code,
-        CraftOrder.status == "in_progress",
-        CraftOrder.ready_at > now,
+def active_orders(session: Session, farm_id: int, building_code: str, now: datetime) -> list[CraftOrder]:
+    """該設施尚未完成的訂單（加工中與排隊中），依完成時間排序。"""
+    stmt = (
+        select(CraftOrder)
+        .where(
+            CraftOrder.farm_id == farm_id,
+            CraftOrder.building_code == building_code,
+            CraftOrder.status == "in_progress",
+            CraftOrder.ready_at > now,
+        )
+        .order_by(CraftOrder.ready_at, CraftOrder.id)
     )
-    return session.scalars(stmt).first()
+    return list(session.scalars(stmt))
+
+
+def busy_order(session: Session, farm_id: int, building_code: str, now: datetime) -> CraftOrder | None:
+    """該設施目前加工中（尚未完成、最早完成）的訂單。"""
+    orders = active_orders(session, farm_id, building_code, now)
+    return orders[0] if orders else None
 
 
 def list_orders(

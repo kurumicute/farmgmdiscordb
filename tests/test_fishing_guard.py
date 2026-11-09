@@ -1,4 +1,4 @@
-"""釣魚防腳本：定期人機確認、操作時間異常、答錯暫停、按鈕打亂；只影響拋竿，不扣資產。"""
+"""釣魚防腳本：定期人機確認、操作時間異常、答錯暫停；只影響拋竿，不扣資產。"""
 
 import pytest
 from sqlalchemy import select
@@ -149,7 +149,7 @@ def test_duplicate_click_does_not_count_as_fast_action(admin, player_id, clock, 
     assert guard_row(session_factory).suspicion == 0
 
 
-def test_panel_shows_check_and_shuffled_fight_buttons(admin, clock, session_factory):
+def test_panel_shows_check_and_fixed_fight_buttons(admin, clock, session_factory):
     runner = ServiceRunner(2)
     try:
         cmds = FarmCommands(admin, runner)
@@ -158,19 +158,15 @@ def test_panel_shows_check_and_shuffled_fight_buttons(admin, clock, session_fact
         pid = p.panel.player_id
         admin.update_fishing_settings("test", settings_with(base_success_pct=100, reaction_seconds=15))
         equip_starter(admin, pid, bait=30)
-        # 拉扯畫面：五個操作都在，而且順序會變
-        orders = set()
+        # 拉扯畫面：五個操作的位置固定，不會交換
         for _ in range(12):
             view = admin.start_fishing(pid)
             clock._now = view["bite_at"]
             clock.advance(1)
             admin.hook_fish(pid, view["id"])
             p.go("fish_game")
-            labels = p.labels()
-            assert {"收線", "放線", "等待", "左壓", "右壓"} <= set(labels)
-            orders.add(tuple(labels))
+            assert p.labels()[:5] == ["收線", "放線", "等待", "左壓", "右壓"]
             admin.give_up_fishing(pid, view["id"])
-        assert len(orders) > 1
         # 人機確認畫面：題目與 emoji 按鈕；按對就拋竿
         force_check(session_factory)
         p.go("fishing")

@@ -8,7 +8,6 @@
 
 import asyncio
 import logging
-import random
 from datetime import UTC, datetime
 
 import discord
@@ -307,12 +306,11 @@ class FishingPages:
             + f"⏰ {_ts(v['action_deadline'])}內要操作，不然魚會跑掉"
         ))
         e.set_footer(text="收線：拉近、耗魚體力，連續收線張力越來越高｜放線：張力大降、魚游遠｜等待：張力下降｜"
-                          "魚竄向一邊：壓同方向。按鈕順序每回合都會變。")
+                          "魚竄向一邊：壓同方向。")
         turn = v["turn"]
         buttons = [("reel", "🎣", discord.ButtonStyle.primary), ("release", "↩️", discord.ButtonStyle.secondary),
                    ("wait", "⏳", discord.ButtonStyle.secondary), ("left", "⬅️", discord.ButtonStyle.secondary),
                    ("right", "➡️", discord.ButtonStyle.secondary)]
-        random.shuffle(buttons)  # 每回合打亂，固定點擊位置的連點程式會按錯
         for action, emoji, style in buttons:
             async def do(interaction, action=action):
                 await self._fish_call(

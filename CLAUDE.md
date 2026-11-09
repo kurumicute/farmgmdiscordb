@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `世界Boss_移植說明.md`、`遺跡日報季節與新作物魚_移植說明.md`、`釣魚防腳本與效能優化_移植說明.md` 是功能移植說明（完整檔案清單與 SHA-256 核對碼）。
 `discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求（已實作：`app/discord_bot/`、Migration 0010）。README「Discord Bot」一節是操作與故障排查文件。
 
-Migration 一覽（0010 之後；目前 head = **0036**；0032–0036 還沒在 VPS 執行過）：
+Migration 一覽（0010 之後；目前 head = **0036**；VPS 已於 2026-11-09 升到 0036）：
 - 0011 作物時間與每日活動、0012 賭場、0013 作物價格調整、0014 山洞冒險、0015 一次一趟的探險、0016 釣魚、0017／0021 魚的售價不受稀有度限制、
   0018 放生動物、0019 世界 Boss、0020 全服世界 Boss 與固定排程（深淵魔龍）、0022 世界 Boss 參與門檻 `min_points`、0023 農場改名（`rename_farm`）。
 - 0024 每日簽到（`daily_checkins`、`checkin_reward`）、0025 圖鑑（`farm_codex`，從歷史補建）、0026 成就與稱號（`farm_achievements`、`farm_titles`、
@@ -112,7 +112,7 @@ node --test tests/web/connection.test.js                               # 指定�
 - **Docker 執行**：`Dockerfile`（python:3.13.18-slim-trixie，非 root 使用者 uid 10001，`.dockerignore` 排除 `.env`）建置共用映像 `farmgm-app`，compose 的 `web`／`site`／`bot`／`music`（profile）以 `x-farmgm-app` 共用設定：`env_file: .env`，但 `DATABASE_URL`（由 `POSTGRES_*` 組成，密碼不編碼）、`LAVALINK_URI`、`APP_HOST`／`SITE_HOST`（0.0.0.0）在 `environment` 覆蓋成容器位址；`init: true` 讓 SIGTERM 正常結束；音樂設定存在 Volume `farmgm_data`。主機上的 `.venv` 只用於測試與開發；容器執行中不要從主機再啟動同一個 Bot Token。
 - **Discord 面板**（`app/discord_bot/panels.py`）：預設只註冊 `/farm`（私密互動面板）與 `/help`；`FarmPanel` 每頁有 `_load_<page>`（執行緒中呼叫服務）與 `_build_<page>`（建 Embed 與按鈕／選單），操作經 `act()` 執行後在頂端顯示 ✅／❌；換頁與操作在 `DIRECT_REPLY_SECONDS`（1.5 秒）內準備好就用 `response.edit_message` 直接回覆，超過才先 `defer`（`_in_time()`／`_show()`），新的按鈕處理不要再自己先 `defer` 再 `refresh`；`tests/test_discord_panel.py` 以模擬互動點擊。
   `latency.STATS` 記錄開啟面板／換頁／操作的耗時（`refresh(metric=…, started=…)`，釣魚自動更新傳 `metric=None` 不記），Bot 每 10 分鐘彙總寫入日誌（README「效能監控」）。
-  總覽／農田／動物／加工／建造／商店／賭場頁與山洞區域（區域頁、探險中、探索結果）附圖：`_load_*` 在執行緒中呼叫 `farm_image`（Pillow，素材與規則在 `app/discord_bot/farm/`，含 `manifest.json` 與 `拼接說明.md`），`_build_*` 用 `attach_image()`，`refresh()` 以 `attachments=self.files` 更新（失敗時退回純文字）。農田與建築圖上傳 64 色（`farm_image.PANEL_COLORS`；預先產生的素材由 `file_png` 轉換後快取，場景圖仍上傳原檔）。`attach_image()` 記錄圖片雜湊，`_attachments()` 在雜湊等於 `sent_digest` 時沿用訊息上既有的附件、不重新上傳（世界 Boss、賭場連續操作靠這個）。圖片是 4×4 農田，所以 `balance.MAX_PLOTS = 16`（擴建與管理員新增土地都檢查）。完整文字指令在 `DISCORD_ADVANCED_COMMANDS=true` 時才註冊。
+  總覽／農田／動物／加工／建造／商店／賭場頁與山洞區域（區域頁、探險中、探索結果）附圖：`_load_*` 在執行緒中呼叫 `farm_image`（Pillow，素材與規則在 `app/discord_bot/farm/`，含 `manifest.json` 與 `拼接說明.md`），`_build_*` 用 `attach_image()`，`refresh()` 以 `attachments=self.files` 更新（失敗時退回純文字）。農田與建築圖上傳 64 色（`farm_image.PANEL_COLORS`；預先產生的素材由 `file_png` 轉換後快取，場景圖仍上傳原檔）。`attach_image()` 記錄圖片雜湊，`_attachments()` 在雜湊等於 `sent_digest` 時沿用訊息上既有的附件、不重新上傳（世界 Boss、賭場連續操作靠這個）。圖片是 4×4 農田，所以 `balance.MAX_PLOTS = 16`（擴建與管理員新增土地都檢查）。琥珀瓜、月光花、番茄、南瓜、葡萄、西瓜有專屬生長圖（`crops/<作物>/sprout|young|unripe|ready|withered.png`，由根目錄 `6farm.png` 經 `scripts/build_crop_sprites.py` 產生，`6farm.png` 不進映像；沒有全田預先產生圖，一律即時拼圖）；玉米還沒有素材，用 `_generic`。完整文字指令在 `DISCORD_ADVANCED_COMMANDS=true` 時才註冊。
 - **Discord Bot**（`app/discord_bot/`）：`commands.py` 從互動取得 User／Guild ID（不接受玩家輸入的 ID），以 `SocialService.external_context` 對應群組與玩家，再用 `CommandHandler.execute(args)` 重用 CMD 的服務呼叫與文字輸出（參數以清單傳入，不經字串解析）；新增 Discord 指令時沿用此方式，並讓 `tests/test_discord_bot.py::test_every_command_maps_to_services` 通過。服務在 `runner.ServiceRunner` 的執行緒池執行（不可在事件迴圈直接呼叫），`RetryingService` 只重試 40P01／40001；2 秒內未完成先 `defer`。
 - **服務繼承鏈**：`GameService` → `RanchService` → `ExplorationService`（山洞探索、機器、假幣）→ `FishingService`（釣魚）→ `SocialService` → `CommunityService` → `RankingService` → `WorldBossService`（世界 Boss）→ `NewsService`（農場日報）→ `ProgressService`（每日簽到、圖鑑、成就與稱號）
   → `AdminService`（另外繼承 `ProgressAdmin`）。子類別的私有方法會覆蓋父類別同名方法，新增前先 `grep "def <名稱>(" app/services/*.py`。CLI 使用 `RankingService`；網站 `app.state.social_service` 是 `AdminService`；`MonitorService` 獨立且所有查詢在 `SET TRANSACTION READ ONLY` 中執行。服務方法只收基本型別，不依賴 CMD／FastAPI／Discord（玩家以 `external_platform`/`external_user_id` 對應，Discord ID 一律字串）。
@@ -145,7 +145,7 @@ node --test tests/web/connection.test.js                               # 指定�
 - **資料目錄**：作物（含珍稀變種 `variant_code`）與動物／動物產品在 DB（`crop_types`、`animal_types`，有 `active` 停用旗標，代碼不可改、被使用過只能停用）；道具、防守設施、建築、加工配方、加工品在 `game/balance.py`。顯示名稱與合法物品代碼用 `repositories/catalog.py`，不要再寫死作物／動物清單。
 - **山洞冒險**：規則與數值只在 `game/exploration.py`（區域、掉落表、事件、機器配方、等級門檻）；服務在 `services/exploration_service.py`。探險一次一趟：`explore` 出發時決定獎勵寫入 `exploration_logs`（`claimed_at` NULL），`duration_seconds` 後 `claim_exploration` 才入背包並寫交易紀錄（部分唯一索引 `uq_exploration_logs_farm_unclaimed`）。機器存在 `farm_tools`（`settings` JSON 存自動加工機的項目），稀有作物種子由 `crop_types.shop_buyable = false` 擋住商店購買，培育器沿用 `craft_orders`（`building_code = rare_incubator`）。自動收割／加工機在面板 `render()` 時經 `run_machines` 執行（沒有機器時不鎖農場）。conftest 會保留並重設 `exploration.RARE_CROPS`。
 - **釣魚防連點**：`step()` 中連續收線每次多加魚線上限的 14%（`reel_streak`，放線或壓中歸零，等待減 0.5）、魚體力 ≤ 25% 才拉得上岸
-  （否則距離停在 `LAND_GATE_DISTANCE`）、魚隨機竄向一邊（`dodge`，動作 `left`／`right`，面板按鈕每回合打亂）。舊 Session 的 state 沒有這些欄位，
+  （否則距離停在 `LAND_GATE_DISTANCE`）、魚隨機竄向一邊（`dodge`，動作 `left`／`right`；面板按鈕位置固定，使用者要求不要打亂）。舊 Session 的 state 沒有這些欄位，
   一律用 `.get`。數值用模擬驗證（`tests/test_fishing_rules.py`）；測試的策略輸入用 `fishing.POLICY_KEYS`。防腳本 `GUARD_*`（`fishing_guards`，
   `FishingService._guard_*`、`answer_fishing_check`）：定期或可疑分數滿時 `start_fishing` 回傳 `phase = check` 的 dict（不是 Session），答錯暫停拋竿，
   不扣資產。測試預設關閉（`fishing.GUARD_ENABLED`，conftest；ManualClock 的操作間隔都是 0），`tests/test_fishing_guard.py` 自行開啟。

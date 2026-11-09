@@ -30,6 +30,8 @@ dragon.png
 
 # 古代遺跡原圖：已縮小成 app/discord_bot/farm/scenes/explore_ruins.png，執行時不需要
 oldadv.png
+# 作物圖原檔：已切成 app/discord_bot/farm/crops/<作物>/（scripts/build_crop_sprites.py），執行時不需要
+6farm.png
 
 # 寵物原圖：素材已切成 app/discord_bot/farm/pets/，執行時不需要
 dogcat.png

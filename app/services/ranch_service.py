@@ -196,12 +196,15 @@ class RanchService(GameService):
             counts = {code: sum(1 for b in buildings if b.building_code == code) for code in balance.BUILDINGS}
             busy = {}
             names = catalog_repo.item_names(session)
+            queued = {}
             for code in balance.BUILDINGS:
-                order = ranch_repo.busy_order(session, farm.id, code, now)
-                busy[code] = order_view(order, now, names) if order else None
+                orders = ranch_repo.active_orders(session, farm.id, code, now)
+                busy[code] = order_view(orders[0], now, names) if orders else None
+                queued[code] = max(0, len(orders) - 1)
             return {
                 "counts": counts,
                 "busy": busy,
+                "queued": queued,
                 "capacity": self._capacity(session, farm.id),
                 "animals": ranch_repo.count_animals(session, farm.id),
                 "gold": farm.gold,
@@ -434,15 +437,22 @@ class RanchService(GameService):
     # ---------- 加工 ----------
 
     def recipes(self, player_id: int | None = None) -> list[dict]:
-        counts = {}
+        counts, have = {}, {}
         with self._transaction() as session:
             names = catalog_repo.item_names(session)
             if player_id is not None:
                 farm = self._farm_for_read(session, player_id)
                 for b in ranch_repo.list_buildings(session, farm.id):
                     counts[b.building_code] = counts.get(b.building_code, 0) + 1
+                for _n, _b, inputs, *_rest in balance.RECIPES.values():
+                    for item in inputs:
+                        if item not in have:
+                            have[item] = inventory_repo.get_quantity(session, farm.id, item)
         rows = []
         for code, (name, building, inputs, output, out_qty, seconds, _aliases) in balance.RECIPES.items():
+            # 現有原料最多能做幾份（單張訂單上限內）；沒有指定玩家時為 None
+            can_make = (min([balance.CRAFT_MAX_QUANTITY] + [have[item] // per for item, per in inputs.items()])
+                        if player_id is not None else None)
             rows.append(
                 {
                     "code": code,
@@ -455,6 +465,7 @@ class RanchService(GameService):
                     "output_quantity": out_qty,
                     "seconds": seconds,
                     "sell_price": balance.GOODS[output][1] if output in balance.GOODS else None,
+                    "can_make": can_make,
                 }
             )
         return rows
@@ -479,15 +490,20 @@ class RanchService(GameService):
     def _start_order(
         self, session, farm, code, name, building, inputs, output, out_qty, seconds, quantity, *, source: str = ""
     ) -> ActionResult:
-        """在已鎖定的農場開一張加工訂單（設施檢查由呼叫端負責）；原料扣除與訂單建立在同一筆交易中。"""
+        """在已鎖定的農場開一張加工訂單（設施檢查由呼叫端負責）；原料扣除與訂單建立在同一筆交易中。
+
+        設施忙碌時新訂單排在最後一張之後（開始時間 = 前一張的完成時間），最多 CRAFT_QUEUE_MAX 張未完成的訂單。
+        """
         building_name = facility_name(building)
         now = self._clock.now()
-        busy = ranch_repo.busy_order(session, farm.id, building, now)
-        if busy is not None:
-            left = rules.format_duration(rules.remaining_seconds(busy.ready_at, now))
+        active = ranch_repo.active_orders(session, farm.id, building, now)
+        if len(active) >= balance.CRAFT_QUEUE_MAX:
+            left = rules.format_duration(rules.remaining_seconds(active[0].ready_at, now))
             raise ValidationError(
-                f"{building_name}正在處理訂單 #{busy.id}，還需要 {left}；每座設施一次只能加工一張訂單。"
+                f"{building_name}的排隊訂單已滿（{balance.CRAFT_QUEUE_MAX} 張），"
+                f"訂單 #{active[0].id} 還需要 {left}完成，之後才能再開單。"
             )
+        start = active[-1].ready_at if active else now
         names = catalog_repo.item_names(session)
         needed = {item: per * quantity for item, per in inputs.items()}
         lacking = []
@@ -501,7 +517,7 @@ class RanchService(GameService):
         for item, amount in needed.items():
             if not inventory_repo.remove(session, farm.id, item, amount):
                 raise InsufficientItemsError(f"原料不足：{item_name(item, names)}。")
-        ready_at = now + timedelta(seconds=seconds * quantity)
+        ready_at = start + timedelta(seconds=seconds * quantity)
         order = ranch_repo.add_order(
             session,
             farm_id=farm.id,
@@ -512,7 +528,7 @@ class RanchService(GameService):
             output_code=output,
             output_quantity=out_qty * quantity,
             status="in_progress",
-            started_at=now,
+            started_at=start,
             ready_at=ready_at,
         )
         used = "、".join(f"{item_name(k, names)} x{v}" for k, v in needed.items())
@@ -524,9 +540,10 @@ class RanchService(GameService):
             item_code=output,
             quantity=out_qty * quantity,
         )
+        wait = f"排在訂單 #{active[-1].id} 之後，" if active else ""
         return ActionResult(
             f"已建立加工訂單 #{order.id}：{building_name}加工 {out_qty * quantity} 份{name}，"
-            f"扣除原料 {used}，{rules.format_duration(seconds * quantity)}後完成。",
+            f"扣除原料 {used}，{wait}{rules.format_duration(rules.remaining_seconds(ready_at, now))}後完成。",
             farm.gold,
             item_code=output,
             quantity=out_qty * quantity,

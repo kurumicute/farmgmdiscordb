@@ -325,19 +325,44 @@ def test_craft_lifecycle(service, farmer, clock, session_factory):
     assert (order["ready_at"] - order["started_at"]).total_seconds() == 3600
     assert f"#{order['order_id']}" in result.message
     give(session_factory, farmer, "wheat", 2)
-    with pytest.raises(ValidationError, match="一次只能加工一張"):
-        service.start_craft(farmer, "flour", 1)
+    queued = service.start_craft(farmer, "flour", 1)  # 設施忙碌：排在後面
+    assert f"排在訂單 #{order['order_id']} 之後" in queued.message and "1小時30分" in queued.message.replace(" ", "")
+    second = next(o for o in service.craft_orders(farmer) if o["order_id"] != order["order_id"])
+    assert second["started_at"] == order["ready_at"] and second["remaining_seconds"] == 90 * 60
+    assert service.workshop_status(farmer)["queued"]["mill"] == 1
     with pytest.raises(ValidationError, match="加工中"):
         service.collect_craft(farmer, order["order_id"])
     clock.advance(3600)
+    assert service.workshop_status(farmer)["busy"]["mill"]["order_id"] == second["order_id"]
     # 已完成但未領取的訂單不佔用設施
+    give(session_factory, farmer, "wheat", 3)
     service.start_craft(farmer, "flour", 1)
     assert service.collect_craft(farmer, order["order_id"]).quantity == 2
     with pytest.raises(ValidationError, match="已經領取"):
         service.collect_craft(farmer, order["order_id"])
     assert qty(service, farmer, "flour") == 2
     history = service.craft_orders(farmer, include_collected=True)
-    assert [o["state"] for o in history] == ["in_progress", "collected"]
+    assert [o["state"] for o in history] == ["in_progress", "in_progress", "collected"]
+
+
+def test_craft_queue_limit_and_can_make(service, farmer, clock, session_factory):
+    service.build(farmer, "磨坊")
+    give(session_factory, farmer, "wheat", 3 * (balance.CRAFT_QUEUE_MAX + 1) + 2)
+    flour = next(r for r in service.recipes(farmer) if r["code"] == "flour")
+    assert flour["can_make"] == balance.CRAFT_MAX_QUANTITY  # 上限內
+    assert next(r for r in service.recipes() if r["code"] == "flour")["can_make"] is None
+    for _ in range(balance.CRAFT_QUEUE_MAX):
+        service.start_craft(farmer, "flour", 1)
+    with pytest.raises(ValidationError, match="排隊訂單已滿"):
+        service.start_craft(farmer, "flour", 1)
+    assert qty(service, farmer, "wheat") == 5  # 失敗不扣原料
+    assert next(r for r in service.recipes(farmer) if r["code"] == "flour")["can_make"] == 1
+    clock.advance(1800)  # 第一張完成：空出一個名額，新訂單排在最後一張之後
+    service.start_craft(farmer, "flour", 1)
+    orders = sorted(service.craft_orders(farmer), key=lambda o: o["ready_at"])
+    busy = [o for o in orders if o["state"] == "in_progress"]
+    assert len(busy) == balance.CRAFT_QUEUE_MAX
+    assert all(a["ready_at"] == b["started_at"] for a, b in zip(busy, busy[1:], strict=False))
 
 
 def test_bread_and_jam_recipes(service, farmer, clock, session_factory):
@@ -373,10 +398,12 @@ def test_craft_concurrency_and_duplicates(service, farmer, clock, session_factor
     service.build(farmer, "磨坊")
     give(session_factory, farmer, "wheat", 30)
     results = run_concurrently(5, lambda: service.start_craft(farmer, "flour", 2))
-    assert sum(1 for r in results if r[0] == "ok") == 1  # 一座設施只會成立一張訂單
-    assert qty(service, farmer, "wheat") == 24  # 原料只扣一次
+    assert sum(1 for r in results if r[0] == "ok") == 5  # 依序排隊
+    assert qty(service, farmer, "wheat") == 0  # 每張各扣一次
+    orders = sorted(service.craft_orders(farmer), key=lambda o: o["ready_at"])
+    assert all(a["ready_at"] == b["started_at"] for a, b in zip(orders, orders[1:], strict=False))  # 不重疊
     clock.advance(3600)
-    order_id = service.craft_orders(farmer)[0]["order_id"]
+    [order_id] = [o["order_id"] for o in service.craft_orders(farmer) if o["state"] == "ready"]
     results = run_concurrently(5, lambda: service.collect_craft(farmer, order_id))
     assert sum(1 for r in results if r[0] == "ok") == 1
     assert qty(service, farmer, "flour") == 2  # 成品只發放一次

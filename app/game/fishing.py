@@ -93,7 +93,7 @@ REEL_STREAK_WAIT_DECAY = 0.5
 # 魚的體力要降到這個比例以下才拉得上岸；還有力氣時最多拉到 LAND_GATE_DISTANCE，收線力再高也一樣
 LAND_STAMINA_RATIO = 0.25
 LAND_GATE_DISTANCE = 8
-# 魚竄向一邊：要按同方向壓竿（方向只在畫面文字上，按鈕順序每回合打亂，固定點擊位置的腳本會一直按錯）
+# 魚竄向一邊：要按同方向壓竿（方向只在畫面文字上）
 DODGE_BASE_PCT = 15  # 機率 = 基礎 + 魚的強力掙扎機率的一半（稀有度越高越常出現）
 DODGE_HIT = {"tension": -15, "stamina": -10, "distance": -3}  # 壓中：張力下降、魚耗力、拉近一點
 DODGE_MISS = {"tension": 18, "distance": 8}  # 沒壓中（按錯方向或其他操作）：張力暴增、魚被拉遠

@@ -757,7 +757,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, R
             animal = "還沒有動物"
         e.add_field(name="🐔 動物", value=animal)
         done = sum(1 for o in d["orders"] if o["state"] == "ready")
-        busy = [o for o in d["orders"] if o["state"] == "in_progress"]
+        busy = sorted((o for o in d["orders"] if o["state"] == "in_progress"), key=lambda o: o["ready_at"])
         craft = [f"✅ {done} 張可領取"] if done else []
         craft += [f"⚙️ {o['recipe_name']} {ts(o['ready_at'])}" for o in busy[:3]]
         e.add_field(name="🏭 加工", value="\n".join(craft) or "💤 閒置")
@@ -1481,6 +1481,8 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, R
                 state = f"🔒 未建造（{price} 金）"
             elif busy and busy["state"] == "in_progress":
                 state = f"⚙️ 加工中：{busy['recipe_name']} ×{busy['output_quantity']}，{ts(busy['ready_at'])}完成"
+                if ws["queued"][code]:
+                    state += f"\n　⏳ 排隊 {ws['queued'][code]} 張（最多 {balance.CRAFT_QUEUE_MAX} 張）"
             elif busy:
                 state = f"✅ {busy['recipe_name']} 完成，可以領取"
             else:
@@ -1492,23 +1494,33 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, R
             + f"　➡️ 📤 ×{r['output_quantity']} {r['output_name']}"
             + f"\n　⏱️ {long_duration(r['seconds'])}／份"
             + (f"　🏷️ 售價 {r['sell_price']}" if r["sell_price"] else "")
+            + (f"\n　🧮 現有原料可做 **{r['can_make']}** 份" if r["built"] else "")
             for r in d["recipes"]
         ]
         built = [r for r in d["recipes"] if r["built"]]
+        if self.picker:  # 每次重繪依最新的原料重算份數按鈕
+            r = next((x for x in built if x["code"] == self.picker["key"]), None)
+            most = r["can_make"] if r else 0
+            self.picker.update(max=max(1, most), most=most,
+                               presets=tuple(sorted({q for q in (1, 5, most) if 1 <= q <= most})))
         e = discord.Embed(title="🏭 ✦ 加工 ✦", color=BLUE, description=sections(
             ("設施狀態", facilities),
             ("📖 配方（✅ 可以加工、🔒 需要先建造設施）", recipes, "\n\n"),
             "" if built else "💡 還沒有任何加工設施，請先按「🏗️ 建造設施」。",
         ))
         if self.picker:
-            e.add_field(name="🛒 已選擇", inline=False,
-                        value=f"**{self.picker['label']}**\n👇 按下方的數量按鈕開始加工")
+            most = self.picker.get("most", 0)
+            hint = (f"現有原料最多可做 **{most}** 份（單張上限 {balance.CRAFT_MAX_QUANTITY} 份），"
+                    "👇 按下方的數量按鈕開始加工" if most else "⚠️ 原料不足，一份都做不了")
+            e.add_field(name="🛒 已選擇", inline=False, value=f"**{self.picker['label']}**\n{hint}\n"
+                        f"設施忙碌時新訂單會排隊，完成後自動接著加工（每種設施最多 {balance.CRAFT_QUEUE_MAX} 張）")
         ready = sum(1 for o in d["orders"] if o["state"] == "ready")
 
         async def pick(interaction, code):
             r = next(x for x in d["recipes"] if x["code"] == code)
+            # 份數按鈕（max／most／presets）在 _build_craft 依最新原料計算，只顯示做得出來的份數
             self.picker = {"key": code, "label": f"🏭 {r['name']}（{r['building_name']}）", "verb": "做",
-                           "max": balance.CRAFT_MAX_QUANTITY, "presets": (1, 5, balance.CRAFT_MAX_QUANTITY),
+                           "max": 1, "most": 0, "presets": (),
                            "run": lambda q: self.svc.start_craft(self.player_id, code, q).message}
             await self.refresh(interaction)
 
