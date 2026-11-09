@@ -15,7 +15,8 @@ def test_insert_and_query(session_factory, service):
         assert row.display_name == "資料庫測試"
         assert row.created_at.tzinfo is not None
         crops = {c.code: c for c in s.scalars(select(CropType))}
-        assert set(crops) == {"wheat", "carrot", "tomato", "strawberry", "amber_melon", "moonflower"}
+        assert set(crops) == {"wheat", "carrot", "tomato", "strawberry", "amber_melon", "moonflower",
+                              "corn", "pumpkin", "grape", "watermelon"}
         assert sorted(c for c, crop in crops.items() if not crop.shop_buyable) == ["amber_melon", "moonflower"]
         assert (crops["strawberry"].seed_price, crops["strawberry"].grow_seconds) == (60, 600)
 
@@ -73,7 +74,7 @@ def test_startup_check_passes_on_migrated_db(engine):
 
 
 def test_startup_check_reports_connection_failure_without_secrets():
-    engine = make_engine("postgresql+psycopg://user:supersecret@127.0.0.1:1/nope")
+    engine = make_engine("postgresql+psycopg://user:supersecret@0.0.0.0:1/nope")
     try:
         with pytest.raises(StartupCheckError) as info:
             check_database(engine)

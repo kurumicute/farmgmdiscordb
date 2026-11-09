@@ -4,8 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 農場經營遊戲：Discord Bot（主要介面）+ CMD（開發維護）+ PostgreSQL（唯一資料來源）+ FastAPI 即時監控／管理網站。程式註解、訊息與文件皆為繁體中文，新程式碼請沿用。
 
-`discordbot.txt` 是移植到其他電腦的安裝指南（需要的軟體、套件版本、步驟與常見問題；改依賴或部署方式時要同步更新）。`discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求；已實作（`app/discord_bot/`、Migration 0010；0011 為作物時間與每日活動，0012 為賭場，0013 為作物價格調整，0014 為山洞冒險，0015 改為一次一趟的探險，0016 為釣魚，0017 讓魚的售價不受稀有度限制，0018 為放生動物，0019 為世界 Boss，0020 為全服世界 Boss 與固定排程（深淵魔龍），0021 讓釣到的魚售價跟隨魚種、不再限 1–200，0022 為世界 Boss 參與門檻 min_points，0023 為農場改名（交易類型 rename_farm），0024 為每日簽到（`daily_checkins`、交易類型 checkin_reward），0025 為圖鑑（`farm_codex`，從歷史補建），0026 為成就與稱號（`farm_achievements`、`farm_titles`、`farms.title`、交易類型 achievement_reward，匯入既有世界 Boss 稱號），0027 為 `farm_stats` 的偷菜／防守／賭場次數（成就進度用），0028 為溫室等級 `farms.greenhouse_level` 與每週特賣限購 `weekly_shop_purchases`，0029 為寵物 `farm_pets`，0030 為管理網站可調整的新功能規則 `feature_settings`，0031 為操作回饋 `farm_feedback`），README「Discord Bot」一節是操作與故障排查文件。
-尚未在真實 Discord 驗證（需要使用者提供 Bot Token 與測試伺服器），包括 Lavalink 實際語音播放與 DAVE 語音加密；舊玩家清除腳本尚未對開發資料庫執行。
+`discordbot.txt` 是移植到其他電腦的安裝指南（需要的軟體、套件版本、步驟與常見問題；改依賴或部署方式時要同步更新）。
+`世界Boss_移植說明.md`、`遺跡日報季節與新作物魚_移植說明.md`、`釣魚防腳本與效能優化_移植說明.md` 是功能移植說明（完整檔案清單與 SHA-256 核對碼）。
+`discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求（已實作：`app/discord_bot/`、Migration 0010）。README「Discord Bot」一節是操作與故障排查文件。
+
+Migration 一覽（0010 之後；目前 head = **0036**；0032–0036 還沒在 VPS 執行過）：
+- 0011 作物時間與每日活動、0012 賭場、0013 作物價格調整、0014 山洞冒險、0015 一次一趟的探險、0016 釣魚、0017／0021 魚的售價不受稀有度限制、
+  0018 放生動物、0019 世界 Boss、0020 全服世界 Boss 與固定排程（深淵魔龍）、0022 世界 Boss 參與門檻 `min_points`、0023 農場改名（`rename_farm`）。
+- 0024 每日簽到（`daily_checkins`、`checkin_reward`）、0025 圖鑑（`farm_codex`，從歷史補建）、0026 成就與稱號（`farm_achievements`、`farm_titles`、
+  `farms.title`、`achievement_reward`）、0027 `farm_stats` 的偷菜／防守／賭場次數、0028 溫室 `farms.greenhouse_level` 與每週特賣 `weekly_shop_purchases`、
+  0029 寵物 `farm_pets`、0030 可調整的新功能規則 `feature_settings`、0031 操作回饋 `farm_feedback`。
+- 0032 古代遺跡（`group_ruins`、`ruins_contributions`、區域 ruins、`ruins_donate`）、遺跡守護者（`ruins_guardians`、`ruins_guardian_hits`、`ruins_guardian`）
+  與傳聞挖寶（`rumor_digs`、`rumor_treasure`；農場日報不需要資料表）；0033 新作物（玉米、南瓜、葡萄、西瓜）、20 種魚、魚餌「深海誘餌」「龍涎香餌」與
+  `fish_types.required_baits`；0034 作物／魚的季節與時段限定（`seasons`、`hour_start`／`hour_end`）並把所有魚餌需要等級調低 2 級；0035 10 種季節／時段特殊魚；0036 釣魚防腳本（`fishing_guards`）。
+
+Bot 已在正式環境（VPS，見下）連線真實 Discord；新的面板訊息與音樂實際播放仍要請使用者在 Discord 確認，DAVE 語音加密尚未驗證；舊玩家清除腳本尚未對開發資料庫執行。
 
 ## 協作規範（使用者的固定要求）
 
@@ -30,7 +43,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    `.env` 必須有 `COMPOSE_PROJECT_NAME=farmgm`（`.env.example` 沒列）：否則 compose 以資料夾名稱建立另一組專案與**空的** Volume，看不到原本的資料。
 2. `docker compose up -d postgres lavalink yt-cipher`：啟動 PostgreSQL、Lavalink 與 YouTube 簽章服務（`LAVALINK_PASSWORD`／`YT_CIPHER_TOKEN` 未設定時 compose 會直接報錯；網站與 Bot 要等 Migration 完成再啟動）。第一次啟動時 `docker/initdb` 會建立 `farmgm` 與 `farmgm_test`（只在 Volume 為空時執行；若測試資料庫不存在需手動 `CREATE DATABASE farmgm_test`）；Lavalink 每次建立容器都會從網路下載插件。
 3. `python -m venv .venv` → `.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt`。
-4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0031）。
+4. `.\.venv\Scripts\python.exe -m alembic upgrade head`（目前 head 為 0036）。
 5. 驗證：`pytest`、`ruff check app tests migrations scripts`、`node --test tests/web/connection.test.js` 都應通過。
 6. 若要搬移舊電腦的資料（PowerShell 的 `>` 會破壞二進位檔，一律在容器內產生檔案再 `docker cp`）：
    - 舊電腦：`docker exec farmgm-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" -Fc -f /tmp/farmgm.dump farmgm'`，再 `docker cp farmgm-postgres-1:/tmp/farmgm.dump .`
@@ -54,7 +67,8 @@ docker compose logs lavalink              # 確認 Loaded 'youtube-plugin…' �
 .\.venv\Scripts\python.exe -m app.site          # 介紹網站 http://127.0.0.1:24444
 .\.venv\Scripts\python.exe scripts/farm_stats.py check   # 排行統計表與交易紀錄一致性（rebuild 重算）
 
-.\.venv\Scripts\python.exe -m pytest                                   # 全部測試（pyproject 預設 -q，看不到總結時加 -o addopts=""）
+docker start farmgm-postgres-1                                         # 測試前啟動本機 postgres，跑完 docker stop（平常保持停止）
+.\.venv\Scripts\python.exe -m pytest                                   # 全部測試約 5 分鐘（pyproject 預設 -q，看不到總結時加 -o addopts=""）
 .\.venv\Scripts\python.exe -m pytest tests/test_admin.py::test_set_gold_and_level
 .\.venv\Scripts\python.exe -m ruff check app tests migrations scripts  # line-length 120；不要對整個專案跑 ruff format
 node --check app/web/app.js
@@ -68,31 +82,49 @@ node --test tests/web/connection.test.js                               # 指定�
 ```
 
 - 設定在 `.env`（gitignored）：`DATABASE_URL`、`TEST_DATABASE_URL`（資料庫名稱必須以 `_test` 結尾，測試會清空遊戲資料表）、`ALLOWED_HOSTS`、`ADMIN_USERNAME`、`ADMIN_PASSWORD_HASH`（scrypt 雜湊，不存明文）、`RANKING_SETTLE_INTERVAL_SECONDS`、`BACKGROUND_TASKS_RUNNER`（web／bot／none）、`APP_ENV`、`DB_POOL_SIZE`／`DB_MAX_OVERFLOW`／`DB_POOL_TIMEOUT`、`DISCORD_BOT_TOKEN`、`DISCORD_APPLICATION_ID`、`DISCORD_DEV_GUILD_ID`、`DISCORD_SYNC_COMMANDS`、`BOT_WORKER_THREADS`、`MUSIC_*`、`LAVALINK_URI`／`LAVALINK_PASSWORD`、`SITE_*`。環境變數優先於 `.env`（`app/config.py`，`extra="ignore"`，舊的 `FFMPEG_PATH` 等殘留設定會被忽略）。設定只在程序啟動時讀取，改 `.env` 後要重啟對應程序／容器。
+- 這份專案副本沒有 `.env`／`.venv` 時（例如由 zip 解壓），可在暫存目錄建 venv 安裝 `requirements-dev.txt`，另開一個暫時的 PostgreSQL 容器
+  （例如 `docker run -d --name <名稱> -e POSTGRES_USER=farmgm -e POSTGRES_PASSWORD=<隨機> -e POSTGRES_DB=farmgm_test -p 127.0.0.1:5544:5432 postgres:16`），
+  以環境變數設定 `DATABASE_URL`／`TEST_DATABASE_URL` 後執行 `alembic upgrade head` 與 `pytest`，結束後 `docker rm -f -v` 刪除；不要碰 `farmgm` 專案的 Volume。
+  Windows 終端機輸出 emoji 會遇到 cp950 編碼錯誤，執行 Python 時加 `-X utf8` 或設 `PYTHONUTF8=1`。
 - 程式啟動時只檢查 DB 連線與 Migration 是否最新，**不會**自動建表。改資料結構一律新增 Alembic Migration（`migrations/versions/000N_*.py`，Migration 內寫死常數，不引用會變動的 app 常數），並在測試資料庫做 upgrade → downgrade -1 → upgrade → `alembic check`。
 - 修改開發資料庫前先 `pg_dump` 備份（容器 `farmgm-postgres-1`）；不要執行 `docker compose down -v`。
+- Migration 來回檢查：在專案根目錄以 `PYTHONPATH=.` 執行一段 Python，`url = tests.conftest._TestSettings().test_database_url`（`Settings` 沒有這個欄位），`cfg = alembic.config.Config("alembic.ini")`、`cfg.attributes["database_url"] = url`，依序 `command.upgrade(cfg, "head")` → `downgrade(cfg, "-1")` → `upgrade` → `check`。
+- Git Bash 裡沒有 `python`（會以 exit 49 失敗），一律用 `.venv/Scripts/python.exe`。
 
 ## 正式環境（VPS，2026-11-05 起搬遷）
 
-- Contabo Cloud VPS 4（東京，Ubuntu 22.04，Docker／compose 已內建），專案在 `/opt/farmgm`，由 GitHub `feature/exploration-update` 分支 `git clone`；`.env` 由本機 `scp` 上傳，資料庫以 `pg_dump`／`pg_restore` 從本機搬過去。更新方式：push → VPS `git pull` → 先備份再 `docker compose run --rm web python -m alembic upgrade head` → `docker compose up -d --build --wait`。
+- Contabo Cloud VPS 4（東京，Ubuntu 22.04，Docker／compose 已內建），專案在 `/opt/farmgm`，由 GitHub `feature/exploration-update` 分支 `git clone`；`.env` 由本機 `scp` 上傳，資料庫以 `pg_dump`／`pg_restore` 從本機搬過去。更新方式：push → VPS `git pull` → 備份（`docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -Fc farmgm' > /opt/backup/pre_deploy_….dump`）→ **先 `docker compose build web`**（`run --rm web` 用的是現有映像，沒建置就看不到新的 Migration，`upgrade head` 會什麼都不做）→ `docker compose run --rm -T web python -m alembic upgrade head`（輸出要有 `Running upgrade …`）→ `docker compose up -d --build --wait`。
 - IP `13.140.248.193`，主機時區 Europe/Berlin。SSH 只允許金鑰（`/etc/ssh/sshd_config.d/00-farmgm-hardening.conf`，檔名 00- 才能蓋過 `50-cloud-init.conf` 的 `PasswordAuthentication yes`），另有 fail2ban；`authorized_keys` 有 `b1700-pc`（使用者）與 `farmgm-claude`（Claude 用，本機 `~/.ssh/farmgm_vps`：`ssh -i ~/.ssh/farmgm_vps -o BatchMode=yes root@13.140.248.193 '…'`）。正式環境寫入操作可能被 auto mode 權限檢查擋下，被擋時把指令交給使用者執行，不要繞過。救援用 Contabo VNC（root 密碼，不受 sshd 設定影響）。
 - 對外連線走 Cloudflare Tunnel（遠端管理，cloudflared 以 systemd 服務跑在 VPS 主機上，不開任何防火牆 Port；ufw 只允許 OpenSSH）：`dc.kurumicute.com` → `localhost:24444`（介紹網站，公開），`addmin.kurumicute.com`（兩個 d，是使用者設定的實際名稱）→ `localhost:8000`（監控網站，前面有 Cloudflare Access，只允許使用者本人的 Email）。VPS 的 `ALLOWED_HOSTS` 必須包含 admin 網域，否則回「Invalid host header」；改網域時 Cloudflare 與 `ALLOWED_HOSTS` 要一起改，改完 `docker compose up -d --force-recreate web`。
 - 資料庫每日備份：`/opt/backup/backup.sh`（`pg_dump -Fc`，保留 14 天），root crontab 每天主機時間 21:00（≈ 台灣 04:00）執行，紀錄在 `/opt/backup/backup.log`；備份只在同一台 VPS 上。
 - 同一個 Bot Token 只能有一處執行：2026-11-05 已切換到 VPS（資料無遺漏），本機的 `bot`／`web` 容器已停止，不要在本機重新啟動它們，除非使用者要切回本機；本機 postgres 的資料停在切換當下，不再是最新資料。
 - 音樂節點在使用者的 PC：VPS（VMware）會不定時停頓（ping 本機 Docker bridge 偶爾 40ms+，CPU 閒置），在 VPS 播放會卡，所以 Lavalink＋yt-cipher 改在 PC 執行：預設用 `start.bat` **原生**執行（不開 Docker Desktop，省下約 2GB 的 Linux 虛擬機記憶體；`setup_music_node.bat` 第一次下載 Lavalink.jar 並依 yt-cipher 官方 Dockerfile 的步驟把同一版本編譯成 `server.exe`，都放在 gitignore 的 `music_node/`，日誌在 `music_node/logs`，`stop_music.bat` 停止；設定沿用 `.env` 與 `docker/lavalink/application.yml`，啟動時以環境變數把 remoteCipher 改成 127.0.0.1:8001，JVM 參數與 compose 相同），Docker 版 `start_music_node.bat`（compose 專案 `farmgm-music`）保留備用，經 PC 的 Tunnel「Kurumicute」公開成 `https://lavalink.kurumicute.com`（只靠 Lavalink 密碼保護），VPS 的 `.env` 設 `LAVALINK_REMOTE_URI` 讓 compose 的 `LAVALINK_URI` 改連它。PC 關機時只有音樂不能用（watchdog 會自動重連）。PC 上原生版、`farmgm` 與 `farmgm-music` 的 lavalink 都綁 127.0.0.1:2333，不能同時執行（start.bat 會先停掉 Docker 版）。本機 `farmgm-postgres-1` 只在跑測試時啟動，跑完就停。
+- Discord 公告：「📝更新日誌」頻道 `1568273652879728811`（伺服器 `1568266225899798590`）。使用者要求發公告時，以 `ssh … 'cd /opt/farmgm && docker compose exec -T bot python -' < 腳本` 在 bot 容器內用 `DISCORD_BOT_TOKEN` 呼叫 REST API（先 GET 頻道確認 `guild_id`，`allowed_mentions` 設 `{"parse": []}`，單則 2000 字以內；Token 不印出、不寫檔）。
+- VPS 的 compose 仍會啟動 `lavalink`／`yt-cipher` 容器，但 Bot 實際連 PC 的節點（`LAVALINK_REMOTE_URI`）。
 - 已知風險：Tunnel 到網站是 HTTP，登入 cookie 不帶 `Secure`（`app/api/auth.py` 依 `request.url.scheme`，uvicorn 沒信任 `X-Forwarded-Proto`）；機房 IP 較易被 YouTube 擋，`/play` 可能失敗。
 
 ## 架構
 
 分層：`game/`（純規則，無 DB）→ `repositories/`（SQLAlchemy 查詢）→ `services/`（交易邊界）→ `cli/`、`api/` + `web/`（介面）。
 
-- **音樂與介紹網站**：`app/music/player.py` 移植自 YTDiscordBot（播放邏輯沿用原版、模組層級狀態，`setup(bot, MusicConfig)` 註冊 Hybrid Command；ruff 對 `app/music/*` 放寬 E501／UP045／B904 以便對照原專案）。`FarmBot` 是 `commands.Bot`，農場用 `self.farm`（不可用 `self.commands`，那是 discord.py 的屬性）。音訊由 Lavalink 4.2.2（docker compose 的 `lavalink` 服務，設定 `docker/lavalink/application.yml`，插件 youtube-plugin（暫用 snapshot；B 站與 lavabili-plugin 已停止支援，`/play` 收到 B 站連結直接回覆不支援）；YouTube 簽章由 compose 的 `yt-cipher` 服務經 remoteCipher 解析）解析與播放，Bot 用 wavelink 3.5.2 控制，不需要 ffmpeg／yt-dlp；`connect_lavalink()` 在 `setup_hook` 呼叫，歌曲結束靠 `on_wavelink_track_end`（比對 `track.encoded`，忽略 `replaced`）。語音連線一律用 `vc_busy`／`vc_paused` 等輔助函式判斷，Player 的 play／pause／stop 是 async。設定 `MUSIC_BOT_TOKEN` 時音樂改由獨立程序 `python -m app.music` 執行（另一個 Discord 應用程式，兩程序不可共用 Token），農場 Bot 不載入音樂（`bot.music_embedded`）。一鍵操作（種滿、全部澆水／收成／清除）用 `GameService.plant_all` 等單一交易方法。介紹網站 `app/site/`（`python -m app.site`，Port 24444）只輸出彙總統計（`/api/stats`）與手冊用的遊戲設定（`/api/guide`：啟用中的作物／動物、balance 數值、品質突變、啟用中的活動與排名獎勵規則），不含任何玩家資料；頁面上的手冊數值是 API 失敗時的預設值。壓力測試：`scripts/bot_stresstest.py`、`scripts/music_stresstest.py`、`scripts/world_boss_stresstest.py`。
+- **音樂與介紹網站**：`app/music/player.py` 移植自 YTDiscordBot（播放邏輯沿用原版、模組層級狀態，`setup(bot, MusicConfig)` 註冊 Hybrid Command；ruff 對 `app/music/*` 放寬 E501／UP045／B904 以便對照原專案）。`FarmBot` 是 `commands.Bot`，農場用 `self.farm`（不可用 `self.commands`，那是 discord.py 的屬性）。音訊由 Lavalink 4.2.2（docker compose 的 `lavalink` 服務，設定 `docker/lavalink/application.yml`，插件 youtube-plugin（暫用 snapshot；B 站與 lavabili-plugin 已停止支援，`/play` 收到 B 站連結直接回覆不支援）；YouTube 簽章由 compose 的 `yt-cipher` 服務經 remoteCipher 解析）解析與播放，Bot 用 wavelink 3.5.2 控制，不需要 ffmpeg／yt-dlp；`connect_lavalink()` 在 `setup_hook` 呼叫，歌曲結束靠 `on_wavelink_track_end`（比對 `track.encoded`，忽略 `replaced`）。語音連線一律用 `vc_busy`／`vc_paused` 等輔助函式判斷，Player 的 play／pause／stop 是 async。設定 `MUSIC_BOT_TOKEN` 時音樂改由獨立程序 `python -m app.music` 執行（另一個 Discord 應用程式，兩程序不可共用 Token），農場 Bot 不載入音樂（`bot.music_embedded`）。一鍵操作（種滿、全部澆水／收成／清除）用 `GameService.plant_all` 等單一交易方法。介紹網站 `app/site/`（`python -m app.site`，Port 24444）只輸出彙總統計（`/api/stats`）與手冊用的遊戲設定（`/api/guide`：啟用中的作物／動物、balance 數值、品質突變、啟用中的活動與排名獎勵規則，以及 `ruins`、`news`、`seasons`；
+  作物與魚帶季節／時段／指定魚餌說明），不含任何玩家資料；頁面上的手冊數值是 API 失敗時的預設值。壓力測試：`scripts/bot_stresstest.py`、`scripts/music_stresstest.py`、`scripts/world_boss_stresstest.py`。
 - **Docker 執行**：`Dockerfile`（python:3.13.18-slim-trixie，非 root 使用者 uid 10001，`.dockerignore` 排除 `.env`）建置共用映像 `farmgm-app`，compose 的 `web`／`site`／`bot`／`music`（profile）以 `x-farmgm-app` 共用設定：`env_file: .env`，但 `DATABASE_URL`（由 `POSTGRES_*` 組成，密碼不編碼）、`LAVALINK_URI`、`APP_HOST`／`SITE_HOST`（0.0.0.0）在 `environment` 覆蓋成容器位址；`init: true` 讓 SIGTERM 正常結束；音樂設定存在 Volume `farmgm_data`。主機上的 `.venv` 只用於測試與開發；容器執行中不要從主機再啟動同一個 Bot Token。
 - **Discord 面板**（`app/discord_bot/panels.py`）：預設只註冊 `/farm`（私密互動面板）與 `/help`；`FarmPanel` 每頁有 `_load_<page>`（執行緒中呼叫服務）與 `_build_<page>`（建 Embed 與按鈕／選單），操作經 `act()` 執行後在頂端顯示 ✅／❌；換頁與操作在 `DIRECT_REPLY_SECONDS`（1.5 秒）內準備好就用 `response.edit_message` 直接回覆，超過才先 `defer`（`_in_time()`／`_show()`），新的按鈕處理不要再自己先 `defer` 再 `refresh`；`tests/test_discord_panel.py` 以模擬互動點擊。
   `latency.STATS` 記錄開啟面板／換頁／操作的耗時（`refresh(metric=…, started=…)`，釣魚自動更新傳 `metric=None` 不記），Bot 每 10 分鐘彙總寫入日誌（README「效能監控」）。
   總覽／農田／動物／加工／建造／商店／賭場頁與山洞區域（區域頁、探險中、探索結果）附圖：`_load_*` 在執行緒中呼叫 `farm_image`（Pillow，素材與規則在 `app/discord_bot/farm/`，含 `manifest.json` 與 `拼接說明.md`），`_build_*` 用 `attach_image()`，`refresh()` 以 `attachments=self.files` 更新（失敗時退回純文字）。農田與建築圖上傳 64 色（`farm_image.PANEL_COLORS`；預先產生的素材由 `file_png` 轉換後快取，場景圖仍上傳原檔）。`attach_image()` 記錄圖片雜湊，`_attachments()` 在雜湊等於 `sent_digest` 時沿用訊息上既有的附件、不重新上傳（世界 Boss、賭場連續操作靠這個）。圖片是 4×4 農田，所以 `balance.MAX_PLOTS = 16`（擴建與管理員新增土地都檢查）。完整文字指令在 `DISCORD_ADVANCED_COMMANDS=true` 時才註冊。
 - **Discord Bot**（`app/discord_bot/`）：`commands.py` 從互動取得 User／Guild ID（不接受玩家輸入的 ID），以 `SocialService.external_context` 對應群組與玩家，再用 `CommandHandler.execute(args)` 重用 CMD 的服務呼叫與文字輸出（參數以清單傳入，不經字串解析）；新增 Discord 指令時沿用此方式，並讓 `tests/test_discord_bot.py::test_every_command_maps_to_services` 通過。服務在 `runner.ServiceRunner` 的執行緒池執行（不可在事件迴圈直接呼叫），`RetryingService` 只重試 40P01／40001；2 秒內未完成先 `defer`。
-- **服務繼承鏈**：`GameService` → `RanchService` → `ExplorationService`（山洞探索、機器、假幣）→ `FishingService`（釣魚）→ `SocialService` → `CommunityService` → `RankingService` → `WorldBossService`（世界 Boss）→ `ProgressService`（每日簽到、圖鑑、成就與稱號）→ `AdminService`。子類別的私有方法會覆蓋父類別同名方法，新增前先 `grep "def <名稱>(" app/services/*.py`。CLI 使用 `RankingService`；網站 `app.state.social_service` 是 `AdminService`；`MonitorService` 獨立且所有查詢在 `SET TRANSACTION READ ONLY` 中執行。服務方法只收基本型別，不依賴 CMD／FastAPI／Discord（玩家以 `external_platform`/`external_user_id` 對應，Discord ID 一律字串）。
+- **服務繼承鏈**：`GameService` → `RanchService` → `ExplorationService`（山洞探索、機器、假幣）→ `FishingService`（釣魚）→ `SocialService` → `CommunityService` → `RankingService` → `WorldBossService`（世界 Boss）→ `NewsService`（農場日報）→ `ProgressService`（每日簽到、圖鑑、成就與稱號）
+  → `AdminService`（另外繼承 `ProgressAdmin`）。子類別的私有方法會覆蓋父類別同名方法，新增前先 `grep "def <名稱>(" app/services/*.py`。CLI 使用 `RankingService`；網站 `app.state.social_service` 是 `AdminService`；`MonitorService` 獨立且所有查詢在 `SET TRANSACTION READ ONLY` 中執行。服務方法只收基本型別，不依賴 CMD／FastAPI／Discord（玩家以 `external_platform`/`external_user_id` 對應，Discord ID 一律字串）。
 - **交易與併發**：每個公開服務方法 = 一筆 DB 交易（`self._transaction()`）；改變資產前先以 `farms_repo.get_by_player(..., for_update=True)`（`_locked_farm`）鎖農場列。重複發獎／重複偷菜等由資料庫 UNIQUE／CHECK 約束做最後防線。面板的 `_load_*` 經 `run_batch` 在同一筆交易中執行（`_transaction()` 偵測到共用交易時沿用，其中任何例外都會回滾整批；`RetryingService` 在共用交易中不重試單一方法，改由外層重試整個 `run_batch`）。遊戲規則錯誤皆為 `app.game.errors.GameError` 子類別（訊息可直接給玩家；API 轉成 400／404）。
+- **遊戲目錄快取**（`db/catalog_cache.py`）：`crops_repo.list_all`、`animals_repo.list_all`、`fishing_repo.list_fish_types`、`genetics_repo.current`
+  最多 10 秒讀一次（Bot 與網站不同程序，管理網站改完 Bot 最晚 10 秒套用）。回傳**沒有 Session 的唯讀快照**：要修改目錄用
+  `by_code(for_update=True)` 等加鎖查詢，不要改快照，也不要把快照指定給 relationship。同一程序內的 ORM 寫入會標記交易、交易內不用快取、結束時清空；
+  服務層不要用原生 SQL 寫這幾張表（偵測不到）。測試預設關閉（conftest），`FARMGM_TEST_CATALOG_TTL=10` 可讓整個套件在快取開啟下跑。
+- **一鍵操作的延後寫入**（`txcache.deferred`）：`_bulk` 期間背包、圖鑑（相同物品合併）與交易紀錄（一次 executemany）先累積，
+  離開 `_bulk` 或這筆交易的下一次 Session 查詢前送出，所以查詢一定看得到；例外時丟棄。計入任務／競賽的交易要 ID，
+  `activity.may_score` 為真時逐筆寫。`session.connection().execute` 不會觸發送出，只能用於不依賴累積內容的寫入。
+  `act(..., track_progress=False)`：種植、澆水、清除、買東西不可能讓圖鑑或成就有進展，不重算標記（`_progress_note`）。
 - **一鍵操作的交易內快取**（`db/txcache.py`）：種滿／全部澆水／收成／清除與自動播種以 `self._bulk(session)` 包住逐格迴圈，
   期間 `_memo` 讓品質設定、限時活動、工具、蚯蚓、群組成員、貓等級、倉庫用量（收成後 `txcache.adjust` 累加）、被偷數量、
   進行中的任務與競賽（`activity.on_event`，迴圈中已完成或過期的會跳過）只查一次；只用於迴圈中不會被修改的資料，
@@ -112,12 +144,19 @@ node --test tests/web/connection.test.js                               # 指定�
 - **時間**：一律注入 `Clock`（測試用 `ManualClock`，起點 2026-01-01 00:00 UTC = 台灣週四 08:00）；DB 存 UTC `timestamptz`，顯示與期間計算用台灣時間（`clock.TAIPEI_TZ`）。土地狀態依時間即時計算（`rules.plot_state`），不靠排程。
 - **資料目錄**：作物（含珍稀變種 `variant_code`）與動物／動物產品在 DB（`crop_types`、`animal_types`，有 `active` 停用旗標，代碼不可改、被使用過只能停用）；道具、防守設施、建築、加工配方、加工品在 `game/balance.py`。顯示名稱與合法物品代碼用 `repositories/catalog.py`，不要再寫死作物／動物清單。
 - **山洞冒險**：規則與數值只在 `game/exploration.py`（區域、掉落表、事件、機器配方、等級門檻）；服務在 `services/exploration_service.py`。探險一次一趟：`explore` 出發時決定獎勵寫入 `exploration_logs`（`claimed_at` NULL），`duration_seconds` 後 `claim_exploration` 才入背包並寫交易紀錄（部分唯一索引 `uq_exploration_logs_farm_unclaimed`）。機器存在 `farm_tools`（`settings` JSON 存自動加工機的項目），稀有作物種子由 `crop_types.shop_buyable = false` 擋住商店購買，培育器沿用 `craft_orders`（`building_code = rare_incubator`）。自動收割／加工機在面板 `render()` 時經 `run_machines` 執行（沒有機器時不鎖農場）。conftest 會保留並重設 `exploration.RARE_CROPS`。
+- **釣魚防連點**：`step()` 中連續收線每次多加魚線上限的 14%（`reel_streak`，放線或壓中歸零，等待減 0.5）、魚體力 ≤ 25% 才拉得上岸
+  （否則距離停在 `LAND_GATE_DISTANCE`）、魚隨機竄向一邊（`dodge`，動作 `left`／`right`，面板按鈕每回合打亂）。舊 Session 的 state 沒有這些欄位，
+  一律用 `.get`。數值用模擬驗證（`tests/test_fishing_rules.py`）；測試的策略輸入用 `fishing.POLICY_KEYS`。防腳本 `GUARD_*`（`fishing_guards`，
+  `FishingService._guard_*`、`answer_fishing_check`）：定期或可疑分數滿時 `start_fishing` 回傳 `phase = check` 的 dict（不是 Session），答錯暫停拋竿，
+  不扣資產。測試預設關閉（`fishing.GUARD_ENABLED`，conftest；ManualClock 的操作間隔都是 0），`tests/test_fishing_guard.py` 自行開啟。
 - **釣魚**：規則與數值只在 `game/fishing.py`（稀有度、售價區間、預設設定與驗證、釣具效果、拉扯博弈 `step()`、模擬策略）；
   服務 `services/fishing_service.py`（`FishingService`，繼承鏈 `ExplorationService` → `FishingService` → `SocialService`）；
   面板頁面在 `discord_bot/fishing_panel.py`（`FishingPages` mixin，不使用圖片）。稀有度機率與基礎成功率是獨立設定
   （`fishing_settings` 版本，拋竿時快照進 `fishing_sessions`）；拉扯操作帶 `turn` 防重複點擊；`farm_fish.session_id` 唯一防重複發魚；
   逾時依時間判定（`_expire`），Bot `setup_hook` 呼叫 `cleanup_fishing_sessions`。釣魚面板會依 `fish_due` 自動更新（測試設
-  `panel.fish_timers_enabled = False`）。初始魚種／釣具在 Migration 0016 與 `fishing.INITIAL_FISH`／`INITIAL_GEAR` 各一份（conftest 用後者重設）。
+  `panel.fish_timers_enabled = False`）。初始魚種／釣具在 Migration 0016、0033 與 `fishing.INITIAL_FISH`／`INITIAL_GEAR` 各一份（conftest 用後者重設）。
+  `fish_types.required_baits`（JSON 魚餌代碼清單，對應 `fishing.FISH_REQUIRED_BAITS`）：拋竿時只從目前魚餌釣得到的魚挑（`bait_allows`），
+  管理 API 沒送此欄位時不變更。
 - **世界 Boss**（群組後勤活動）：規則、預設值與戰鬥公式只在 `game/world_boss.py`；服務 `services/world_boss_service.py`
   （`WorldBossService`，繼承鏈 `RankingService` → `WorldBossService` → `ProgressService` → `AdminService`，Bot 與網站都用 `AdminService`）；
   面板 `discord_bot/world_boss_panel.py`（`WorldBossPages` mixin；介紹區 `boss`／`boss_board`／`boss_help` 附同一張固定圖 `farm/scenes/world_boss.png`，戰鬥區 `boss_battle`／`boss_donate` 不附圖，由根目錄 `dragon.png` 縮小，`dragon.png` 不進映像）。活動、補給、捐獻、領獎在 Migration 0019 的
@@ -172,6 +211,31 @@ node --test tests/web/connection.test.js                               # 指定�
   擋下時 `blocked_by = 'pet_dog'`，顯示名稱一律用 `pets.blocker_name()`（不要直接查 `balance.DEFENSES`）。
   `FarmStatus.pets` 讓 `farm_image.farm_png` 在農田圖上方加草地帶（`manifest.json` 的 `pets`，素材 `farm/pets/` 由根目錄
   `dogcat.png` 切出，`dogcat.png` 不進映像）。面板寵物頁 `pets` 從動物頁進入。
+- **古代遺跡**（群組合作）：規則只在 `game/ruins.py`（三個修復階段的素材、稱號「遺跡修復者」），區域定義在
+  `exploration.AREAS["ruins"]`（`needs_ruins=True`）。遺跡屬於農場的**所屬群組**（`home_group_id`，不看開面板的伺服器）。
+  服務在 `ExplorationService.ruins_status`／`donate_ruins`（先鎖 `group_ruins` 列再鎖農場列，捐超過目前階段所缺的數量時只捐需要的部分，
+  記 `ruins_donate`）；完成時所有 `ruins_contributions` 的農場獲得稱號。修好後遺跡是**額外**的探索（使用者要求）：
+  `explore_ruins` 不受一次一趟限制、立即發獎（紀錄建立時就 `claimed_at`，不佔未領取唯一索引）、冷卻 1 天
+  （`farm_explorations` 的 ruins 列）；掉落由 `exploration._ruins_area` 以古老森林為模板產生（等級門檻提前 1 級配合 Lv.4），
+  每次再多抽 `RUINS_EXTRA_ROLLS`（1–2）份。面板 `ruins` 頁在
+  `discord_bot/ruins_panel.py`（山洞 →「🏛️ 修復遺跡」）；區域圖 `farm/scenes/explore_ruins.png` 由根目錄 `oldadv.png` 縮小，`oldadv.png` 不進映像。
+- **遺跡守護者**：規則在 `game/ruins.py`（修好後的下一個台灣週一起每週一隻，HP 3,000 + 每座所屬群組農場 1,000、上限 40,000，
+  開打時固定；素材依稀有度造成傷害，每次探索遺跡自動造成 `EXPEDITION_DAMAGE`；打倒後當週遺跡探索每次多 `DEFEAT_BONUS_ROLLS`（2）份）。`ExplorationService._settle_guardian`
+  在讀取遺跡、山洞總覽、出發、捐獻、攻擊與日報時結算已結束的週（`group_ruins.guardian_settled`），沒打倒就崩壞回第三階段
+  （`collapsed_at`）；鎖定順序一律 遺跡列 → 農場列 → 守護者列，所以結算必須在鎖農場列之前呼叫。加鎖重讀用 `populate_existing`。
+- **農場傳聞**：`game/news.rumor(group_id, day, 當天有動靜的農場)` 決定日報最後一條傳聞（不存資料庫），`SocialService._rumor_dig`
+  在偷菜成功且被偷者是傳聞主角時挖一次（`rumor_digs` 主鍵 (farm_id, day)，`(group_id, day) WHERE found` 唯一；被偷農場列已鎖，
+  同一個傳聞的挖寶自然序列化），挖到記 `rumor_treasure`（列入 `NET_GOLD_EXCLUDED`）。亂數用 `_rumor_rng`，不影響防守判定。
+- **農場日報**（使用者要求：只顯示在 `/farm` 總覽最下方，不加按鈕、Bot 不主動發訊息到頻道）：文字與規則只在 `game/news.py`
+  （所屬群組前一天的頭條、Markdown 跳脫、欄位 1024 字上限），唯讀查詢在 `repositories/news.py`，服務 `services/news_service.py`
+  （`NewsService.daily_news`，繼承鏈 `WorldBossService` → `NewsService` → `ProgressService`）；已結束的日子以 `(group_id, day)`
+  快取在程序內（conftest 每個測試 `clear_cache()`）。總覽 `_load_main` 讀取，沒有任何動靜的日子不顯示。
+- **季節與時段限定**：規則只在 `game/seasons.py`（真實季節依台灣月份：春 3–5、夏 6–8、秋 9–11、冬 12–2；時段為台灣整點
+  `[hour_start, hour_end)`，可跨午夜；作物除小麥外每種兩個季節（每季至少 4 種），魚只限 0033／0035 新增的部分；
+  `CROP_SEASONS`／`FISH_LIMITS` 與 Migration 0034、0035 各一份，`tests/test_seasons.py` 比對）。
+  作物在 `plant_crop`／`plant_all`（`_check_season`）與自動播種機挑種子時檢查，種下後過季照樣收成；魚在 `start_fishing`
+  組魚池時檢查。管理 API 的 `limits`（沒送 = 不變更）；管理網站的作物／魚表單有季節勾選、時段與指定魚餌欄位。conftest 每個測試把限定清空，
+  季節測試（`tests/test_seasons.py`）自行套用。
 - **品質／突變與限時活動**：公式只在 `game/genetics.py`（設定版本存在 `crop_genetics_settings`）與 `game/events.py`（`game_events`，加成在播種／澆水／販售當下決定並記在 `applied_events`）。
 - **排名獎勵**：`game/ranking.py`（期間、驗證）+ `services/ranking_service.py`；背景結算 `run_background_settlement`（advisory lock，排名＋競賽；`WorldBossService` 覆寫後另外結束到期的世界 Boss 並建立排程的下一場，回傳多 `world_boss`／`world_boss_spawned`）由 `BACKGROUND_TASKS_RUNNER` 指定的網站（`main._auto_settle`，注入 `session_factory` 的測試中不啟動）或 Bot 執行，CLI／Bot 的 `leaderboard groups|rewards` 查詢時補結算，`(rule_id, period_start)` 唯一保證只發一次。
   項目 `money` 在有期間時（本日／本週／本月與所有排名獎勵）= 期間內**作物**販售收入（使用者要求：買東西不能影響排名；動物產品、加工品、魚與獎勵不算），只有「全部期間」才是目前金幣；`net_gold`／`NET_GOLD_EXCLUDED` 仍會計算與回傳，但不再是排名分數。
@@ -183,4 +247,6 @@ node --test tests/web/connection.test.js                               # 指定�
 
 ## 測試慣例
 
-`tests/conftest.py` 每個測試前 TRUNCATE `GAME_TABLES`（含 `farm_stats`、`farm_daily_stats`）、刪除測試新增的作物／動物種類並重設初始值、把作物生長時間設為短時間（60/180/300/600 秒）、品質突變設為 100% 普通無突變。新增資料表時記得加入 `GAME_TABLES`。fixture：`service`（`RankingService`）、`clock`、`player_id`、`home_group`、`make_farmer()`、`grow()`；管理功能測試用 `AdminService(session_factory, clock)`。Bot 測試（`tests/test_discord_bot.py`）用 `FakeInteraction` 模擬互動並直接呼叫指令的 `callback`，沒有 pytest-asyncio，以 `asyncio.run` 執行。API 測試以 `create_app(session_factory, clock=..., allowed_hosts=["testserver"], admin_auth=AdminAuth(...))` 建立。音樂測試（`tests/test_music.py`）不連 Lavalink：`FakePlayer` 模擬 `wavelink.Player` 的 async 介面，`skip()`／`stop()`／`finish()` 會像 Lavalink 一樣送出 `on_wavelink_track_end`；解析以 monkeypatch `music.lavalink_search` 取代。
+`tests/conftest.py` 每個測試前清空 `GAME_TABLES`（含 `farm_stats`、`farm_daily_stats`；依 Model 外鍵順序 DELETE 再以 `setval` 把序號歸 1，比 TRUNCATE 快約 100 倍，GAME_TABLES 中的表必須都有 Model）、刪除測試新增的作物／動物種類並重設初始值、把作物生長時間設為短時間（`TEST_GROW_SECONDS`，小麥 60 秒起）、品質突變設為 100% 普通無突變、清空作物與魚的季節／時段限定
+（`ManualClock` 從台灣冬天開始；季節測試用 `tests/test_seasons.apply_defaults()` 套用）、重設 `feature_config` 與日報快取。
+新增資料表時記得加入 `GAME_TABLES`。完整測試約 657 個、2–3 分鐘。「資料庫連不上」的測試用 `0.0.0.0:1`（Windows 連 `127.0.0.1:1` 要等 5 秒逾時）。fixture：`service`（`RankingService`）、`clock`、`player_id`、`home_group`、`make_farmer()`、`grow()`；管理功能測試用 `AdminService(session_factory, clock)`。Bot 測試（`tests/test_discord_bot.py`）用 `FakeInteraction` 模擬互動並直接呼叫指令的 `callback`，沒有 pytest-asyncio，以 `asyncio.run` 執行。API 測試以 `create_app(session_factory, clock=..., allowed_hosts=["testserver"], admin_auth=AdminAuth(...))` 建立。音樂測試（`tests/test_music.py`）不連 Lavalink：`FakePlayer` 模擬 `wavelink.Player` 的 async 介面，`skip()`／`stop()`／`finish()` 會像 Lavalink 一樣送出 `on_wavelink_track_end`；解析以 monkeypatch `music.lavalink_search` 取代。

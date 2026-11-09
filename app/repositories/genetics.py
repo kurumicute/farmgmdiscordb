@@ -5,17 +5,20 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.db import catalog_cache
 from app.db.models import CropGeneticsSetting, FarmPlot, GameTransaction, InventoryItem
 from app.game import balance
 from app.repositories import crops as crops_repo
 
 
 def current(session: Session) -> tuple[int, dict]:
-    """回傳 (版本, 設定)；資料庫沒有設定時使用預設值（版本 0）。"""
-    row = session.scalars(select(CropGeneticsSetting).order_by(CropGeneticsSetting.version.desc()).limit(1)).first()
-    if row is None:
-        return 0, balance.DEFAULT_GENETICS
-    return row.version, row.settings
+    """回傳 (版本, 設定)；資料庫沒有設定時使用預設值（版本 0）。設定唯讀（見 catalog_cache）。"""
+
+    def read() -> tuple[int, dict]:
+        row = session.scalars(select(CropGeneticsSetting).order_by(CropGeneticsSetting.version.desc()).limit(1)).first()
+        return (0, balance.DEFAULT_GENETICS) if row is None else (row.version, row.settings)
+
+    return catalog_cache.value(session, "genetics", read)
 
 
 def add_version(session: Session, settings: dict, actor: str, now: datetime) -> int:

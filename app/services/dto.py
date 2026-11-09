@@ -24,6 +24,8 @@ class CropInfo:
     harvest_quantity: int
     sell_price: int
     shop_buyable: bool = True  # false：稀有作物，商店不販售種子
+    season_text: str = ""  # 季節／時段限定的說明（沒有限制時為空字串）
+    in_season: bool = True  # 現在可不可以種
 
 
 @dataclass(frozen=True)

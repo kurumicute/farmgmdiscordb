@@ -8,12 +8,13 @@
 
 import asyncio
 import logging
+import random
 from datetime import UTC, datetime
 
 import discord
 
 from app.discord_bot.runner import player_message
-from app.game import fishing
+from app.game import fishing, seasons
 from app.game.errors import GameError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,7 @@ class FishingPages:
         else:
             status = "準備釣魚"
         e = discord.Embed(title="🎣 釣魚中心", color=SEA, description=(
+            f"{seasons.now_text(datetime.now(UTC))}（部分魚只在特定季節或時段出現，見魚類圖鑑）\n"
             f"{LINE}\n"
             f"🎋 魚竿：{rod}\n🪢 魚線：{line}\n🪱 魚餌：{bait}\n"
             f"🧺 魚簍：**{o['basket']} / {o['basket_capacity']}**\n"
@@ -159,7 +161,8 @@ class FishingPages:
             f"✅ 基礎成功率 **{o['base_success_pct']}%**（稀有度只影響拉扯難度）\n"
             f"📊 你的紀錄：釣魚 {st['sessions']} 次｜成功 {st['landed']}（{rate}）｜🟡 傳說 {st['legendary']}"
         ))
-        e.set_footer(text="魚上鉤後要在時限內按「拉竿」，拉扯時看 💬 提示：魚要衝刺就放線或等待，平靜時收線。")
+        e.set_footer(text="魚上鉤後要在時限內按「拉竿」，拉扯時看 💬 提示：魚衝刺就放線或等待，"
+                          "竄向一邊就壓同方向，別一直收線。")
 
         async def cast(interaction):
             await self._fish_call(interaction, lambda: self.svc.start_fishing(self.player_id))
@@ -208,6 +211,10 @@ class FishingPages:
     def _build_fish_game(self, v):
         self.fish_due = None
         phase = v["phase"]
+        if phase == "check":
+            return self._build_check(v)
+        if phase == "check_failed":
+            return self._build_check_failed(v)
         if phase == "waiting":
             return self._build_waiting(v)
         if phase == "bite":
@@ -215,6 +222,33 @@ class FishingPages:
         if phase == "fighting":
             return self._build_fight(v)
         return self._build_result(v)
+
+    def _build_check(self, v):
+        """人機確認：題目只寫中文名稱，按鈕只有 emoji、順序隨機，答案只在伺服器端比對。"""
+        e = discord.Embed(title="🤖 釣魚人機確認", color=GOLD, description=(
+            (f"{v['note']}\n\n" if v.get("note") else "")
+            + f"請按下 **{v['target']}**\n\n{LINE}\n"
+            f"⏰ {_ts(v['expires_at'])}前作答，答對就會直接拋竿。\n"
+            "⚠️ 答錯會暫停釣魚一段時間（不會扣金幣、魚或魚餌）。"
+        ))
+        for option in v["options"]:
+            async def answer(interaction, code=option["code"]):
+                await self._fish_call(interaction, lambda: self.svc.answer_fishing_check(self.player_id, code))
+
+            b = discord.ui.Button(emoji=option["emoji"], style=discord.ButtonStyle.secondary, row=0)
+            b.callback = answer
+            self.add_item(b)
+        self.nav("釣魚中心", "fishing", emoji="↩️", row=1)
+        return e
+
+    def _build_check_failed(self, v):
+        e = discord.Embed(title="🚫 人機確認沒有通過", color=RED, description=(
+            f"釣魚暫停 **{v['minutes']}** 分鐘，{_ts(v['locked_until'])}可以再拋竿。\n\n{LINE}\n"
+            "金幣、魚和魚餌都沒有被扣。農場的其他功能照常可以使用。"
+        ))
+        self.nav("釣魚中心", "fishing", emoji="↩️", row=0)
+        self.nav("回總覽", "main", emoji="🏠", row=0)
+        return e
 
     def _give_up_button(self, v, row: int) -> None:
         async def give_up(interaction):
@@ -253,6 +287,11 @@ class FishingPages:
         self.fish_due = (v["action_deadline"], DEADLINE_SLACK_SECONDS)
         tension_warn = " ⚠️" if v["tension"] >= v["max_tension"] * 0.75 else ""
         far_warn = " ⚠️" if v["distance"] >= v["escape_distance"] * 0.8 else ""
+        hints = [f"🔥 連續收線 ×{v['reel_streak']:g}，下一次收線張力 **+{v['next_reel_tension']}**"
+                 if v["reel_streak"] else f"🎣 收線張力 +{v['next_reel_tension']}"]
+        if v["stamina"] > v["land_stamina"]:
+            hints.append(f"🐟 魚體力降到 **{v['land_stamina']}** 以下才拉得上岸")
+        prompt = f"💬 **{v['dodge_text']}**\n💬 {v['intent_text']}" if v.get("dodge") else f"💬 **{v['intent_text']}**"
         e = discord.Embed(title="🎣 正在與魚搏鬥！", color=RARITY_COLOR[v["rarity"]], description=(
             f"🐟 對手：**{rarity_tag(v['rarity'])}**級的魚　🔁 第 {v['turn'] + 1} 回合\n"
             f"{LINE}\n"
@@ -262,15 +301,19 @@ class FishingPages:
             f"🪢 魚線張力：**{v['tension']} / {v['max_tension']}**{tension_warn}\n"
             f"{_bar(v['tension'], v['max_tension'])}\n"
             f"{LINE}\n"
-            f"💬 **{v['intent_text']}**\n"
+            f"{prompt}\n"
+            + "\n".join(hints) + "\n"
             + (f"📝 {v['last_text']}\n" if v.get("last_text") else "")
             + f"⏰ {_ts(v['action_deadline'])}內要操作，不然魚會跑掉"
         ))
-        e.set_footer(text="收線：拉近、張力↑、消耗魚的體力｜放線：張力大降、魚會游遠｜等待：張力下降、穩住魚竿")
+        e.set_footer(text="收線：拉近、耗魚體力，連續收線張力越來越高｜放線：張力大降、魚游遠｜等待：張力下降｜"
+                          "魚竄向一邊：壓同方向。按鈕順序每回合都會變。")
         turn = v["turn"]
-        for action, emoji, style in (("reel", "🎣", discord.ButtonStyle.primary),
-                                     ("release", "↩️", discord.ButtonStyle.secondary),
-                                     ("wait", "⏳", discord.ButtonStyle.secondary)):
+        buttons = [("reel", "🎣", discord.ButtonStyle.primary), ("release", "↩️", discord.ButtonStyle.secondary),
+                   ("wait", "⏳", discord.ButtonStyle.secondary), ("left", "⬅️", discord.ButtonStyle.secondary),
+                   ("right", "➡️", discord.ButtonStyle.secondary)]
+        random.shuffle(buttons)  # 每回合打亂，固定點擊位置的連點程式會按錯
+        for action, emoji, style in buttons:
             async def do(interaction, action=action):
                 await self._fish_call(
                     interaction, lambda: self.svc.fishing_action(self.player_id, v["id"], action, turn))
@@ -309,7 +352,8 @@ class FishingPages:
             e = discord.Embed(title=f"😢 {v['status_name']}", color=GREY, description=(
                 f"{v.get('last_text') or ''}\n\n{LINE}\n"
                 f"這次的對手是 **{rarity_tag(v['rarity'])}** 級的魚。\n"
-                "💡 拉扯時看 💬 提示：魚要衝刺或猛烈掙扎時先放線或等待，平靜、累了的時候收線。"
+                "💡 拉扯時看 💬 提示：魚衝刺時先放線或等待，竄向一邊就壓同方向，平靜、累了的時候收線；"
+                "別連續收線，張力會越來越高。"
             ))
             self.button("再釣一次", again, emoji="🎣", style=discord.ButtonStyle.success, row=0)
         self.nav("我的魚簍", "fish_basket", emoji="🎒", row=0)
@@ -500,16 +544,19 @@ class FishingPages:
             if not rows:
                 continue
             lines = [
-                (f"{x['emoji']} **{x['name']}** ×{x['count']}　最重 {fishing.weight_text(x['max_weight_g'])}"
-                 f"　💰 {x['min_price']}–{x['max_price']}")
-                if x["caught"] else f"❓ ？？？　💰 {x['min_price']}–{x['max_price']}"
+                ((f"{x['emoji']} **{x['name']}** ×{x['count']}　最重 {fishing.weight_text(x['max_weight_g'])}"
+                  f"　💰 {x['min_price']}–{x['max_price']}")
+                 if x["caught"] else f"❓ ？？？　💰 {x['min_price']}–{x['max_price']}")
+                + (f"　🔒 需要{'或'.join(x['bait_names'])}" if x.get("bait_names") else "")
+                + (f"　{x['limit_text']}" if x.get("limit_text") else "")
                 for x in rows
             ]
             lo, hi = fishing.price_span(rows, r)
             blocks.append(f"**{rarity_tag(r)}**（{lo}–{hi} 金）\n" + "\n".join(lines))
         e = discord.Embed(title="📖 魚類圖鑑", color=SEA, description=(
             f"已發現 **{d['discovered']} / {d['total']}** 種\n{LINE}\n" + "\n\n".join(blocks))[:4000])
-        e.set_footer(text="釣到一次就會登記；賣掉的魚也算。❓ 是還沒釣過的魚。")
+        e.set_footer(text="釣到一次就會登記；賣掉的魚也算。❓ 是還沒釣過的魚。🔒 要裝備指定的魚餌才釣得到；"
+                              "季節依台灣月份（春 3–5、夏 6–8、秋 9–11、冬 12–2 月），時段是台灣時間。")
         self.nav("釣魚中心", "fishing", emoji="🎣", row=0)
         self.nav("回總覽", "main", emoji="🏠", row=0)
         return e

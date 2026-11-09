@@ -35,7 +35,7 @@ from app.repositories import inventory as inventory_repo
 from app.repositories import titles as titles_repo
 from app.services.dto import ActionResult
 from app.services.game_service import long_duration
-from app.services.world_boss_service import WorldBossService
+from app.services.news_service import NewsService
 
 # 圖鑑分類：(代碼, 圖示, 名稱)
 CODEX_CATEGORIES = (
@@ -64,7 +64,7 @@ def _pct(value: int, total: int) -> int:
     return 0 if total <= 0 else value * 100 // total
 
 
-class ProgressService(WorldBossService):
+class ProgressService(NewsService):
     # ---------- 共用：發放獎勵 ----------
 
     def _grant_reward(self, session: Session, farm: Farm, event: EventType, label: str, gold: int,

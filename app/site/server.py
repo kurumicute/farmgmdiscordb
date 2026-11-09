@@ -32,7 +32,7 @@ from app.db.models import (
     WorldBossEvent,
     WorldBossSchedule,
 )
-from app.game import achievements, balance, checkin, exploration, fishing, pets, special_shop
+from app.game import achievements, balance, checkin, exploration, fishing, news, pets, ruins, seasons, special_shop
 from app.game import events as event_rules
 from app.game import ranking as ranking_rules
 from app.game import world_boss as wb
@@ -149,6 +149,7 @@ def build_exploration(names: dict[str, str]) -> dict:
         "areas": [
             {"emoji": a.emoji, "name": a.name, "description": a.description, "unlock_level": a.unlock_level,
              "duration_seconds": a.duration_seconds, "rolls": a.rolls, "advanced_level": a.advanced_level,
+             "needs_ruins": a.needs_ruins,
              "common": items(a, "common"), "rare": items(a, "rare"), "seeds": items(a, "seed"),
              "events": [{"name": e.name, "min_level": e.min_level} for e in a.events]}
             for a in (exploration.AREAS[c] for c in exploration.AREA_ORDER)
@@ -176,6 +177,7 @@ def build_fishing(session: Session) -> dict:
     """釣魚手冊：稀有度機率與售價、基礎成功率、時間設定、啟用中的釣具與魚種（只有規則與目錄，沒有玩家資料）。"""
     version, s = fishing_repo.current_settings(session)
     fish_types = fishing_repo.list_fish_types(session, active_only=True)
+    gear_names = {g.code: f"{g.emoji} {g.name}" for g in fishing_repo.list_gear(session)}
     return {
         "settings_version": version,
         "base_success_pct": s["base_success_pct"],
@@ -200,7 +202,9 @@ def build_fishing(session: Session) -> dict:
             {"name": f.name, "emoji": f.emoji, "rarity": f.rarity, "rarity_name": fishing.RARITY_NAMES[f.rarity],
              "rarity_emoji": fishing.RARITY_EMOJI[f.rarity], "price": [f.min_price, f.max_price],
              "weight": [fishing.weight_text(f.min_weight_g), fishing.weight_text(f.max_weight_g)],
-             "description": f.description}
+             "description": f.description,
+             "limit_text": seasons.describe(f.seasons, f.hour_start, f.hour_end),
+             "baits": [gear_names.get(b, b) for b in (f.required_baits or [])]}
             for f in fish_types
         ],
     }
@@ -342,6 +346,49 @@ def build_world_boss(session: Session, names: dict[str, str], now: datetime) -> 
     }
 
 
+def build_ruins(names: dict[str, str]) -> dict:
+    """古代遺跡（群組修復）、遺跡守護者與額外探索的規則（固定數值，沒有任何群組資料）。"""
+    area = exploration.AREAS["ruins"]
+    return {
+        "stages": [
+            {"name": st.name, "description": st.description,
+             "materials": [{"name": names.get(c, exploration.material_name(c)), "quantity": q}
+                           for c, q in st.materials.items()]}
+            for st in ruins.STAGES
+        ],
+        "title": ruins.TITLE,
+        "unlock_level": area.unlock_level,
+        "cooldown_seconds": area.duration_seconds,
+        "rolls": area.rolls,
+        "extra_rolls": list(exploration.RUINS_EXTRA_ROLLS),
+        "guardian": {
+            "name": ruins.GUARDIAN_NAME, "hp_base": ruins.GUARDIAN_HP_BASE,
+            "hp_per_member": ruins.GUARDIAN_HP_PER_MEMBER,
+            "hp_max": ruins.GUARDIAN_HP_MAX, "damage": dict(ruins.GUARDIAN_DAMAGE),
+            "expedition_damage": ruins.EXPEDITION_DAMAGE, "bonus_rolls": ruins.DEFEAT_BONUS_ROLLS,
+        },
+    }
+
+
+def build_news() -> dict:
+    """總覽的農場日報與傳聞挖寶規則。"""
+    return {
+        "max_headlines": news.MAX_HEADLINES,
+        "rumor_chance_pct": round(news.RUMOR_CHANCE * 100),
+        "rumor_true_pct": round(news.RUMOR_TRUE_CHANCE * 100),
+        "dig_chance_pct": round(news.DIG_CHANCE * 100),
+        "treasure_gold": list(news.TREASURE_GOLD),
+    }
+
+
+def build_seasons(now: datetime) -> dict:
+    return {
+        "now_text": seasons.now_text(now),
+        "current": seasons.SEASON_NAMES[seasons.season_of(now)],
+        "months": {"春": "3–5 月", "夏": "6–8 月", "秋": "9–11 月", "冬": "12–2 月"},
+    }
+
+
 def build_guide(session: Session, now: datetime) -> dict:
     """操作手冊需要的遊戲設定。只輸出規則與數值，不含任何玩家、農場或群組資料。"""
     feature_settings_repo.refresh(session)  # 管理網站調整過的簽到、寵物、特賣與成就數值
@@ -383,10 +430,14 @@ def build_guide(session: Session, now: datetime) -> dict:
         "crops": [
             {"name": c.name, "seed_price": c.seed_price, "grow_seconds": c.grow_seconds,
              "harvest_quantity": c.harvest_quantity, "sell_price": c.sell_price, "variant_name": c.variant_name,
-             "shop_buyable": c.shop_buyable}
+             "shop_buyable": c.shop_buyable, "season_text": seasons.describe(c.seasons, c.hour_start, c.hour_end),
+             "in_season": seasons.available(c.seasons, c.hour_start, c.hour_end, now)}
             for c in crops
         ],
         "exploration": build_exploration(names),
+        "ruins": build_ruins(catalog_repo.item_names(session)),
+        "news": build_news(),
+        "seasons": build_seasons(now),
         "fishing": build_fishing(session),
         "world_boss": build_world_boss(session, catalog_repo.item_names(session), now),
         "progress": build_progress(),

@@ -26,14 +26,14 @@ ADMIN = {"X-Farmgm-Admin": "1"}
 PASSWORD = "test-password-123"
 
 NEW_CROP = {
-    "code": "pumpkin",
-    "name": "南瓜",
+    "code": "eggplant",
+    "name": "茄子",
     "seed_price": 30,
     "grow_seconds": 120,
     "harvest_quantity": 2,
     "sell_price": 40,
-    "variant_code": "moon_pumpkin",
-    "variant_name": "月光南瓜",
+    "variant_code": "violet_eggplant",
+    "variant_name": "紫晶茄子",
 }
 NEW_ANIMAL = {
     "code": "duck",
@@ -223,18 +223,18 @@ def test_event_crud_and_audit(admin, clock, session_factory):
 def test_create_crop_full_lifecycle(admin, farmer, clock, session_factory):
     crop = admin.create_crop(ACTOR, NEW_CROP)
     assert crop["active"] is True
-    assert "pumpkin" in [c.code for c in admin.get_market_prices()]
-    admin.buy_seeds(farmer, "南瓜", 1)
-    admin.plant_crop(farmer, 1, "pumpkin")
+    assert "eggplant" in [c.code for c in admin.get_market_prices()]
+    admin.buy_seeds(farmer, "茄子", 1)
+    admin.plant_crop(farmer, 1, "eggplant")
     admin.water_crop(farmer, 1)
     clock.advance(120)
     admin.harvest_crop(farmer, 1)
-    assert admin.sell_crop(farmer, "南瓜", 2).gold_delta == 80
+    assert admin.sell_crop(farmer, "茄子", 2).gold_delta == 80
     # 珍稀變種使用資料庫中的代碼與名稱
-    admin.set_inventory(ACTOR, farmer, "moon_pumpkin", "rare", "variant", 1)
+    admin.set_inventory(ACTOR, farmer, "violet_eggplant", "rare", "variant", 1)
     bp = admin.get_backpack(farmer)
-    assert [(x.name, x.quality) for x in bp.produce] == [("月光南瓜", "rare")]
-    assert admin.sell_crop(farmer, "月光南瓜", 1, "rare").gold_delta == 40 * 4 * 150 // 100
+    assert [(x.name, x.quality) for x in bp.produce] == [("紫晶茄子", "rare")]
+    assert admin.sell_crop(farmer, "紫晶茄子", 1, "rare").gold_delta == 40 * 4 * 150 // 100
 
 
 def test_crop_validation_and_duplicates(admin):
@@ -244,8 +244,8 @@ def test_crop_validation_and_duplicates(admin):
         admin.create_crop(ACTOR, {**NEW_CROP, "variant_code": "egg"})  # 與動物產品重複
     with pytest.raises(AlreadyExistsError, match="小麥"):
         admin.create_crop(ACTOR, {**NEW_CROP, "name": "小麥"})
-    for bad in ({"code": "Seed_x"}, {"code": "seed_pumpkin"}, {"grow_seconds": 10}, {"seed_price": 0},
-                {"variant_code": "pumpkin"}):
+    for bad in ({"code": "Seed_x"}, {"code": "seed_eggplant"}, {"grow_seconds": 10}, {"seed_price": 0},
+                {"variant_code": "eggplant"}):
         with pytest.raises(ValidationError):
             admin.create_crop(ACTOR, {**NEW_CROP, **bad})
     updated = admin.update_crop(ACTOR, "wheat", {**NEW_CROP, "name": "大麥", "variant_name": "金大麥"})
@@ -270,9 +270,9 @@ def test_disable_and_delete_crop(admin, farmer, clock, session_factory):
     with pytest.raises(ValidationError, match="加工配方"):
         admin.delete_crop(ACTOR, "wheat")
     admin.create_crop(ACTOR, NEW_CROP)
-    admin.delete_crop(ACTOR, "pumpkin")
+    admin.delete_crop(ACTOR, "eggplant")
     with pytest.raises(NotFoundError):
-        admin.delete_crop(ACTOR, "pumpkin")
+        admin.delete_crop(ACTOR, "eggplant")
     assert audit_actions(session_factory) == ["disable_crop", "create_crop", "delete_crop"]
 
 
@@ -481,9 +481,9 @@ def test_admin_api_end_to_end(client, admin, farmer):
     assert res.status_code == 201
     assert client.post("/api/admin/crops", json=NEW_CROP, headers=ADMIN).status_code == 400
     assert client.post("/api/admin/crops", json={**NEW_CROP, "code": "Bad Code"}, headers=ADMIN).status_code == 422
-    off = client.put("/api/admin/crops/pumpkin/active", json={"active": False}, headers=ADMIN)
+    off = client.put("/api/admin/crops/eggplant/active", json={"active": False}, headers=ADMIN)
     assert off.json()["active"] is False
-    assert client.delete("/api/admin/crops/pumpkin", headers=ADMIN).status_code == 200
+    assert client.delete("/api/admin/crops/eggplant", headers=ADMIN).status_code == 200
     assert client.post("/api/admin/animal-types", json=NEW_ANIMAL, headers=ADMIN).status_code == 201
 
     event = {

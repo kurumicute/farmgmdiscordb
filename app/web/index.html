@@ -450,8 +450,8 @@
             <p class="muted small">代碼建立後不可修改。售價可自由設定，不受稀有度限制（最低不可高於最高），實際售價依重量在最低～最高售價之間換算。掙扎難度 1–5 影響魚的體力。停用後不會再被釣到，已釣到的魚仍可販售；修改不影響已釣到的魚與進行中的釣魚。</p>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>代碼</th><th>魚類</th><th>稀有度</th><th class="num">售價</th><th class="num">重量範圍</th><th class="num">掙扎難度</th><th class="num">已捕獲</th><th>狀態</th><th class="admin-only" hidden></th></tr></thead>
-                <tbody id="fish-admin-rows" data-page-size="20" data-filter="篩選魚類"><tr><td colspan="9" class="empty is-loading">載入中…</td></tr></tbody>
+                <thead><tr><th>代碼</th><th>魚類</th><th>稀有度</th><th class="num">售價</th><th class="num">重量範圍</th><th class="num">掙扎難度</th><th>限定（魚餌／季節／時段）</th><th class="num">已捕獲</th><th>狀態</th><th class="admin-only" hidden></th></tr></thead>
+                <tbody id="fish-admin-rows" data-page-size="20" data-filter="篩選魚類"><tr><td colspan="10" class="empty is-loading">載入中…</td></tr></tbody>
               </table>
             </div>
             <details id="fish-form-box" class="admin-only form-box" hidden>
@@ -469,7 +469,12 @@
                 <label class="req">掙扎難度（1–5） <input id="ftf-diff" type="number" min="1" max="5" step="1" value="3" required></label>
                 <label>排序 <input id="ftf-sort" type="number" min="0" max="100000" step="1" value="0"></label>
                 <label>說明 <input id="ftf-desc" type="text" maxlength="200"></label>
+                <fieldset id="ftf-baits" class="checks wide"><legend>指定魚餌（都不勾 = 任何魚餌都釣得到）</legend></fieldset>
+                <fieldset class="checks wide"><legend>季節限定（台灣月份；都不勾 = 四季都可以）</legend><label><input id="ftf-s-spring" type="checkbox"> 🌸 春（3–5 月）</label><label><input id="ftf-s-summer" type="checkbox"> ☀️ 夏（6–8 月）</label><label><input id="ftf-s-autumn" type="checkbox"> 🍂 秋（9–11 月）</label><label><input id="ftf-s-winter" type="checkbox"> ❄️ 冬（12–2 月）</label></fieldset>
+                <label>時段開始（台灣時間 0–23 點，留空 = 不限） <input id="ftf-hs" type="number" min="0" max="23" step="1"></label>
+                <label>時段結束（不含；可跨午夜，例如 18 → 6） <input id="ftf-he" type="number" min="0" max="23" step="1"></label>
               </div>
+              <p class="form-hint">魚餌、季節與時段在拋竿當下判斷，三個條件都符合才會出現這種魚。</p>
               <div class="form-actions">
                 <button id="ftf-submit" type="button" class="primary">新增魚類</button>
                 <button id="ftf-reset" type="button">清除表單（改為新增）</button>
@@ -1043,8 +1048,8 @@
             <p class="muted small">代碼建立後不可修改。已被使用（土地、背包、交易、偷菜、活動或加工配方）的作物只能停用：停用後不能購買種子或種植，已種下、已持有的仍可收成與販售。生長時間修改只影響之後澆水的作物。</p>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>代碼</th><th>名稱</th><th class="num">種子價格</th><th class="num">生長時間</th><th class="num">收成量</th><th class="num">售價</th><th>珍稀變種</th><th>狀態</th><th class="admin-only" hidden></th></tr></thead>
-                <tbody id="crop-admin-rows" data-page-size="15" data-filter="篩選作物代碼或名稱"><tr><td colspan="9" class="empty is-loading">載入中…</td></tr></tbody>
+                <thead><tr><th>代碼</th><th>名稱</th><th class="num">種子價格</th><th class="num">生長時間</th><th class="num">收成量</th><th class="num">售價</th><th>珍稀變種</th><th>季節／時段</th><th>狀態</th><th class="admin-only" hidden></th></tr></thead>
+                <tbody id="crop-admin-rows" data-page-size="15" data-filter="篩選作物代碼或名稱"><tr><td colspan="10" class="empty is-loading">載入中…</td></tr></tbody>
               </table>
             </div>
             <details id="crop-form-box" class="admin-only form-box" hidden>
@@ -1059,7 +1064,11 @@
                 <label class="req">售價 <input id="crf-sell" type="number" min="0" step="1" value="15" required></label>
                 <label class="req">珍稀變種代碼 <input id="crf-vcode" type="text" maxlength="32" placeholder="golden_pumpkin" required pattern="[a-z][a-z0-9_]{1,31}" data-pattern-hint="小寫英文字母開頭，只能包含小寫字母、數字與底線，2–32 字"></label>
                 <label class="req">珍稀變種名稱 <input id="crf-vname" type="text" maxlength="32" required></label>
+                <fieldset class="checks wide"><legend>季節限定（台灣月份；都不勾 = 四季都可以）</legend><label><input id="crf-s-spring" type="checkbox"> 🌸 春（3–5 月）</label><label><input id="crf-s-summer" type="checkbox"> ☀️ 夏（6–8 月）</label><label><input id="crf-s-autumn" type="checkbox"> 🍂 秋（9–11 月）</label><label><input id="crf-s-winter" type="checkbox"> ❄️ 冬（12–2 月）</label></fieldset>
+                <label>時段開始（台灣時間 0–23 點，留空 = 不限） <input id="crf-hs" type="number" min="0" max="23" step="1"></label>
+                <label>時段結束（不含；可跨午夜，例如 18 → 6） <input id="crf-he" type="number" min="0" max="23" step="1"></label>
               </div>
+              <p class="form-hint">季節／時段只限制「種下」的時間；種下後過了季節照樣長大、收成。</p>
               <div class="form-actions">
                 <button id="crf-submit" type="button" class="primary">新增作物</button>
                 <button id="crf-reset" type="button">清除表單（改為新增）</button>

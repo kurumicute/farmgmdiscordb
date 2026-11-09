@@ -121,7 +121,8 @@ if (typeof document !== "undefined") {
     explore: "山洞探索", build_machine: "製作機器", exchange: "假幣兌換", make_seed: "製造種子",
     fishing_buy: "購買釣具", fish_sell: "販售魚類", release_animal: "放生動物",
     boss_donate: "世界 Boss 捐獻", boss_reward: "世界 Boss 獎勵", rename_farm: "農場改名",
-    checkin_reward: "每日簽到", achievement_reward: "成就獎勵",
+    checkin_reward: "每日簽到", achievement_reward: "成就獎勵", ruins_donate: "修復遺跡",
+    ruins_guardian: "攻擊遺跡守護者", rumor_treasure: "傳聞寶藏",
   };
 
   const state = {
@@ -1959,6 +1960,39 @@ if (typeof document !== "undefined") {
     }
   }
 
+  // ----- 季節／時段限定（作物與魚共用） -----
+  const SEASON_ORDER = ["spring", "summer", "autumn", "winter"];
+  const SEASON_LABELS = { spring: "🌸春", summer: "☀️夏", autumn: "🍂秋", winter: "❄️冬" };
+  const hh = (n) => `${String(n).padStart(2, "0")}:00`;
+
+  function limitText(x) {
+    const parts = [];
+    if (x.seasons && x.seasons.length) parts.push(x.seasons.map((s) => SEASON_LABELS[s] || s).join("、"));
+    if (x.hour_start !== null && x.hour_start !== undefined && x.hour_end !== null && x.hour_end !== undefined) {
+      parts.push(`${hh(x.hour_start)}–${hh(x.hour_end)}`);
+    }
+    return parts.join("　") || "不限";
+  }
+
+  function readLimits(prefix) {
+    const seasons = SEASON_ORDER.filter((s) => $(`${prefix}-s-${s}`).checked);
+    const hs = $(`${prefix}-hs`).value.trim();
+    const he = $(`${prefix}-he`).value.trim();
+    if ((hs === "") !== (he === "")) return { error: "時段的開始與結束要一起填（或都留空）。" };
+    if (hs !== "" && hs === he) return { error: "時段的開始與結束不能相同。" };
+    return { limits: { seasons, hour_start: hs === "" ? null : Number(hs), hour_end: he === "" ? null : Number(he) } };
+  }
+
+  function fillLimits(prefix, x) {
+    for (const s of SEASON_ORDER) $(`${prefix}-s-${s}`).checked = (x.seasons || []).includes(s);
+    $(`${prefix}-hs`).value = x.hour_start === null || x.hour_start === undefined ? "" : String(x.hour_start);
+    $(`${prefix}-he`).value = x.hour_end === null || x.hour_end === undefined ? "" : String(x.hour_end);
+  }
+
+  function resetLimits(prefix) {
+    fillLimits(prefix, { seasons: [], hour_start: null, hour_end: null });
+  }
+
   // ----- 作物種類 -----
   function renderCropAdmin(c) {
     const admin = extra.admin.loggedIn;
@@ -1966,7 +2000,7 @@ if (typeof document !== "undefined") {
       const cells = [
         td(x.code), td(x.name), td(fmtNum(x.seed_price), "num"), td(fmtDuration(x.grow_seconds), "num"),
         td(x.harvest_quantity, "num"), td(fmtNum(x.sell_price), "num"), td(`${x.variant_name}（${x.variant_code}）`),
-        el("td", {}, [x.active ? badge("啟用", "good") : badge("已停用", "muted")]),
+        td(limitText(x)), el("td", {}, [x.active ? badge("啟用", "good") : badge("已停用", "muted")]),
       ];
       if (admin) {
         cells.push(actionsTd([
@@ -1984,7 +2018,7 @@ if (typeof document !== "undefined") {
       }
       return el("tr", {}, cells);
     });
-    replaceRows($("crop-admin-rows"), rows, "目前沒有作物", 9);
+    replaceRows($("crop-admin-rows"), rows, "目前沒有作物", 10);
   }
 
   const CROP_FIELDS = [
@@ -1998,6 +2032,7 @@ if (typeof document !== "undefined") {
     $("crf-submit").textContent = "新增作物";
     for (const id of ["crf-code", "crf-vcode", "crf-name", "crf-vname"]) $(id).value = "";
     $("crf-code").disabled = $("crf-vcode").disabled = false;
+    resetLimits("crf");
   }
 
   function fillCropForm(x) {
@@ -2009,6 +2044,7 @@ if (typeof document !== "undefined") {
     $("crf-vcode").value = x.variant_code;
     $("crf-code").disabled = $("crf-vcode").disabled = true; // 代碼不可修改
     for (const [id, key] of CROP_FIELDS) $(id).value = String(x[key]);
+    fillLimits("crf", x);
     $("crf-note").textContent = "";
     $("crop-form-box").scrollIntoView({ block: "nearest" });
   }
@@ -2028,6 +2064,9 @@ if (typeof document !== "undefined") {
     if (!validateForm($("crop-form-box"))) return;
     const body = {};
     for (const [id, key] of CROP_FIELDS) body[key] = key.endsWith("name") ? $(id).value.trim() : Number($(id).value);
+    const lim = readLimits("crf");
+    if (lim.error) { setNote("crf-note", `失敗：${lim.error}`, "bad"); return; }
+    body.limits = lim.limits;
     const code = manage.editCrop;
     let res;
     if (code === null) {
@@ -2036,6 +2075,7 @@ if (typeof document !== "undefined") {
     } else {
       const before = manage.catalog.crops.find((x) => x.code === code);
       const diff = before ? changedFields(CROP_FIELDS, CROP_LABELS, before, body) : [];
+      if (before && limitText(before) !== limitText(body.limits)) diff.push(["季節／時段", limitText(before), limitText(body.limits)]);
       if (before && !diff.length) { setNote("crf-note", "沒有任何變更。", "bad"); return; }
       const answer = await confirmDialog({
         title: `儲存作物「${before ? before.name : code}」的變更`,
@@ -2848,7 +2888,7 @@ if (typeof document !== "undefined") {
       const cells = [
         td(f.code), td(`${f.emoji} ${f.name}`), td(fishRarity(c, f.rarity)), td(`${f.min_price}–${f.max_price}`, "num"),
         td(`${fishWeight(f.min_weight_g)}–${fishWeight(f.max_weight_g)}`, "num"), td(f.difficulty, "num"),
-        td(fmtNum(f.caught), "num"), el("td", {}, [f.active ? badge("啟用", "good") : badge("已停用", "muted")]),
+        td(fishLimitText(c, f), "wrap"), td(fmtNum(f.caught), "num"), el("td", {}, [f.active ? badge("啟用", "good") : badge("已停用", "muted")]),
       ];
       if (admin) {
         cells.push(actionsTd([
@@ -2862,7 +2902,48 @@ if (typeof document !== "undefined") {
       }
       return el("tr", {}, cells);
     });
-    replaceRows($("fish-admin-rows"), rows, "目前沒有魚類", 9);
+    replaceRows($("fish-admin-rows"), rows, "目前沒有魚類", 10);
+    renderBaitChecks(c);
+  }
+
+  function baitNames(c, codes) {
+    const names = Object.fromEntries(c.gear.map((g) => [g.code, `${g.emoji} ${g.name}`]));
+    return (codes || []).map((code) => names[code] || code);
+  }
+
+  function fishLimitText(c, f) {
+    const baits = baitNames(c, f.required_baits);
+    const limit = limitText(f);
+    const parts = [];
+    if (baits.length) parts.push(`需要${baits.join("或")}`);
+    if (limit !== "不限") parts.push(limit);
+    return parts.join("；") || "不限";
+  }
+
+  // 指定魚餌的勾選框：依目前的魚餌清單建立；清單沒變時不重建（保留使用者正在勾選的狀態）
+  function renderBaitChecks(c) {
+    const box = $("ftf-baits");
+    const baits = c.gear.filter((g) => g.kind === "bait");
+    const key = baits.map((g) => g.code).join(",");
+    if (box.dataset.codes === key) return;
+    const checked = new Set(readBaits());
+    for (const node of [...box.querySelectorAll("label")]) node.remove();
+    for (const g of baits) {
+      const input = el("input", {});
+      input.type = "checkbox";
+      input.dataset.bait = g.code;
+      input.checked = checked.has(g.code);
+      box.appendChild(el("label", {}, [input, document.createTextNode(` ${g.emoji} ${g.name}（${g.code}）`)]));
+    }
+    box.dataset.codes = key;
+  }
+
+  function readBaits() {
+    return [...$("ftf-baits").querySelectorAll("input[data-bait]")].filter((x) => x.checked).map((x) => x.dataset.bait);
+  }
+
+  function fillBaits(codes) {
+    for (const x of $("ftf-baits").querySelectorAll("input[data-bait]")) x.checked = (codes || []).includes(x.dataset.bait);
   }
 
   const FISH_FIELDS = [
@@ -2882,6 +2963,8 @@ if (typeof document !== "undefined") {
     $("ftf-submit").textContent = "新增魚類";
     for (const id of ["ftf-code", "ftf-name", "ftf-desc"]) $(id).value = "";
     $("ftf-code").disabled = false;
+    resetLimits("ftf");
+    fillBaits([]);
   }
 
   function fillFishForm(f) {
@@ -2892,6 +2975,8 @@ if (typeof document !== "undefined") {
     $("ftf-code").value = f.code;
     $("ftf-code").disabled = true;
     for (const [id, key] of FISH_FIELDS) $(id).value = String(f[key]);
+    fillLimits("ftf", f);
+    fillBaits(f.required_baits);
     $("ftf-note").textContent = "";
     $("fish-form-box").scrollIntoView({ block: "nearest" });
   }
@@ -2904,6 +2989,10 @@ if (typeof document !== "undefined") {
       setNote("ftf-note", "失敗：最低售價不可高於最高售價。", "bad");
       return;
     }
+    const lim = readLimits("ftf");
+    if (lim.error) { setNote("ftf-note", `失敗：${lim.error}`, "bad"); return; }
+    body.limits = lim.limits;
+    body.required_baits = readBaits();
     const code = fish.editFish;
     let res;
     if (code === null) {
@@ -2912,6 +3001,12 @@ if (typeof document !== "undefined") {
     } else {
       const before = fish.catalog.fish.find((x) => x.code === code);
       const diff = before ? changedFields(FISH_FIELDS, FISH_LABELS, before, body) : [];
+      if (before) {
+        const baitsBefore = baitNames(fish.catalog, before.required_baits).join("、") || "任何魚餌";
+        const baitsAfter = baitNames(fish.catalog, body.required_baits).join("、") || "任何魚餌";
+        if (baitsBefore !== baitsAfter) diff.push(["指定魚餌", baitsBefore, baitsAfter]);
+        if (limitText(before) !== limitText(body.limits)) diff.push(["季節／時段", limitText(before), limitText(body.limits)]);
+      }
       if (before && !diff.length) { setNote("ftf-note", "沒有任何變更。", "bad"); return; }
       const answer = await confirmDialog({
         title: `儲存魚類「${before ? before.name : code}」的變更`,

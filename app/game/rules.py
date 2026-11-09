@@ -65,6 +65,9 @@ class EventType(StrEnum):
     RENAME_FARM = "rename_farm"
     CHECKIN_REWARD = "checkin_reward"
     ACHIEVEMENT_REWARD = "achievement_reward"
+    RUINS_DONATE = "ruins_donate"
+    RUINS_GUARDIAN = "ruins_guardian"
+    RUMOR_TREASURE = "rumor_treasure"
 
 
 EVENT_TYPE_LABELS = {
@@ -108,6 +111,9 @@ EVENT_TYPE_LABELS = {
     EventType.RENAME_FARM: "農場改名",
     EventType.CHECKIN_REWARD: "每日簽到",
     EventType.ACHIEVEMENT_REWARD: "成就獎勵",
+    EventType.RUINS_DONATE: "修復遺跡",
+    EventType.RUINS_GUARDIAN: "攻擊遺跡守護者",
+    EventType.RUMOR_TREASURE: "傳聞寶藏",
 }
 
 

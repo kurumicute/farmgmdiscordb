@@ -29,6 +29,7 @@ from app.discord_bot import farm_image
 from app.discord_bot.fishing_panel import FishingPages, fish_line
 from app.discord_bot.latency import STATS as LATENCY
 from app.discord_bot.progress_panel import ProgressPages
+from app.discord_bot.ruins_panel import RuinsPages
 from app.discord_bot.runner import player_message
 from app.discord_bot.special_shop_panel import SpecialShopPages
 from app.discord_bot.world_boss_panel import WorldBossPages
@@ -47,7 +48,7 @@ FARM_IMAGE = "farm.png"  # 面板圖片的附件檔名（Embed 以 attachment://
 GREEN, BLUE, GOLD, RED, GREY = 0x57F287, 0x5865F2, 0xF1C40F, 0xED4245, 0x99AAB5
 
 CROP_EMOJI = {"wheat": "🌾", "carrot": "🥕", "tomato": "🍅", "strawberry": "🍓", "amber_melon": "🍈",
-              "moonflower": "🌙"}
+              "moonflower": "🌙", "corn": "🌽", "pumpkin": "🎃", "grape": "🍇", "watermelon": "🍉"}
 ANIMAL_EMOJI = {"chicken": "🐔", "cow": "🐄", "sheep": "🐑"}
 MATERIAL_EMOJI = {"wood": "🪵", "stone": "🪨", "copper_ore": "🟠", "iron_ore": "⛓️", "resin": "🍯", "herb": "🌿",
                   "gear": "⚙️", "crystal": "💎", "ancient_core": "🌳", "machine_core": "🔩", "fake_coin": "🪙"}
@@ -224,7 +225,7 @@ class RenameModal(discord.ui.Modal):
 # ---------- 面板 ----------
 
 
-class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, discord.ui.View):
+class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, RuinsPages, discord.ui.View):
     """一個玩家的私密農場面板。頁面內容每次都重新從資料庫讀取，網站或其他介面的修改會立即反映。"""
 
     auto_checkin = True  # 開啟面板時自動每日簽到（測試預設關閉，避免改變其他測試的金幣與庫存）
@@ -508,10 +509,13 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
 
     async def act(
         self, interaction: discord.Interaction, work: Callable[[], str], page: str | None = None, *, keep: bool = False,
-        prefix: str = "✅ ",
+        prefix: str = "✅ ", track_progress: bool = True,
     ) -> None:
         """執行一個操作（在執行緒中）。成功時結果以 ✅ 顯示在頁面頂端並重新整理；
-        失敗時改顯示獨立的錯誤畫面，只有錯誤原因與「返回」按鈕，返回後保留剛才的選擇。"""
+        失敗時改顯示獨立的錯誤畫面，只有錯誤原因與「返回」按鈕，返回後保留剛才的選擇。
+
+        track_progress=False：這個操作不可能讓圖鑑或成就有進展（種植、澆水、買東西…），不重算標記，
+        省下約九條查詢；之後的操作比較時仍是跟舊標記比，不會漏掉提示。"""
         self.confirm = None
         loop = asyncio.get_running_loop()
         started = loop.time()
@@ -520,7 +524,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
 
         async def perform() -> tuple[str | None, str | None, tuple | None]:
             try:
-                text, prepared = await self.run(self._work_then_prepare, work, target)
+                text, prepared = await self.run(self._work_then_prepare, work, target, track_progress)
                 return f"{prefix}{clean_message(text)}", None, prepared
             except Exception as exc:
                 if not isinstance(exc, GameError):
@@ -541,11 +545,11 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         await self.refresh(interaction, cut(notice, 1500), budget=DIRECT_REPLY_SECONDS - (loop.time() - started),
                            prepared=prepared, metric="操作", started=clock_started)
 
-    def _work_then_prepare(self, work: Callable[[], str], page: str) -> tuple[str, tuple]:
+    def _work_then_prepare(self, work: Callable[[], str], page: str, track_progress: bool = True) -> tuple[str, tuple]:
         """在執行緒中：執行操作後接著讀取新畫面（一次排隊；原本操作與重讀各排隊一次）。
         操作失敗時例外直接往外丟（不讀取畫面）；讀取頁面需要的面板狀態都不會在操作之後才改變。"""
         text = work()
-        if page != "welcome":
+        if page != "welcome" and track_progress:
             text += self._progress_note()
         return text, (page, self._prepare(getattr(self, f"_load_{page}"), page != "welcome"))
 
@@ -649,13 +653,15 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         for q in p["presets"]:
             if q <= p["max"]:
                 async def pick(interaction, q=q):
-                    await self.act(interaction, lambda: p["run"](q), keep=p.get("keep", False))
+                    await self.act(interaction, lambda: p["run"](q), keep=p.get("keep", False),
+                                   track_progress=p.get("track_progress", True))
 
                 self.button(f"{p.get('verb', '×')} {q}", pick, row=row, style=discord.ButtonStyle.primary)
 
         async def custom(interaction):
             async def submitted(modal_interaction, q):
-                await self.act(modal_interaction, lambda: p["run"](q), keep=p.get("keep", False))
+                await self.act(modal_interaction, lambda: p["run"](q), keep=p.get("keep", False),
+                               track_progress=p.get("track_progress", True))
 
             await interaction.response.send_modal(QuantityModal(p["label"], "數量", p["max"], submitted))
 
@@ -710,13 +716,15 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
     def _load_main(self):
         svc, pid = self.svc, self.player_id
         status = svc.get_farm_status(pid)
+        home = svc.get_home_group(pid)
         return {
             "status": status,
             "image": self._farm_image(status),
             "animals": svc.animal_status(pid),
             "orders": svc.craft_orders(pid),
-            "home": svc.get_home_group(pid),
+            "home": home,
             "events": svc.active_events(),
+            "news": svc.daily_news(home[0]) if home else None,  # 所屬群組昨天的日報（同一天會快取）
         }
 
     def _build_main(self, d):
@@ -770,6 +778,9 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         if not any(p.state != PlotState.EMPTY for p in s.plots):
             hints.append("🌱 農田都空著，到「🌱 農田」選作物種下吧！")
         e.add_field(name="📋 待辦", value="\n".join(hints) or "一切就緒 👍", inline=False)
+        news = d.get("news")
+        if news and not news["empty"]:
+            e.add_field(name=f"📰 昨日農場日報（{home[1]}）", value=news["text"], inline=False)
         e.set_footer(text="面板只有你看得到；15 分鐘後逾時，可再輸入 /farm 開啟。")
 
         self.button("全部澆水", self._water_all, emoji="💧", style=discord.ButtonStyle.primary, row=0,
@@ -827,13 +838,13 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
     # ---------- 一鍵操作（服務層在同一筆交易中整批完成） ----------
 
     async def _water_all(self, interaction):
-        await self.act(interaction, lambda: self.svc.water_all(self.player_id).message)
+        await self.act(interaction, lambda: self.svc.water_all(self.player_id).message, track_progress=False)
 
     async def _harvest_all(self, interaction):
         await self.act(interaction, lambda: self.svc.harvest_all(self.player_id).message)
 
     async def _clear_all(self, interaction):
-        await self.act(interaction, lambda: self.svc.clear_all_withered(self.player_id).message)
+        await self.act(interaction, lambda: self.svc.clear_all_withered(self.player_id).message, track_progress=False)
 
     # ======================================================================
     # 農田
@@ -863,11 +874,12 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
                  else f"{c.name}（稀有種子，持有 {seeds.get(c.code, 0)}）", c.code,
                  f"⏱️ {long_duration(c.grow_seconds)}｜🧺 收成 ×{c.harvest_quantity} {c.name}｜🏷️ {c.sell_price} 金／個",
                  crop_emoji(c.code))
-                for c in d["crops"] if c.shop_buyable or seeds.get(c.code)
+                for c in d["crops"] if (c.shop_buyable or seeds.get(c.code)) and c.in_season  # 不在季節的不列出
             ]
 
             async def plant(interaction, code):
-                await self.act(interaction, lambda: self.svc.plant_all(self.player_id, code).message)
+                await self.act(interaction, lambda: self.svc.plant_all(self.player_id, code).message,
+                               track_progress=False)
 
             self.select(f"🌱 選擇作物，種到 {empty} 格空地…", options, plant, row=0)
         counts = {st: sum(1 for p in s.plots if p.state == st) for st in PlotState}
@@ -1013,6 +1025,8 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
             f"　🎒 持有 **{held.get('seed:' + c.code, 0)}**\n"
             f"　⏱️ {long_duration(c.grow_seconds)}　🧺 收成 ×{c.harvest_quantity} {crop_emoji(c.code)}{c.name}"
             f"　🏷️ 售價 {c.sell_price} 金／個"
+            + (f"\n　{c.season_text}（{'現在可以種' if c.in_season else '現在不能種，種子可以先買'}）"
+               if c.season_text else "")
             for c in d["crops"]
         ]
         consumables, tools = [], []
@@ -1068,7 +1082,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
                     "key": key, "label": f"{crop_emoji(code)} {crop.name}種子",
                     "price_text": f"每顆 {crop.seed_price} 金", "verb": "買",
                     "max": max(1, min(balance.MAX_TRADE_QUANTITY, d["gold"] // crop.seed_price)),
-                    "presets": (1, 5, 10), "keep": True, "run": buy_seed,
+                    "presets": (1, 5, 10), "keep": True, "run": buy_seed, "track_progress": False,
                 }
             else:
                 name, price, item_kind, _desc, _a = balance.ITEMS[code]
@@ -1085,7 +1099,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
                     self.picker = {
                         "key": key, "label": label, "price_text": f"每個 {price} 金", "verb": "買",
                         "max": max(1, min(balance.MAX_TRADE_QUANTITY, d["gold"] // price)), "presets": (1, 5, 10),
-                        "keep": True, "run": buy_item,
+                        "keep": True, "run": buy_item, "track_progress": False,
                     }
             await self.refresh(interaction)
 
@@ -1125,7 +1139,8 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
             golden = "｜".join(f"{balance.QUALITIES[q]} **{p[q]['golden']}**" for q in balance.QUALITIES)
             variant = "｜".join(f"{balance.QUALITIES[q]} **{p[q]['variant']}**" for q in balance.QUALITIES)
             blocks.append(
-                f"{crop_emoji(c['code'])} **{c['name']}**　種子 {c['seed_price']} 金\n"
+                f"{crop_emoji(c['code'])} **{c['name']}**　種子 {c['seed_price']} 金"
+                f"{'　' + c['season_text'] if c['season_text'] else ''}\n"
                 f"　⏱️ {long_duration(c['grow_seconds'])}　🧺 收成 ×{c['harvest_quantity']} "
                 f"{crop_emoji(c['code'])}{c['name']}\n"
                 f"　🏷️ 一般：{normal}\n"
@@ -2049,7 +2064,11 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
     @staticmethod
     def _area_status(a, trip) -> str:
         if not a["unlocked"]:
+            if a.get("needs_ruins") and not a.get("ruins_open"):
+                return f"🔒 所屬群組修復遺跡後開放（Lv.{a['unlock_level']} 起）"
             return f"🔒 農場 Lv.{a['unlock_level']} 解鎖"
+        if a.get("needs_ruins"):  # 額外的探索：不受一般探險影響，只看自己的冷卻
+            return "✅ 可以探索（不佔一般探險，立即拿到獎勵）" if a["ready"] else f"⏳ {ts(a['next_at'])}可再探索"
         if a["exploring"]:
             return "📦 已經回來了，等你領取獎勵" if trip["finished"] else f"🧭 探險中，{ts(trip['ends_at'])}回來"
         if trip:
@@ -2086,13 +2105,17 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
             f"👨‍🌾 **{d['player_name']}**　⭐ 農場 **Lv {d['level']}**",
             "探索三個區域收集素材、稀有種子與假幣，素材可以製作自動化機器（「🏭 加工」→「🔧 機器」）。\n"
             "一次只能去一個區域；出發後要等探險時間結束才會回來，回來後領取獎勵才能再出發。\n"
-            "素材、假幣與稀有種子放進獨立的素材背包，不佔倉庫。",
+            "素材、假幣與稀有種子放進獨立的素材背包，不佔倉庫。\n"
+            "🏛️ 古代遺跡要所屬群組的成員一起捐素材修復；修好後每天可以**額外**探索一次（不佔上面的一次一趟）。",
             self._trip_text(trip),
         ))
         for a in d["areas"]:
             e.add_field(
                 name=f"{a['emoji']} {a['name']}（Lv.{a['unlock_level']}）", inline=False,
-                value=f"{self._area_status(a, trip)}　🕒 探險 {long_duration(a['duration_seconds'])}\n"
+                value=f"{self._area_status(a, trip)}　🕒 "
+                      + ("每天一次、立即拿到獎勵" if a["needs_ruins"]
+                         else f"探險 {long_duration(a['duration_seconds'])}")
+                      + "\n"
                       f"🪨 主要素材：{'、'.join(a['common'][:3])}",
             )
         for a in d["areas"]:
@@ -2105,6 +2128,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         self._claim_button(trip, row=1)
         self.nav("探索紀錄", "cave_log", emoji="📖", row=1)
         self.nav("機器", "machines", emoji="🔧", row=1)
+        self.nav("修復遺跡", "ruins", emoji="🏛️", row=1)
         self.nav("返回主選單", "main", emoji="↩️", row=1)
         self.attach_image(e, d["image"])
         return e
@@ -2143,7 +2167,8 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
                 return
             self.exploring = True
             try:
-                await self.act(interaction, lambda: self._explore(a["code"]), page="cave")
+                await self.act(interaction, lambda: self._explore(a["code"]),
+                               page="cave_result" if a.get("needs_ruins") else "cave")
             finally:
                 self.exploring = False
 
@@ -2152,6 +2177,8 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         else:
             if not a["unlocked"]:
                 label = "尚未解鎖"
+            elif a.get("needs_ruins"):
+                label = "探索遺跡" if a["ready"] else "冷卻中"
             elif a["exploring"]:
                 label = "探險中"
             elif trip:
@@ -2166,6 +2193,9 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
         return e
 
     def _explore(self, code: str) -> str:
+        if exploration.AREAS[code].needs_ruins:  # 古代遺跡：立即拿到獎勵，直接顯示探索結果
+            self.cave_result = self.svc.explore_ruins(self.player_id)
+            return f"{self.cave_result['emoji']} 探索了{self.cave_result['area_name']}！"
         r = self.svc.explore(self.player_id, code)
         return (f"{r['emoji']} 出發前往{r['area_name']}！探險 {long_duration(r['duration_seconds'])}，"
                 f"{ts(r['ends_at'])}回來後記得領取獎勵。")
@@ -2189,8 +2219,12 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, d
             f"🌰 稀有種子：{'🎉 ' + seeds if seeds else '沒有'}\n"
             f"🪙 假幣：{coins}\n"
             f"🎁 特殊事件：{'、'.join(r['events']) if r['events'] else '沒有'}"
-            + ("\n🌟 高級探索" if r["advanced"] else ""),
-            "🧭 獎勵已放進背包，現在可以再出發探險了！",
+            + ("\n🌟 高級探索" if r["advanced"] else "")
+            + (f"\n{r['guardian_note']}" if r.get("guardian_note") else ""),
+            (f"🏛️ 遺跡裡多找到 {r['extra_rolls']} 份"
+             + (f"，守護者已被打倒再多 {r['bonus_rolls']} 份" if r["bonus_rolls"] else "")
+             + f"！獎勵已放進背包，{ts(r['next_at'])}可再探索遺跡（一般探險不受影響）。")
+            if r.get("instant") else "🧭 獎勵已放進背包，現在可以再出發探險了！",
         ))
         self.nav("返回冒險介面", "cave", emoji="🔄", row=0, style=discord.ButtonStyle.primary)
         self.nav("返回主選單", "main", emoji="🏠", row=0)
@@ -2390,7 +2424,8 @@ def help_embed() -> discord.Embed:
         "自動加工機與稀有作物培育器。"))
     e.add_field(name="🎣 釣魚", inline=False, value=(
         "總覽「🎣 釣魚」→ 先到「🛒 釣具商店」買魚竿、魚線、魚餌（商店也有「🎣 釣具商店」分頁）→「開始釣魚」。"
-        "魚上鉤後在時限內按「拉竿」，再依 💬 提示收線／放線／等待，把距離拉到 0 就釣起來了。"
+        "魚上鉤後在時限內按「拉竿」，再依 💬 提示收線／放線／等待，魚竄向一邊要壓同方向；"
+        "連續收線張力會越來越高，魚累了才拉得上岸。偶爾會有人機確認，答錯只會暫停釣魚。"
         "稀有度只影響拉扯難度，基礎成功率都一樣；釣到的魚放進魚簍，可以出售或「📢 分享到群組」。"))
     e.add_field(name="🐉 世界 Boss", inline=False, value=(
         "伺服器的共同活動：總覽「🐉 世界Boss」→「📦 捐獻物資」把農作物、漁獲、素材或加工品捐給前線，"

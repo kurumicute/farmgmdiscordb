@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.clock import TAIPEI_TZ, Clock, SystemClock
 from app.db import txcache
 from app.db.models import CropType, Farm, FarmEffect
-from app.game import balance, exploration, genetics, pets, rules, special_shop
+from app.game import balance, exploration, genetics, pets, rules, seasons, special_shop
 from app.game import events as event_rules
 from app.game.errors import (
     AlreadyExistsError,
@@ -72,8 +72,10 @@ from app.services.dto import (
 )
 
 
-def _crop_info(crop: CropType) -> CropInfo:
+def _crop_info(crop: CropType, now: datetime | None = None) -> CropInfo:
     return CropInfo(
+        season_text=seasons.describe(crop.seasons, crop.hour_start, crop.hour_end),
+        in_season=now is None or seasons.available(crop.seasons, crop.hour_start, crop.hour_end, now),
         code=crop.code,
         name=crop.name,
         seed_price=crop.seed_price,
@@ -117,6 +119,8 @@ class GameService:
         self._explore_rng = explore_rng or random.SystemRandom().random
         # 貓的收成加成：小數部分是否多 1 個（回傳 [0, 1)）；測試可直接指定 _pet_rng
         self._pet_rng = random.SystemRandom().random
+        # 農場傳聞挖寶（是否挖到、寶藏金額）；和防守判定分開，測試可直接指定 _rumor_rng
+        self._rumor_rng = random.SystemRandom().random
         self._context_group_id: int | None = None
 
     def in_group_context(self, group_id: int | None) -> "GameService":
@@ -249,8 +253,12 @@ class GameService:
                                                   lambda: groups_repo.is_member(session, ctx, farm.player_id)):
                 ctx = None
             kw["context_group_id"] = ctx
+        # 一鍵操作中，不會計入任務或競賽的交易紀錄整批寫入（計分需要交易紀錄的 ID，才逐筆寫）
+        defer = txcache.in_bulk(session) and not activity.may_score(
+            session, farm, event.value, kw["context_group_id"], now)
         tx = tx_repo.add(
             session,
+            defer=defer,
             farm_id=farm.id,
             event_type=event.value,
             description=description,
@@ -563,7 +571,8 @@ class GameService:
 
     def get_market_prices(self) -> list[CropInfo]:
         with self._transaction() as session:
-            return [_crop_info(c) for c in crops_repo.list_all(session, active_only=True)]
+            now = self._clock.now()
+            return [_crop_info(c, now) for c in crops_repo.list_all(session, active_only=True)]
 
     def get_inventory(self, player_id: int) -> Inventory:
         with self._transaction() as session:
@@ -615,6 +624,7 @@ class GameService:
         with self._transaction() as session:
             farm = self._locked_farm(session, player_id)
             crop = self._crop(session, crop_key, require_active=True)
+            self._check_season(crop)
             plot = farms_repo.get_plot(session, farm.id, plot_number, for_update=True)
             if plot is None:
                 raise NotFoundError(f"沒有第 {plot_number} 格土地。")
@@ -631,6 +641,13 @@ class GameService:
             return ActionResult(
                 f"已在第 {plot_number} 格種下{crop.name}{label}，{tail}", farm.gold, item_code=item, quantity=1
             )
+
+    def _check_season(self, crop: CropType) -> None:
+        """季節／時段限定的作物只能在那段期間種下（種下後過了季節照樣會長大、收成）。"""
+        now = self._clock.now()
+        if not seasons.available(crop.seasons, crop.hour_start, crop.hour_end, now):
+            limit = seasons.describe(crop.seasons, crop.hour_start, crop.hour_end)
+            raise ValidationError(f"{crop.name}是{limit}的作物，現在不能種植（{seasons.now_text(now)}）。")
 
     def _plant(self, session: Session, farm: Farm, plot, crop: CropType, *, source: str = "") -> tuple[str, int | None]:
         """在已鎖定、空著的土地種下一顆（種子由呼叫端扣除）。回傳 (品質標籤, 自動澆水後的生長秒數或 None)。"""
@@ -678,6 +695,7 @@ class GameService:
         stock = {
             c: inventory_repo.get_quantity(session, farm.id, rules.seed_item_code(c.code), "normal", "none")
             for c in crops_repo.list_all(session, active_only=True)
+            if seasons.available(c.seasons, c.hour_start, c.hour_end, self._clock.now())  # 不在季節的種子不種
         }
         planted: dict[str, int] = {}
         with self._bulk(session):
@@ -869,6 +887,7 @@ class GameService:
         with self._transaction() as session:
             farm = self._locked_farm(session, player_id)
             crop = self._crop(session, crop_key, require_active=True)
+            self._check_season(crop)
             plots = self._plots_in_state(session, farm, PlotState.EMPTY)
             if not plots:
                 raise ValidationError("沒有空地可以種植。")
@@ -1459,7 +1478,7 @@ class GameService:
             for crop in crops_repo.list_all(session):
                 rows.append(
                     {
-                        **_crop_info(crop).__dict__,
+                        **_crop_info(crop, self._clock.now()).__dict__,
                         "active": crop.active,
                         "variant_code": crop.variant_code,
                         "variant_name": crop.variant_name,
@@ -1556,7 +1575,7 @@ class GameService:
                 {"crop": crop.code, "before": before, "after": seconds},
                 now,
             )
-            return _crop_info(crop).__dict__
+            return _crop_info(crop, self._clock.now()).__dict__
 
 
 RARE_QUALITIES = ("rare", "legendary")

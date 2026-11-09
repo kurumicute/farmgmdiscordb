@@ -856,6 +856,7 @@
     "explore_grassland": "scenes/explore_grassland.png",
     "explore_forest": "scenes/explore_forest.png",
     "explore_mine": "scenes/explore_mine.png",
+    "explore_ruins": "scenes/explore_ruins.png",
     "world_boss": "scenes/world_boss.png"
   },
   "layering": {

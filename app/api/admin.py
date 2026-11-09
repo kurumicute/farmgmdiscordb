@@ -167,6 +167,8 @@ class CropUpdate(BaseModel):
     grow_seconds: int
     harvest_quantity: int
     sell_price: int
+    # 季節／時段限定 {"seasons": [...], "hour_start": 18, "hour_end": 6}；沒送 = 不變更（網站表單目前沒有這個欄位）
+    limits: dict | None = None
 
 
 class CropCreate(CropUpdate):
@@ -253,6 +255,8 @@ class FishUpdate(BaseModel):
     difficulty: int
     description: str = Field(default="", max_length=200)
     sort_order: int = 0
+    required_baits: list[str] | None = Field(default=None, max_length=10)  # 沒送 = 不變更；[] = 任何魚餌
+    limits: dict | None = None  # 季節／時段限定，格式同作物
 
 
 class FishCreate(FishUpdate):

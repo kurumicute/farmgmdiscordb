@@ -106,11 +106,10 @@ def test_shop_is_fixed_file():
 
 
 def test_casino_and_explore_scenes():
-    from app.game import exploration
 
     assert same_scene(farm_image.casino_png(), "scenes/casino.png")
     assert len(farm_image.casino_png()) < (ASSETS / "scenes/casino.png").stat().st_size  # 原檔沒有壓縮好
-    for code in exploration.AREA_ORDER:  # 每個探險區域都有自己的圖
+    for code in ("grassland", "forest", "mine", "ruins"):  # 每個探險區域都有自己的圖
         assert same_scene(farm_image.explore_png(code), f"scenes/explore_{code}.png")
     assert farm_image.explore_png("unknown_area") is None
 

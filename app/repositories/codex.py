@@ -14,11 +14,27 @@ CODEX_EVENTS = frozenset({"harvest", "steal", "collect_animal", "craft_collect"}
 QUALITY_RANK = {q: i for i, q in enumerate(QUALITY_CODES)}
 
 
+def _flush_deferred(session: Session, pending: dict) -> None:
+    for (farm_id, item_code), (quantity, rank, first_at) in pending.items():
+        _upsert(session, farm_id, item_code, quantity, rank, first_at)
+
+
 def register(session: Session, farm_id: int, item_code: str, quantity: int, quality: str | None,
              now: datetime) -> None:
+    """一鍵操作中相同的物品合併成一次寫入（數量相加、品質取最高，txcache.deferred）。"""
     if quantity <= 0:
         return
     rank = QUALITY_RANK.get(quality or "normal", 0)
+    pending = txcache.deferred(session, _flush_deferred, dict)
+    if pending is None:
+        _upsert(session, farm_id, item_code, quantity, rank, now)
+        return
+    old = pending.get((farm_id, item_code))
+    pending[(farm_id, item_code)] = (quantity, rank, now) if old is None else (
+        old[0] + quantity, max(old[1], rank), min(old[2], now))
+
+
+def _upsert(session: Session, farm_id: int, item_code: str, quantity: int, rank: int, now: datetime) -> None:
     t = FarmCodexEntry.__table__
     stmt = insert(t).values(farm_id=farm_id, item_code=item_code, quantity=quantity, best_quality=rank, first_at=now)
     stmt = stmt.on_conflict_do_update(

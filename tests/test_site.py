@@ -91,7 +91,7 @@ def test_guide_follows_game_settings_without_player_data(service, session_factor
     assert sum(q["chance_pct"] for q in guide["qualities"]) == 100
     assert guide["recipes"] and guide["defenses"] and guide["items"]
     x = guide["exploration"]
-    assert [a["name"] for a in x["areas"]] == ["青青草原", "古老森林", "神秘礦坑"]
+    assert [a["name"] for a in x["areas"]] == ["青青草原", "古老森林", "神秘礦坑", "古代遺跡"]
     assert {m["name"] for m in x["machines"]} == {"種子製造機", "自動收割機", "自動加工機", "稀有作物培育器"}
     assert all(sum(t["chance_pct"] for t in x["reward_types"][k]) == 100 for k in ("normal", "advanced"))
     assert x["areas"][0]["seeds"] == [{"name": "琥珀瓜種子", "min_level": 1}] and x["max_level"] == 13
@@ -213,3 +213,27 @@ def test_guide_has_pets(session_factory):
     wheat = next(c for c in p["cat_odds"] if c["name"] == "小麥")
     assert len(wheat["levels"]) == pets.max_level() + 1
     assert wheat["levels"][-1] == pets.odds_text(wheat["quantity"], pets.bonus_pct(pets.max_level()))
+
+
+def test_guide_has_ruins_news_seasons_and_fish_limits(session_factory, engine):
+    """古代遺跡與守護者、日報傳聞、季節限定、魚的指定魚餌與時段：/api/guide 提供，頁面有對應區塊。"""
+    from app.game import news, ruins
+    from tests.test_seasons import apply_defaults
+
+    apply_defaults(engine)
+    c = client(session_factory)
+    page = c.get("/").text
+    for slot in ('id="ruins"', 'id="news"', 'id="g-ruins-stages"', 'id="g-guardian"', 'id="g-news"',
+                 'id="g-season-now"', "古代遺跡與守護者", "農場日報與傳聞"):
+        assert slot in page
+    g = c.get("/api/guide").json()
+    assert [s["name"] for s in g["ruins"]["stages"]] == [s.name for s in ruins.STAGES]
+    assert g["ruins"]["guardian"]["hp_base"] == ruins.GUARDIAN_HP_BASE and g["ruins"]["unlock_level"] == 4
+    assert g["news"]["treasure_gold"] == list(news.TREASURE_GOLD) and g["seasons"]["current"] in "春夏秋冬"
+    crops = {c["name"]: c for c in g["crops"]}
+    assert crops["小麥"]["season_text"] == "" and crops["玉米"]["season_text"] == "🌸☀️春、夏季限定"
+    fish = {f["name"]: f for f in g["fishing"]["fish"]}
+    assert fish["鰻魚"]["limit_text"] == "🕒 18:00–06:00" and fish["鯽魚"]["baits"] == []
+    assert fish["霜龍魚"]["baits"] == ["🐉 龍涎香餌"] and "冬季限定" in fish["霜龍魚"]["limit_text"]
+    areas = {a["name"]: a for a in g["exploration"]["areas"]}
+    assert areas["古代遺跡"]["needs_ruins"] and not areas["青青草原"]["needs_ruins"]

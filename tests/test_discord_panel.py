@@ -5,7 +5,7 @@ import asyncio
 import discord
 import pytest
 from discord import app_commands
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.db.models import Farm, GameTransaction
 from app.discord_bot.commands import FarmCommands, register
@@ -20,7 +20,7 @@ PAGES = ("main", "plots", "backpack", "shop", "prices", "genetics", "sell", "ani
          "cave", "cave_area", "cave_log", "machines", "defense", "steal",
          "board", "rewards", "quests", "history", "group", "log", "help",
          "fishing", "fish_shop", "fish_basket", "fish_codex", "fish_rank",
-         "progress", "codex", "achievements", "titles", "shop_special", "pets")
+         "progress", "codex", "achievements", "titles", "shop_special", "pets", "ruins")
 
 
 def run(coro):
@@ -798,3 +798,65 @@ def test_help_has_official_guild_link():
     e = help_embed()
     assert any(f.name == "💬 官方群組" and OFFICIAL_GUILD_URL in f.value for f in e.fields)
     assert len(e) <= 6000 and len(e.fields) <= 25  # Discord 單一 Embed 的上限
+
+
+def test_ruins_page_donate_with_buttons(cmds, admin, session_factory, monkeypatch):
+    from app.game import ruins
+    from app.repositories import inventory as inventory_repo
+
+    monkeypatch.setattr(ruins, "STAGES", (
+        ruins.Stage("清除碎石", "搬開碎石。", {"stone": 20}),
+        ruins.Stage("修補石柱", "", {"wood": 1}),
+        ruins.Stage("喚醒遺跡核心", "", {"gear": 1}),
+    ))
+    p = make_player(cmds, ALICE)
+    with session_factory.begin() as s:
+        farm = s.scalar(select(Farm).where(Farm.player_id == p.panel.player_id))
+        inventory_repo.add(s, farm.id, "stone", 30)
+    p.click("山洞")
+    assert "古代遺跡" in p.text and "所屬群組修復遺跡後開放" in p.text
+    p.click("修復遺跡")
+    assert "古代遺跡" in p.text and "清除碎石" in p.text and "0/20" in p.text and "（背包 30）" in p.text
+    p.choose("選擇要捐的素材", "stone")
+    assert "捐 石塊（最多 20）" in p.text
+    p.click("捐 10")
+    assert "捐出 石塊 ×10" in p.text and "10/20" in p.text and "累計捐了 **10**" in p.text
+    p.choose("選擇要捐的素材", "stone")
+    p.click("捐 10")
+    assert "下一階段" in p.text and "修補石柱" in p.text
+
+
+
+def test_ruins_guardian_attack_from_panel(cmds, admin, session_factory, clock, monkeypatch):
+    from app.game import ruins
+    from app.repositories import inventory as inventory_repo
+
+    monkeypatch.setattr(ruins, "STAGES", (
+        ruins.Stage("清除碎石", "", {"stone": 1}),
+        ruins.Stage("修補石柱", "", {"wood": 1}),
+        ruins.Stage("喚醒遺跡核心", "", {"gear": 1}),
+    ))
+    p = make_player(cmds, ALICE)
+    pid = p.panel.player_id
+    with session_factory.begin() as s:
+        farm = s.scalar(select(Farm).where(Farm.player_id == pid))
+        for item, n in (("stone", 1), ("wood", 1), ("gear", 1), ("ancient_core", 30)):
+            inventory_repo.add(s, farm.id, item, n)
+    for item in ("stone", "wood", "gear"):
+        admin.donate_ruins(pid, item, 1)
+    p.go("ruins")
+    assert "修復完成" in p.text and "石像守護者" in p.text and "會在" in p.text
+    clock.advance(4 * 24 * 3600)  # 台灣週一：守護者出現
+    p.go("ruins")
+    assert "本週石像守護者" in p.text and "4,000/4,000" in p.text
+    p.choose("選擇攻擊守護者的素材", "ancient_core")
+    assert "每個 80 傷害，最多 30" in p.text
+    p.click("用 10")
+    assert "造成 **800** 點傷害" in p.text and "3,200/4,000" in p.text
+    with session_factory.begin() as s:
+        s.execute(update(Farm).where(Farm.player_id == pid).values(level=4))
+    p.go("cave")  # 遺跡修好後可以額外探索，立即顯示結果
+    assert "可以探索（不佔一般探險" in p.text
+    p.click("古代遺跡")
+    p.click("探索遺跡")
+    assert "探索結果" in p.text and "遺跡裡多找到" in p.text and "可再探索遺跡" in p.text

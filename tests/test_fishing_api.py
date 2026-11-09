@@ -38,7 +38,7 @@ def catch_one(game, clock, pid):
     clock._now = view["bite_at"]
     view = game.hook_fish(pid, view["id"])
     while view["phase"] == "fighting":
-        state = {k: view[k] for k in ("intent", "tension", "distance", "stamina", "max_stamina", "max_tension")}
+        state = {k: view[k] for k in fishing.POLICY_KEYS}
         view = game.fishing_action(pid, view["id"], fishing.smart_action(state, None, {"reel_power": 10}),
                                    view["turn"])
     return view

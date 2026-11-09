@@ -5,11 +5,13 @@ from datetime import datetime
 from sqlalchemy import and_, case, distinct, func, or_, select, update
 from sqlalchemy.orm import Session
 
+from app.db import catalog_cache
 from app.db.models import (
     Farm,
     FarmFish,
     FarmFishingGear,
     FishingGear,
+    FishingGuard,
     FishingSession,
     FishingSetting,
     FishShare,
@@ -50,7 +52,12 @@ def list_fish_types(session: Session, *, active_only: bool = False) -> list[Fish
     stmt = select(FishType).order_by(FishType.sort_order, FishType.id)
     if active_only:
         stmt = stmt.where(FishType.active)
-    return list(session.scalars(stmt))
+    return catalog_cache.rows(session, ("fish", active_only), lambda: list(session.scalars(stmt)))
+
+
+def get_guard(session: Session, farm_id: int) -> FishingGuard | None:
+    """呼叫端必須已鎖定農場列（同一農場的防腳本狀態依序更新）。"""
+    return session.get(FishingGuard, farm_id)
 
 
 def get_fish_type(session: Session, code: str, *, for_update: bool = False) -> FishType | None:

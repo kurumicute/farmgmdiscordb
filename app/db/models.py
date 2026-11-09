@@ -15,6 +15,7 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    SmallInteger,
     String,
     UniqueConstraint,
     false,
@@ -72,6 +73,9 @@ EVENT_TYPES = (
     "rename_farm",
     "checkin_reward",
     "achievement_reward",
+    "ruins_donate",
+    "ruins_guardian",
+    "rumor_treasure",
 )
 
 QUALITY_CODES = ("normal", "good", "rare", "legendary")
@@ -136,6 +140,11 @@ class CropType(Base):
         CheckConstraint("grow_seconds > 0", name="grow_seconds_positive"),
         CheckConstraint("harvest_quantity > 0", name="harvest_quantity_positive"),
         CheckConstraint("sell_price >= 0", name="sell_price_non_negative"),
+        CheckConstraint(
+            "(hour_start IS NULL) = (hour_end IS NULL) AND (hour_start IS NULL OR "
+            "(hour_start BETWEEN 0 AND 23 AND hour_end BETWEEN 0 AND 23 AND hour_start <> hour_end))",
+            name="hours_valid",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
@@ -152,6 +161,10 @@ class CropType(Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     # false：商店不販售種子（稀有作物，只能探索或培育取得），仍可種植已持有的種子
     shop_buyable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # 季節與時段限定（game/seasons.py；NULL = 不限，Migration 0034）
+    seasons: Mapped[list | None] = mapped_column(JSON)
+    hour_start: Mapped[int | None] = mapped_column(SmallInteger)
+    hour_end: Mapped[int | None] = mapped_column(SmallInteger)
 
 
 class AnimalType(Base):
@@ -433,7 +446,7 @@ class FarmExploration(Base):
     __tablename__ = "farm_explorations"
     __table_args__ = (
         UniqueConstraint("farm_id", "area_code", name="uq_farm_explorations_farm_area"),
-        CheckConstraint("area_code IN ('grassland', 'forest', 'mine')", name="area_code_valid"),
+        CheckConstraint("area_code IN ('grassland', 'forest', 'mine', 'ruins')", name="area_code_valid"),
         CheckConstraint("next_available_at > last_explored_at", name="next_after_last"),
         CheckConstraint("explore_count >= 1", name="explore_count_positive"),
     )
@@ -452,7 +465,7 @@ class ExplorationLog(Base):
 
     __tablename__ = "exploration_logs"
     __table_args__ = (
-        CheckConstraint("area_code IN ('grassland', 'forest', 'mine')", name="area_code_valid"),
+        CheckConstraint("area_code IN ('grassland', 'forest', 'mine', 'ruins')", name="area_code_valid"),
         Index("ix_exploration_logs_farm_explored", "farm_id", "explored_at"),
         Index(
             "uq_exploration_logs_farm_unclaimed", "farm_id", unique=True, postgresql_where=text("claimed_at IS NULL")
@@ -951,6 +964,11 @@ class FishType(Base):
         CheckConstraint("min_price >= 0", name="price_non_negative"),  # 售價不受稀有度限制（Migration 0017）
         CheckConstraint("min_weight_g > 0 AND min_weight_g <= max_weight_g", name="weight_order"),
         CheckConstraint("difficulty BETWEEN 1 AND 5", name="difficulty_range"),
+        CheckConstraint(
+            "(hour_start IS NULL) = (hour_end IS NULL) AND (hour_start IS NULL OR "
+            "(hour_start BETWEEN 0 AND 23 AND hour_end BETWEEN 0 AND 23 AND hour_start <> hour_end))",
+            name="hours_valid",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
@@ -966,6 +984,12 @@ class FishType(Base):
     description: Mapped[str] = mapped_column(String(200), nullable=False, server_default="")
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # 只有裝備這些魚餌（fishing_gear.code 清單）時才釣得到；NULL = 任何魚餌都可以（Migration 0033）
+    required_baits: Mapped[list | None] = mapped_column(JSON)
+    # 季節與時段限定（game/seasons.py；NULL = 不限，Migration 0034）
+    seasons: Mapped[list | None] = mapped_column(JSON)
+    hour_start: Mapped[int | None] = mapped_column(SmallInteger)
+    hour_end: Mapped[int | None] = mapped_column(SmallInteger)
 
 
 class FishingGear(Base):
@@ -1390,3 +1414,100 @@ class FarmFeedback(Base):
     farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     records: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class FishingGuard(Base):
+    """釣魚防腳本狀態（每座農場一列，第一次拋竿時建立）：距離上次人機確認的拋竿次數、可疑分數、題目與暫停時間。
+    規則在 game/fishing.py（GUARD_*）；只影響能不能拋竿，不影響資產。"""
+
+    __tablename__ = "fishing_guards"
+    __table_args__ = (
+        CheckConstraint("casts_since_check >= 0 AND check_after > 0 AND suspicion >= 0", name="counters_valid"),
+    )
+
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True)
+    casts_since_check: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    check_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    suspicion: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    challenge: Mapped[dict | None] = mapped_column(JSON)  # {"answer": 代碼, "options": [代碼, …]}
+    challenge_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consecutive_failures: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    failed_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    passed_total: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+
+class GroupRuins(Base):
+    """群組的古代遺跡：修復階段（0–3，3 = 修復完成）與目前階段已捐的素材 {代碼: 數量}。規則在 game/ruins.py。"""
+
+    __tablename__ = "group_ruins"
+    __table_args__ = (
+        CheckConstraint("stage BETWEEN 0 AND 3", name="stage_valid"),
+        CheckConstraint("(stage = 3) = (completed_at IS NOT NULL)", name="completed_consistency"),
+    )
+
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    stage: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    progress: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    guardian_settled: Mapped[date | None] = mapped_column(Date)  # 守護者已結算到哪一週（台灣週一）
+    collapsed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 最近一次崩壞的時間
+
+
+class RuinsContribution(Base):
+    """每座農場對群組遺跡累計捐獻的素材數量（修復貢獻排行、修復完成時發稱號）。"""
+
+    __tablename__ = "ruins_contributions"
+    __table_args__ = (CheckConstraint("quantity >= 0", name="quantity_non_negative"),)
+
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True)
+    quantity: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class RuinsGuardian(Base):
+    """群組每週一隻的遺跡守護者（week_start 是台灣時間週一）：HP、累計傷害與被打倒的時間。"""
+
+    __tablename__ = "ruins_guardians"
+    __table_args__ = (
+        CheckConstraint("hp_max > 0", name="hp_positive"),
+        CheckConstraint("damage >= 0", name="damage_non_negative"),
+    )
+
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    hp_max: Mapped[int] = mapped_column(Integer, nullable=False)
+    damage: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    defeated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RuinsGuardianHit(Base):
+    """每座農場每週對守護者造成的傷害（排行用）。"""
+
+    __tablename__ = "ruins_guardian_hits"
+    __table_args__ = (CheckConstraint("damage >= 0", name="damage_non_negative"),)
+
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True)
+    damage: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
+class RumorDig(Base):
+    """在日報傳聞的農場挖寶：每座農場每天（傳聞所屬的日報日期）只能挖一次；寶藏每個群組每天只會被挖到一次。"""
+
+    __tablename__ = "rumor_digs"
+    __table_args__ = (
+        CheckConstraint("gold >= 0 AND (found OR gold = 0)", name="gold_valid"),
+        Index("uq_rumor_digs_group_day_found", "group_id", "day", unique=True, postgresql_where=text("found")),
+    )
+
+    farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), primary_key=True)
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    target_farm_id: Mapped[int] = mapped_column(ForeignKey("farms.id", ondelete="CASCADE"), nullable=False)
+    found: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    gold: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

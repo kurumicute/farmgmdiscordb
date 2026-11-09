@@ -136,8 +136,12 @@
       : "目前沒有開放種植的作物");
     fillRows("g-crops", g.crops.length
       ? g.crops.map((c) => [c.name, c.shop_buyable ? num.format(c.seed_price) : "不販售（探索／培育）",
-        duration(c.grow_seconds), `×${c.harvest_quantity}`, num.format(c.sell_price), c.variant_name])
-      : [["目前沒有開放種植的作物", "", "", "", "", ""]]);
+        duration(c.grow_seconds), `×${c.harvest_quantity}`, num.format(c.sell_price), c.variant_name,
+        c.season_text ? `${c.season_text}${c.in_season ? "（現在可種）" : ""}` : "四季"])
+      : [["目前沒有開放種植的作物", "", "", "", "", "", ""]]);
+    if (g.seasons) setText("g-season-now", `現在是${g.seasons.current}季`);
+    if (g.ruins) renderRuins(g.ruins);
+    if (g.news) renderNews(g.news);
     fillRows("g-qualities", g.qualities.map((q) => [q.name, pct(q.chance_pct), mul(q.price_mul)]));
     setText("g-level-note", `農場每升 1 級，有 ${pct(g.level_bonus_pct)} 機率從普通升到較高品質（最多 ${pct(g.level_bonus_max_pct)}）。`);
     fillRows("g-mutations", g.mutations.map((m) => [m.name, pct(m.chance_pct), m.effect]));
@@ -288,6 +292,33 @@
       : [["目前沒有啟用中的排名獎勵", "", "", "", ""]]);
   }
 
+  // 古代遺跡：修復階段、額外探索與守護者（固定規則）
+  function renderRuins(r) {
+    setText("g-ruins-level", `Lv.${r.unlock_level}`);
+    setText("g-ruins-cooldown", `冷卻 ${duration(r.cooldown_seconds)}`);
+    setText("g-ruins-extra", `${r.extra_rolls[0]}–${r.extra_rolls[1]}`);
+    setText("g-ruins-title", r.title);
+    fillRows("g-ruins-stages", r.stages.map((st, i) => [`${i + 1}. ${st.name}`,
+      st.materials.map((m) => `${m.name} ×${num.format(m.quantity)}`).join("、"), st.description]));
+    const gd = r.guardian;
+    const dmg = Object.entries(gd.damage).map(([rarity, d]) => `${rarity}素材每個 ${d}`).join("、");
+    $("g-guardian").replaceChildren(...[
+      `修好後的下一個週一（台灣時間）起，每週出現一隻${gd.name}：HP ${num.format(gd.hp_base)}，伺服器每多一座農場 +${num.format(gd.hp_per_member)}（最多 ${num.format(gd.hp_max)}），本週第一次受到傷害時固定。`,
+      `在修復遺跡頁選素材攻擊：${dmg} 傷害（假幣不行）；每次探索遺跡也會自動造成 ${gd.expedition_damage} 傷害。`,
+      `打倒後當週每次探索遺跡多 ${gd.bonus_rolls} 份獎勵；整週都沒打倒，遺跡崩塌回第三階段，要重新捐核心素材才能再進去。`,
+    ].map((t) => { const li = document.createElement("li"); li.textContent = t; return li; }));
+  }
+
+  // 農場日報與傳聞寶藏（固定規則）
+  function renderNews(n) {
+    $("g-news").replaceChildren(...[
+      `打開 /farm，總覽最下方的「📰 昨日農場日報」會刊出所屬伺服器成員昨天的大事：銷售冠軍、稀有突變、偷菜、防守、稀有魚、遺跡進度與守護者、賭場（最多 ${n.max_headlines} 條）。昨天完全沒有動靜就不顯示。`,
+      "日報只在你自己的面板裡顯示，Bot 不會發訊息到頻道，也沒有額外的按鈕。",
+      `約 ${n.rumor_chance_pct}% 的日子最後會多一條「🗺️ 傳聞：某座農場的田底下埋了寶藏」，約 ${n.rumor_true_pct}% 是真的。`,
+      `當天偷那座農場的菜成功時會順手挖一次（每人每天一次）；傳聞是真的就有 ${n.dig_chance_pct}% 機率挖到 ${num.format(n.treasure_gold[0])}–${num.format(n.treasure_gold[1])} 金幣，寶藏只有第一個挖到的人拿得到，隔天的日報會報導是誰挖到的。`,
+    ].map((t) => { const li = document.createElement("li"); li.textContent = t; return li; }));
+  }
+
   // 山洞冒險與機器：區域、抽獎類型機率、素材、機器配方、培育配方與等級解鎖
   function renderExploration(x) {
     const lv = (n) => `Lv.${n}`;
@@ -300,7 +331,9 @@
     }
     setText("g-fake-coin", `1 個 = ${num.format(x.fake_coin_value)} 金幣`);
     setText("g-material-bag", `上限 ${num.format(x.material_bag_capacity)} 個`);
-    fillRows("g-areas", x.areas.map((a) => [`${a.emoji} ${a.name}`, lv(a.unlock_level), duration(a.duration_seconds),
+    fillRows("g-areas", x.areas.map((a) => [`${a.emoji} ${a.name}`,
+      a.needs_ruins ? `${lv(a.unlock_level)}（伺服器修好遺跡後）` : lv(a.unlock_level),
+      a.needs_ruins ? `額外探索，每 ${duration(a.duration_seconds)}一次` : duration(a.duration_seconds),
       `${a.rolls} 次`, lv(a.advanced_level),
       [names(a.common, a.unlock_level), a.rare.length ? `稀有：${names(a.rare, a.unlock_level)}` : "",
         a.seeds.length ? `種子：${names(a.seeds, a.unlock_level)}` : ""].filter(Boolean).join("；")]));
@@ -365,8 +398,10 @@
       : [["目前沒有販售中的釣具", "", "", "", ""]]);
     fillRows("g-fish-list", f.fish.length
       ? f.fish.map((x) => [`${x.emoji} ${x.name}`, `${x.rarity_emoji} ${x.rarity_name}`, `${x.price[0]}–${x.price[1]}`,
-        `${x.weight[0]}–${x.weight[1]}`, x.description])
-      : [["目前沒有開放的魚", "", "", "", ""]]);
+        `${x.weight[0]}–${x.weight[1]}`,
+        [x.baits && x.baits.length ? `需要${x.baits.join("或")}` : "", x.limit_text || ""].filter(Boolean).join("；") || "隨時",
+        x.description])
+      : [["目前沒有開放的魚", "", "", "", "", ""]]);
   }
 
   async function loadGuide() {

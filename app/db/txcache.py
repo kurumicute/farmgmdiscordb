@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 _KEY = "bulk_cache"
 _READ = "read_cache"
+_WRITES = "deferred_writes"
 
 
 @contextmanager
@@ -23,8 +24,40 @@ def bulk(session: Session) -> Iterator[None]:
     session.info[_KEY] = {}
     try:
         yield
+        flush_writes(session)
+    except BaseException:
+        session.info.pop(_WRITES, None)  # 尚未送出的寫入隨著失敗的操作一起作廢（交易或 SAVEPOINT 會回滾）
+        raise
     finally:
         session.info.pop(_KEY, None)
+
+
+def in_bulk(session: Session) -> bool:
+    return _KEY in session.info
+
+
+# ---------- 延後的寫入：一鍵操作逐格累積，離開 bulk 或下一次查詢前整批送出 ----------
+# 收成 16 格原本要 48 條寫入（背包、交易紀錄、圖鑑各 16 條）；相同物品合併後只要幾條。
+# 安全規則：這筆交易的任何 Session 查詢（do_orm_execute）都會先送出，所以讀到的一定包含已累積的寫入；
+# 失敗時連同交易一起作廢。buffer 由各 repository 定義，flusher 收到自己累積的內容（順序依第一次累積的先後）。
+
+
+def deferred(session: Session, flusher: Callable[[Session, object], None], factory: Callable[[], object]):
+    """取得 flusher 對應的累積內容；不在 bulk() 中時回傳 None（呼叫端照常立即寫入）。"""
+    if _KEY not in session.info:
+        return None
+    _clear_reads(session)  # 與立即寫入相同：讀取快取不能再用
+    buffers = session.info.setdefault(_WRITES, {})
+    if flusher not in buffers:
+        buffers[flusher] = factory()
+    return buffers[flusher]
+
+
+def flush_writes(session: Session) -> None:
+    buffers = session.info.pop(_WRITES, None)
+    if buffers:
+        for flusher, pending in buffers.items():
+            flusher(session, pending)
 
 
 def memo(session: Session, key, compute: Callable[[], object]):
@@ -86,6 +119,7 @@ def _after_flush(session, _flush_context) -> None:
 
 @event.listens_for(Session, "do_orm_execute")
 def _on_execute(state) -> None:
+    flush_writes(state.session)  # 查詢要看得到已累積的寫入（flush 用 core_execute，不會再進到這裡）
     if state.is_insert or state.is_update or state.is_delete:
         _clear_reads(state.session)
 

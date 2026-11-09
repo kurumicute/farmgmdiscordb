@@ -1,6 +1,7 @@
 """pytest 共用設定：使用專用測試資料庫（名稱必須以 _test 結尾），每個測試前清空遊戲資料。"""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import make_url, text
 
 from app.clock import ManualClock
+from app.db.models import Base
 from app.db.session import make_engine, make_session_factory
 from app.game import balance, exploration, fishing
 from app.services.monitor_service import MonitorService
@@ -18,17 +20,38 @@ from app.services.ranking_service import RankingService
 ROOT = Path(__file__).resolve().parents[1]
 GAME_TABLES = (
     "world_boss_reward_claims, world_boss_contributions, world_boss_supplies, world_boss_events, "
+    "rumor_digs, ruins_guardian_hits, ruins_guardians, ruins_contributions, group_ruins, "
     "world_boss_schedules, daily_checkins, farm_codex, farm_achievements, farm_titles, weekly_shop_purchases, "
     "ranking_awards, ranking_settlements, ranking_reward_rules, game_events, "
     "competition_awards, competition_results, competition_contributions, competitions, "
     "quest_claims, quest_contributions, quests, admin_actions, "
     "exploration_logs, farm_explorations, "
-    "fish_shares, farm_fish, fishing_sessions, farm_fishing_gear, fishing_settings, "
+    "fish_shares, farm_fish, fishing_sessions, farm_fishing_gear, fishing_settings, fishing_guards, "
     "craft_orders, farm_animals, farm_buildings, farm_defenses, steal_records, group_members, groups, "
     "gamble_prizes, farm_daily_stats, farm_stats, farm_effects, farm_tools, game_transactions, inventory_items, "
     "farm_feedback, farm_plots, farms, "
     "players, feature_settings"
 )
+_RESET_SQL: dict = {}  # engine → 清空用的 SQL（session 開始時產生一次）
+RESET_TABLES = [t.strip() for t in GAME_TABLES.split(",")] + ["crop_genetics_settings"]
+
+
+def reset_sql(conn) -> str:
+    """每個測試前清空遊戲資料的 SQL：依外鍵順序 DELETE，再把序號歸 1（等同 TRUNCATE … RESTART IDENTITY）。
+
+    原本每次 TRUNCATE 50 多張表約 0.4 秒（每張表都要建立新的資料檔），占整個測試時間的三分之二；
+    每個測試只寫入少量資料，DELETE 只要幾毫秒。新增資料表時加入 GAME_TABLES 即可，順序由 Model 的外鍵決定。"""
+    order = [t.name for t in reversed(Base.metadata.sorted_tables) if t.name in RESET_TABLES]
+    missing = set(RESET_TABLES) - set(order)
+    assert not missing, f"GAME_TABLES 中有不在 Model 裡的資料表：{missing}"
+    seqs = [r[0] for r in conn.execute(text(
+        "SELECT pg_get_serial_sequence(quote_ident(table_name), column_name) FROM information_schema.columns "
+        "WHERE table_schema = current_schema() AND table_name = ANY(:t) "
+        "AND (is_identity = 'YES' OR column_default LIKE 'nextval%')"), {"t": RESET_TABLES})]
+    statements = [f"DELETE FROM {t}" for t in order]
+    if seqs:
+        statements.append("SELECT " + ", ".join(f"setval('{s}', 1, false)" for s in seqs))
+    return "; ".join(statements)
 
 
 class _TestSettings(BaseSettings):
@@ -53,12 +76,15 @@ def engine(database_url):
     cfg.attributes["configure_logger"] = False
     command.upgrade(cfg, "head")
     eng = make_engine(database_url)
+    with eng.connect() as conn:
+        _RESET_SQL[eng] = reset_sql(conn)
     yield eng  # 種類資料在 clean_db 清空遊戲資料後重設（避免殘留資料的外鍵阻擋刪除）
     eng.dispose()
 
 
 # 既有測試以短生長時間撰寫（正式資料由 Migration 0007 設為 2 小時；test_genetics 另外驗證）
-TEST_GROW_SECONDS = {"wheat": 60, "carrot": 180, "tomato": 300, "strawberry": 600}
+TEST_GROW_SECONDS = {"wheat": 60, "carrot": 180, "tomato": 300, "strawberry": 600, "corn": 120, "pumpkin": 240,
+                     "grape": 360, "watermelon": 480}
 # 基準設定：100% 普通、不突變、無等級加成，讓與品質無關的測試結果固定；品質測試會自行調整
 BASELINE_GENETICS = {
     **balance.DEFAULT_GENETICS,
@@ -81,8 +107,8 @@ def set_test_crop_times(eng) -> None:
             conn.execute(
                 text(
                     "UPDATE crop_types SET name = :name, grow_seconds = :g, seed_price = :seed, harvest_quantity = :q, "
-                    "sell_price = :sell, variant_code = :vc, variant_name = :vn, active = true, shop_buyable = true "
-                    "WHERE code = :c"
+                    "sell_price = :sell, variant_code = :vc, variant_name = :vn, active = true, shop_buyable = true, "
+                    "seasons = NULL, hour_start = NULL, hour_end = NULL WHERE code = :c"
                 ),
                 {"name": name, "g": TEST_GROW_SECONDS[code], "seed": seed, "q": qty, "sell": sell, "c": code,
                  "vc": variant_code, "vn": variant_name},
@@ -91,8 +117,8 @@ def set_test_crop_times(eng) -> None:
             conn.execute(
                 text(
                     "UPDATE crop_types SET name = :name, grow_seconds = :g, seed_price = :seed, harvest_quantity = :q, "
-                    "sell_price = :sell, variant_code = :vc, variant_name = :vn, active = true, shop_buyable = false "
-                    "WHERE code = :c"
+                    "sell_price = :sell, variant_code = :vc, variant_name = :vn, active = true, shop_buyable = false, "
+                    "seasons = NULL, hour_start = NULL, hour_end = NULL WHERE code = :c"
                 ),
                 {"name": name, "g": grow, "seed": seed, "q": qty, "sell": sell, "c": code,
                  "vc": variant_code, "vn": variant_name},
@@ -107,10 +133,14 @@ def set_test_crop_times(eng) -> None:
                 text(
                     "UPDATE fish_types SET name = :name, emoji = :emoji, rarity = :rarity, min_price = :pmin, "
                     "max_price = :pmax, min_weight_g = :wmin, max_weight_g = :wmax, difficulty = :diff, "
-                    "description = :desc, sort_order = :sort, active = true WHERE code = :code"
+                    "description = :desc, sort_order = :sort, active = true, "
+                    "required_baits = CAST(:baits AS json), seasons = NULL, hour_start = NULL, hour_end = NULL "
+                    "WHERE code = :code"
                 ),
                 {"name": name, "emoji": emoji, "rarity": rarity, "pmin": pmin, "pmax": pmax, "wmin": wmin,
-                 "wmax": wmax, "diff": diff, "desc": desc, "sort": (i + 1) * 10, "code": code},
+                 "wmax": wmax, "diff": diff, "desc": desc, "sort": (i + 1) * 10, "code": code,
+                 "baits": json.dumps(list(fishing.FISH_REQUIRED_BAITS[code]))
+                 if code in fishing.FISH_REQUIRED_BAITS else None},
             )
         for i, (code, kind, name, emoji, price, level, desc, effects) in enumerate(fishing.INITIAL_GEAR):
             conn.execute(
@@ -146,7 +176,7 @@ def clean_db(request):
         return
     engine = request.getfixturevalue("engine")
     with engine.begin() as conn:
-        conn.execute(text(f"TRUNCATE {GAME_TABLES}, crop_genetics_settings RESTART IDENTITY CASCADE"))
+        conn.exec_driver_sql(_RESET_SQL[engine])
         conn.execute(
             text(
                 "INSERT INTO crop_genetics_settings (version, settings, created_by, created_at) "
@@ -161,7 +191,26 @@ def clean_db(request):
 
     feature_config.reset()
     feature_settings_repo.invalidate()
+    from app.services import news_service
+
+    news_service.clear_cache()  # 日報快取以 (群組, 日期) 為鍵，資料庫重設後要清掉
     yield
+
+
+@pytest.fixture(autouse=True)
+def catalog_cache_off(monkeypatch):
+    """目錄快取預設關閉：許多測試用原生 SQL 改目錄（服務層不會這樣寫）。
+    快取測試自行開啟；設環境變數 FARMGM_TEST_CATALOG_TTL=10 可讓整個測試套件在快取開啟下跑一次。"""
+    from app.db import catalog_cache
+
+    monkeypatch.setattr(catalog_cache, "TTL_SECONDS", float(os.environ.get("FARMGM_TEST_CATALOG_TTL", "0")))
+    catalog_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def fishing_guard_off(monkeypatch):
+    """釣魚防腳本預設關閉（ManualClock 下所有操作間隔都是 0）；防腳本測試自行開啟。"""
+    monkeypatch.setattr(fishing, "GUARD_ENABLED", False)
 
 
 @pytest.fixture(autouse=True)

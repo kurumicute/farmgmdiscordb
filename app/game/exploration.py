@@ -5,7 +5,7 @@
 """
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 TOTAL_BP = 10_000
 
@@ -90,6 +90,8 @@ class Area:
     level_notes: tuple[tuple[int, str], ...]  # 介面顯示的等級解鎖說明
     pools: dict[str, tuple[Drop, ...]] = field(default_factory=dict)
     events: tuple[Event, ...] = ()
+    # True：要所屬群組把古代遺跡修復完成才能進入（game/ruins.py），等級只是另一個門檻
+    needs_ruins: bool = False
 
 
 def _chest(fake: tuple[int, int]) -> Event:
@@ -155,7 +157,41 @@ AREAS: dict[str, Area] = {
         ),
     ),
 }
-AREA_ORDER = ("grassland", "forest", "mine")
+
+
+# 古代遺跡：所屬群組修好後的「額外」探索，不佔一次一趟的名額，按下立即拿到獎勵，冷卻 1 天。
+# 掉落以古老森林為模板（等級門檻配合 Lv.4 開放而提前），每次再多抽 RUINS_EXTRA_ROLLS 份（2026-11-09 使用者要求）。
+RUINS_UNLOCK_LEVEL = 4
+RUINS_COOLDOWN_SECONDS = 24 * 3600
+RUINS_EXTRA_ROLLS = (1, 2)
+
+
+def _ruins_area(forest: Area) -> Area:
+    shift = RUINS_UNLOCK_LEVEL - forest.unlock_level
+
+    def lv(level: int) -> int:
+        return max(RUINS_UNLOCK_LEVEL, level + shift)
+
+    return Area(
+        "ruins", "🏛️", "古代遺跡", "群組合力修復的古代遺跡，藏著和古老森林一樣豐富的資源，而且每次都會多找到一些東西。",
+        unlock_level=RUINS_UNLOCK_LEVEL, duration_seconds=RUINS_COOLDOWN_SECONDS, rolls=forest.rolls,
+        advanced_level=lv(forest.advanced_level),
+        level_notes=((RUINS_UNLOCK_LEVEL, "所屬群組修復完成後即可額外探索（每天一次，不佔一般探險）"),
+                     *((lv(n), text.replace("森林", "遺跡")) for n, text in forest.level_notes)),
+        pools={kind: tuple(replace(d, min_level=lv(d.min_level)) for d in pool) for kind, pool in forest.pools.items()},
+        events=(
+            _chest((2, 5)),
+            Event("rare_find", "🔍 遺跡稀有發現", "在倒塌的石柱下找到前人留下的寶藏。", lv(7), 3, (1, 2),
+                  ("rare", "seed")),
+            Event("ancient_ruins", "👑 失落王座", "遺跡最深處的王座下藏著古代王國的寶藏！", lv(15), 1, (5, 10),
+                  ("rare", "rare")),
+        ),
+        needs_ruins=True,
+    )
+
+
+AREAS["ruins"] = _ruins_area(AREAS["forest"])
+AREA_ORDER = ("grassland", "forest", "mine", "ruins")
 
 
 # ---------- 機器（存在 farm_tools；製作一次永久持有，可啟用／停用） ----------
@@ -202,8 +238,9 @@ INCUBATOR_MAX_QUANTITY = 5
 
 # ---------- 等級解鎖總覽（介面顯示用；實際判斷以上面的 unlock_level／min_level 為準） ----------
 LEVEL_UNLOCKS = (
-    (1, "青青草原"), (2, "草原進階素材"), (3, "種子製造機"), (4, "草原稀有發現"), (5, "古老森林、自動收割機"),
-    (6, "森林進階素材"), (7, "森林稀有發現"), (8, "自動加工機"), (9, "森林高級探索獎勵"), (10, "神秘礦坑"),
+    (1, "青青草原"), (2, "草原進階素材"), (3, "種子製造機"), (4, "草原稀有發現、古代遺跡（群組修復後）"),
+    (5, "古老森林、自動收割機"), (6, "森林進階素材"), (7, "森林稀有發現"), (8, "自動加工機"),
+    (9, "森林高級探索獎勵"), (10, "神秘礦坑"),
     (11, "礦坑進階素材"), (12, "稀有作物培育器"), (13, "礦坑稀有發現"), (14, "高級機器素材"),
     (15, "極稀有探索事件"), (16, "三個區域完整探索獎勵池"),
 )
@@ -291,13 +328,13 @@ def _roll_item(area: Area, kind: str, level: int, rng: Callable[[], float], resu
         kind = FALLBACK[kind]
 
 
-def explore(area_code: str, level: int, rng: Callable[[], float]) -> Result:
-    """產生一次探索的全部獎勵（不檢查解鎖與是否正在探險，由服務層驗證）。"""
+def explore(area_code: str, level: int, rng: Callable[[], float], extra_rolls: int = 0) -> Result:
+    """產生一次探索的全部獎勵（不檢查解鎖與是否正在探險，由服務層驗證）。extra_rolls：額外多抽幾份（守護者獎勵）。"""
     area = AREAS[area_code]
     advanced = is_advanced(area, level)
     bp = REWARD_TYPE_BP["advanced" if advanced else "normal"]
     result = Result(area_code, advanced)
-    for _ in range(area.rolls):
+    for _ in range(area.rolls + max(0, extra_rolls)):
         kind = roll_type(bp, rng())
         if kind == "event":
             events = [e for e in area.events if level >= e.min_level]

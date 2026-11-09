@@ -6,6 +6,9 @@
 - 拉扯中魚的下一個動作會事先顯示（💬 提示），依提示操作（衝刺前放線、平靜時收線）一定能把魚拉上來；
   因此依提示操作的玩家，各稀有度的整體成功率都接近基礎成功率。不看提示亂按才會斷線或讓魚逃走。
 - 魚竿（收線力、穩定度、反應時間）與魚線（最大張力）提高操作容錯；魚餌提高稀有魚的出現機率並縮短等待。
+- 裝備再好也不能只靠一直收線：連續收線的額外張力依魚線上限按比例增加（好魚線一樣會斷）、
+  魚還有力氣時拉到水邊也拉不上來（LAND_STAMINA_RATIO）、魚會隨機往左或右竄，要按同方向壓竿（DODGE_*）。
+- 防腳本（GUARD_*）：定期與操作時間異常時要通過人機確認，答錯暫停釣魚；只影響能不能拋竿，不扣任何資產。
 
 所有數值可由管理員調整（fishing_settings 版本紀錄）；拋竿時把設定與裝備效果存進釣魚 Session，
 之後修改設定不影響已經開始的釣魚。
@@ -38,8 +41,9 @@ GEAR_KINDS = ("rod", "line", "bait")
 GEAR_KIND_NAMES = {"rod": "魚竿", "line": "魚線", "bait": "魚餌"}
 GEAR_KIND_EMOJI = {"rod": "🎋", "line": "🪢", "bait": "🪱"}
 
-ACTIONS = ("reel", "release", "wait")
-ACTION_NAMES = {"reel": "收線", "release": "放線", "wait": "等待"}
+STEER_ACTIONS = ("left", "right")
+ACTIONS = ("reel", "release", "wait", *STEER_ACTIONS)
+ACTION_NAMES = {"reel": "收線", "release": "放線", "wait": "等待", "left": "左壓", "right": "右壓"}
 
 # Session 狀態：casting（等魚上鉤，含咬鉤反應時間）、fighting（拉扯中）；其餘為結束狀態
 ACTIVE_STATUSES = ("casting", "fighting")
@@ -62,9 +66,9 @@ TIRED_RATIO = 0.3  # 體力低於 30% 時，掙扎與衝刺機率減半
 # 玩家操作的效果（距離為負 = 拉近）；spike_mul：這回合魚的動作造成的張力增加倍率（放線時魚線鬆，衝刺不易繃緊）；
 # dash_mul：魚衝刺拉開的距離倍率（等待＝穩住魚竿，魚只能拉走一半距離）
 PLAYER_ACTIONS = {
-    "reel": {"tension": 14, "stamina": -8, "distance": 0, "spike_mul": 1.0, "dash_mul": 1.0},  # 距離由魚竿收線力決定
+    "reel": {"tension": 14, "stamina": -5, "distance": 0, "spike_mul": 1.0, "dash_mul": 1.0},  # 距離由魚竿收線力決定
     "release": {"tension": -30, "stamina": 0, "distance": 6, "spike_mul": 0.5, "dash_mul": 1.0},
-    "wait": {"tension": -12, "stamina": 2, "distance": 0, "spike_mul": 0.8, "dash_mul": 0.5},
+    "wait": {"tension": -12, "stamina": 3, "distance": 0, "spike_mul": 0.8, "dash_mul": 0.5},
 }
 # 魚的動作：張力、距離（依剩餘體力比例縮放 50%–100%）、體力消耗
 FISH_INTENTS = {
@@ -81,6 +85,41 @@ INTENT_TEXT = {
     "strong": "💥 魚正在猛烈掙扎，就要強力衝刺了！",
     "tired": "😮‍💨 魚累了，快收線！",
 }
+
+# 連續收線：每多連續一次，額外增加「魚線最大張力的 N%」（依上限按比例，好魚線也撐不住一直收線）。
+# 放線或壓中方向歸零；等待只會讓連續次數減半次（REEL_STREAK_WAIT_DECAY）。
+REEL_STREAK_TENSION_PCT = 14
+REEL_STREAK_WAIT_DECAY = 0.5
+# 魚的體力要降到這個比例以下才拉得上岸；還有力氣時最多拉到 LAND_GATE_DISTANCE，收線力再高也一樣
+LAND_STAMINA_RATIO = 0.25
+LAND_GATE_DISTANCE = 8
+# 魚竄向一邊：要按同方向壓竿（方向只在畫面文字上，按鈕順序每回合打亂，固定點擊位置的腳本會一直按錯）
+DODGE_BASE_PCT = 15  # 機率 = 基礎 + 魚的強力掙扎機率的一半（稀有度越高越常出現）
+DODGE_HIT = {"tension": -15, "stamina": -10, "distance": -3}  # 壓中：張力下降、魚耗力、拉近一點
+DODGE_MISS = {"tension": 18, "distance": 8}  # 沒壓中（按錯方向或其他操作）：張力暴增、魚被拉遠
+STEER_IDLE_TENSION = 8  # 魚沒有竄動時亂壓竿
+DODGE_TEXT = {"left": "⬅️ 魚猛然往左邊竄！快往同方向壓竿！", "right": "➡️ 魚猛然往右邊竄！快往同方向壓竿！"}
+
+# 防腳本：只影響能不能拋竿，不扣金幣或魚。測試預設關閉（conftest），防腳本測試自行開啟
+GUARD_ENABLED = True
+GUARD_CHECK_EVERY_CASTS = (25, 45)  # 每隔這麼多次拋竿（隨機）要通過一次人機確認
+GUARD_CHALLENGE_SECONDS = 180  # 題目有效時間；過期換一題（不算答錯）
+GUARD_LOCK_MINUTES = 5  # 答錯暫停釣魚；連續答錯加倍
+GUARD_LOCK_MAX_MINUTES = 60
+GUARD_SUSPICION_LIMIT = 6  # 可疑分數到這裡，下一次拋竿就要確認（通過後歸零）
+GUARD_FAST_ACTION_SECONDS = 0.5  # 畫面更新後到按下一步的最短合理時間（含 Discord 來回與人的反應）
+GUARD_FAST_HOOK_SECONDS = 0.6  # 上鉤後多久內拉竿不合理（面板本身就要 0.4 秒後才更新畫面）
+GUARD_REGULAR_MIN_SAMPLES = 6  # 一場至少這麼多次操作才判斷節奏
+GUARD_REGULAR_STDEV_SECONDS = 0.08  # 操作間隔的標準差低於這個值：節奏規律得不像人
+GUARD_GAPS_KEPT = 30  # 一場最多保留幾個操作間隔
+GUARD_SCORE = {"fast_action": 1, "fast_hook": 2, "regular": 3}
+# 題目：只寫中文名稱、按鈕只有 emoji，單純比對文字的腳本答不出來
+GUARD_CREATURES = {
+    "puffer": ("🐡", "河豚"), "tropical": ("🐠", "熱帶魚"), "shrimp": ("🦐", "蝦子"), "crab": ("🦀", "螃蟹"),
+    "octopus": ("🐙", "章魚"), "squid": ("🦑", "魷魚"), "whale": ("🐳", "鯨魚"), "shark": ("🦈", "鯊魚"),
+    "turtle": ("🐢", "烏龜"), "lobster": ("🦞", "龍蝦"),
+}
+GUARD_OPTIONS = 5
 
 DEFAULT_DIFFICULTY = {
     "common": {"stamina": 40, "distance": 40, "struggle_pct": 30, "surge_pct": 10, "strong_pct": 0, "chain_pct": 0},
@@ -153,7 +192,60 @@ INITIAL_FISH = (
     ("formosan_salmon", "櫻花鉤吻鮭", "🌸", "legendary", 120, 190, 200, 1500, 3, "冰河時期留下的國寶魚。"),
     ("golden_koi", "黃金錦鯉", "🎏", "legendary", 140, 200, 3000, 12000, 4, "傳說釣到就會好運連連。"),
     ("oarfish", "皇帶魚", "🐉", "legendary", 101, 180, 20000, 150000, 5, "深海中的神秘巨魚。"),
+    # 以下 20 種由 Migration 0033 新增（普通 6、稀有 6、史詩 5、傳說 3；部分史詩／傳說魚要用指定的高級魚餌）
+    ("goby", "鰕虎", "🐟", "common", 2, 9, 10, 80, 1, "趴在溪底石頭上的小魚，一點也不怕人。"),
+    ("pond_smelt", "公魚", "🐟", "common", 1, 6, 10, 60, 1, "冬天湖面上最受歡迎的小魚。"),
+    ("bluegill", "藍鰓太陽魚", "🐟", "common", 2, 10, 50, 400, 1, "鰓蓋上有一抹藍色，貪吃又好釣。"),
+    ("milkfish", "虱目魚", "🐟", "common", 4, 14, 300, 2000, 2, "魚塭裡的國民魚，刺很多但很好吃。"),
+    ("mullet", "烏魚", "🐟", "common", 5, 16, 500, 3000, 2, "冬至前後成群洄游，烏魚子就是牠的。"),
+    ("snakehead", "鱧魚", "🐟", "common", 8, 20, 1000, 6000, 3, "俗稱雷魚，咬餌兇猛，力氣比外表大。"),
+    ("mackerel", "鯖魚", "🐠", "rare", 21, 35, 200, 1200, 2, "背上有波浪花紋，成群在海面附近游動。"),
+    ("flounder", "比目魚", "🐠", "rare", 21, 38, 300, 3000, 2, "兩隻眼睛長在同一邊，平貼著海底。"),
+    ("yellowfin_seabream", "黃鰭鯛", "🐠", "rare", 22, 40, 300, 2000, 2, "河口常見的鯛魚，鰭帶著亮黃色。"),
+    ("black_seabream", "黑鯛", "🐠", "rare", 24, 42, 400, 3000, 3, "警戒心很強，磯釣客的夢幻對手。"),
+    ("amberjack", "紅魽", "🐠", "rare", 25, 45, 1500, 9000, 3, "會繞著礁石狂奔的大型掠食魚。"),
+    ("eel", "鰻魚", "🐍", "rare", 30, 50, 500, 3000, 4, "滑溜又有力，咬到餌就往石縫裡鑽。"),
+    ("lionfish", "獅子魚", "🦁", "epic", 55, 85, 300, 1200, 3, "華麗的鰭條藏著毒刺，小心別被扎到。"),
+    ("napoleon_fish", "曲紋唇魚", "🐡", "epic", 60, 95, 5000, 40000, 4, "俗稱蘇眉，額頭隆起的珊瑚礁巨魚。"),
+    ("arowana", "金龍魚", "🐉", "epic", 65, 95, 1000, 6000, 4, "鱗片閃著金光，被視為招財的象徵。"),
+    ("yellowfin_tuna", "黃鰭鮪", "🐟", "epic", 120, 180, 10000, 80000, 5, "深海的速度之王，只吃深海誘餌以上的魚餌。"),
+    ("swordfish", "旗魚", "🗡️", "epic", 130, 200, 30000, 200000, 5, "用長劍般的上顎突擊獵物，只吃深海誘餌以上的魚餌。"),
+    ("moon_ray", "月光魟", "🌙", "legendary", 220, 350, 10000, 80000, 5,
+     "月圓時才浮上海面的發光魟魚，要用深海誘餌以上的魚餌。"),
+    ("coelacanth", "腔棘魚", "🦴", "legendary", 250, 400, 30000, 90000, 5, "活化石，只會被龍涎香餌吸引。"),
+    ("dragon_king_carp", "龍王鯉", "🐲", "legendary", 300, 500, 5000, 30000, 5, "躍過龍門的鯉魚王，只吃龍涎香餌。"),
+    # 以下 10 種特殊魚由 Migration 0035 新增：都有季節或時段限定（game/seasons.FISH_LIMITS），部分還要指定魚餌
+    ("dawn_trout", "黎明鱒", "🌅", "rare", 35, 60, 300, 2500, 3, "只在天剛亮（04–07 點）時出現的鱒魚。"),
+    ("snow_icefish", "雪精靈冰魚", "❄️", "rare", 40, 65, 50, 300, 2, "冬天清晨才會游到淺水的透明小魚。"),
+    ("firefly_squid", "螢火魷", "✨", "epic", 100, 160, 50, 200, 3,
+     "春天夜裡發出藍光的魷魚，要用深海誘餌以上的魚餌。"),
+    ("lanternfish", "燈籠魚", "🏮", "epic", 90, 150, 100, 600, 3, "夏夜提著小燈籠浮上海面的深海魚。"),
+    ("maple_salmon", "楓紅鮭", "🍁", "epic", 110, 170, 2000, 12000, 4, "秋天黃昏逆流而上，身上像楓葉一樣紅。"),
+    ("rainbow_wrasse", "虹彩隆頭魚", "🌈", "epic", 95, 155, 200, 2000, 3,
+     "夏天正午的珊瑚礁上閃著七彩光芒。"),
+    ("midnight_angler", "午夜鮟鱇", "🌑", "legendary", 320, 520, 5000, 40000, 5,
+     "只在午夜 0–3 點提著燈出沒，要用深海誘餌以上的魚餌。"),
+    ("spring_koi", "春神錦鯉", "🌸", "legendary", 350, 600, 3000, 15000, 5,
+     "春天早晨才會現身的神之錦鯉，只吃龍涎香餌。"),
+    ("ghost_shark", "幽靈鯊", "👻", "legendary", 400, 650, 20000, 150000, 5,
+     "秋天深夜的海面下有一道半透明的影子，要用深海誘餌以上的魚餌。"),
+    ("frost_dragon_fish", "霜龍魚", "🧊", "legendary", 450, 700, 10000, 60000, 5,
+     "冬天深夜冰海中的龍形巨魚，只吃龍涎香餌。"),
 )
+# 要用指定魚餌才釣得到的魚（code → 可用的魚餌代碼）；沒列在這裡的魚任何魚餌都能釣到。
+# 拋竿時只從「目前裝備的魚餌釣得到」的魚種中挑；該稀有度都釣不到時往較低的稀有度找（pick_fish）
+FISH_REQUIRED_BAITS = {
+    "yellowfin_tuna": ("deep_sea_bait", "dragon_bait"),
+    "swordfish": ("deep_sea_bait", "dragon_bait"),
+    "moon_ray": ("deep_sea_bait", "dragon_bait"),
+    "coelacanth": ("dragon_bait",),
+    "dragon_king_carp": ("dragon_bait",),
+    "firefly_squid": ("deep_sea_bait", "dragon_bait"),
+    "midnight_angler": ("deep_sea_bait", "dragon_bait"),
+    "spring_koi": ("dragon_bait",),
+    "ghost_shark": ("deep_sea_bait", "dragon_bait"),
+    "frost_dragon_fish": ("dragon_bait",),
+}
 # code, 類型, 名稱, emoji, 價格, 需要等級, 說明, 效果
 INITIAL_GEAR = (
     ("bamboo_rod", "rod", "竹製魚竿", "🎋", 100, 1, "新手入門的魚竿。",
@@ -171,10 +263,16 @@ INITIAL_GEAR = (
     ("heavy_line", "line", "高強度魚線", "🪢", 3000, 6, "大魚的衝擊也撐得住。", {"max_tension": 130}),
     ("worm_bait", "bait", "普通蚯蚓", "🪱", 3, 1, "最普通的魚餌（每次拋竿用掉 1 個）。",
      {"rare_bp": 0, "epic_bp": 0, "legendary_bp": 0, "bite_speed_pct": 0}),
-    ("premium_bait", "bait", "高級魚餌", "🦐", 6, 3, "稀有魚比較愛吃，上鉤也比較快。",
+    ("premium_bait", "bait", "高級魚餌", "🦐", 6, 1, "稀有魚比較愛吃，上鉤也比較快。",
      {"rare_bp": 300, "epic_bp": 100, "legendary_bp": 30, "bite_speed_pct": 20}),
-    ("special_bait", "bait", "特殊魚餌", "🌟", 12, 6, "特製香餌，吸引史詩與傳說魚。",
+    ("special_bait", "bait", "特殊魚餌", "🌟", 12, 4, "特製香餌，吸引史詩與傳說魚。",
      {"rare_bp": 500, "epic_bp": 300, "legendary_bp": 150, "bite_speed_pct": 40}),
+    # 以下由 Migration 0033 新增：部分史詩／傳說魚只吃這些魚餌（FISH_REQUIRED_BAITS）。
+    # 所有魚餌的需要等級已由 Migration 0034 調低 2 級（最低 Lv.1），這裡是調整後的值
+    ("deep_sea_bait", "bait", "深海誘餌", "🦑", 40, 6, "深海魚才會咬的誘餌：黃鰭鮪、旗魚、月光魟要用它（或龍涎香餌）。",
+     {"rare_bp": 400, "epic_bp": 500, "legendary_bp": 200, "bite_speed_pct": 30}),
+    ("dragon_bait", "bait", "龍涎香餌", "🐉", 120, 8, "傳說中的頂級香餌：腔棘魚、龍王鯉只吃它，深海魚也愛吃。",
+     {"rare_bp": 300, "epic_bp": 600, "legendary_bp": 400, "bite_speed_pct": 20}),
 )
 
 
@@ -312,6 +410,11 @@ def rarity_chances(rarity_bp: dict, bait: dict) -> dict[str, float]:
     return {r: weights[r] * 100 / total for r in RARITIES}
 
 
+def bait_allows(required_baits, bait_code: str | None) -> bool:
+    """這條魚能不能用目前的魚餌釣到（required_baits 為空 = 任何魚餌都可以）。"""
+    return not required_baits or bait_code in required_baits
+
+
 def pick_fish(fish_by_rarity: dict[str, list], rarity: str, rng: Callable[[], float]):
     """在抽到的稀有度中平均挑一種魚；該稀有度沒有啟用中的魚時，往較低的稀有度找。"""
     order = RARITIES[: RARITIES.index(rarity) + 1][::-1] + RARITIES[RARITIES.index(rarity) + 1:]
@@ -362,7 +465,7 @@ def new_fight(settings: dict, rarity: str, fish_difficulty: int, line: dict, rng
     state = {
         "stamina": stamina, "max_stamina": stamina, "distance": diff["distance"], "tension": START_TENSION,
         "max_tension": line.get("max_tension", BASE_MAX_TENSION), "turn": 0, "slip_turn": slip_turn,
-        "intent": "calm", "last": None,
+        "intent": "calm", "last": None, "reel_streak": 0, "dodge": None,
     }
     state["intent"] = next_intent(state, diff, None, rng)
     return state
@@ -392,36 +495,98 @@ def fish_spike(intent: str, rod: dict) -> float:
     return t * (100 - rod.get("control_pct", 0)) / 100 if t > 0 else t
 
 
+def reel_tension(state: dict) -> float:
+    """這次收線會增加多少張力：連續收線越多次越高（依魚線上限按比例）。"""
+    extra = state.get("reel_streak", 0) * state["max_tension"] * REEL_STREAK_TENSION_PCT / 100
+    return PLAYER_ACTIONS["reel"]["tension"] + extra
+
+
+def land_stamina(state: dict) -> int:
+    """魚的體力要降到多少以下才拉得上岸。"""
+    return int(state["max_stamina"] * LAND_STAMINA_RATIO)
+
+
+def dodge_pct(diff: dict) -> float:
+    return DODGE_BASE_PCT + diff.get("strong_pct", 0) / 2
+
+
+def next_dodge(state: dict, diff: dict, previous: str | None, rng: Callable[[], float]) -> str | None:
+    """下一回合魚會不會竄向一邊：不連續出現；魚累垮時不會竄。"""
+    if previous or state["stamina"] <= 0:
+        return None
+    if rng() * 100 >= dodge_pct(diff):
+        return None
+    return STEER_ACTIONS[0] if rng() < 0.5 else STEER_ACTIONS[1]
+
+
 def step(state: dict, action: str, diff: dict, rod: dict, rng: Callable[[], float]) -> tuple[dict, str | None]:
     """執行一次拉扯操作，回傳 (新狀態, 結果)；結果 None 表示繼續，否則為 landed／escaped／line_broken／slipped。
 
-    順序：脫鉤判定 → 玩家操作（距離歸零即釣起）→ 魚依事先顯示的動作反應 → 斷線／逃走判定 → 決定魚的下一個動作。"""
+    順序：脫鉤判定 → 壓中方向（這回合結束）或玩家操作（魚累了才拉得上岸）→ 魚依事先顯示的動作反應
+    → 沒壓中方向的懲罰 → 斷線／逃走判定 → 決定魚的下一個動作。"""
     if action not in ACTIONS:
         raise ValidationError("沒有這個操作。")
     s = dict(state)
     s["turn"] += 1
     intent = s["intent"]
+    dodge, s["dodge"] = s.get("dodge"), None
+    streak = s.get("reel_streak", 0)
     if s.get("slip_turn") and s["turn"] >= s["slip_turn"]:
         s["last"] = {"action": action, "intent": intent, "text": "🪝 魚鉤沒有咬牢，魚掙脫逃走了！"}
         return s, "slipped"
-    p = PLAYER_ACTIONS[action]
+    if action in STEER_ACTIONS and action == dodge:  # 壓中：魚這回合的動作被化解
+        s["reel_streak"] = 0
+        s["tension"] = max(0, s["tension"] + DODGE_HIT["tension"])
+        s["stamina"] = _clamp(s["stamina"] + DODGE_HIT["stamina"], 0, s["max_stamina"])
+        s["distance"] = max(1, s["distance"] + DODGE_HIT["distance"])
+        s["last"] = {"action": action, "intent": intent, "text": "🎯 壓對方向！魚被你帶回來，耗了不少力氣。"}
+        s["intent"] = next_intent(s, diff, intent, rng)
+        return s, None
+    if action in STEER_ACTIONS:
+        s["reel_streak"] = 0
+        p = {"tension": 0 if dodge else STEER_IDLE_TENSION, "stamina": 0, "distance": 0, "spike_mul": 1.0,
+             "dash_mul": 1.0}
+    else:
+        p = PLAYER_ACTIONS[action]
     ratio = s["stamina"] / s["max_stamina"] if s["max_stamina"] else 0
-    pulled = rod.get("reel_power", 10) if action == "reel" else 0
-    s["distance"] = s["distance"] - pulled + p["distance"]
-    s["tension"] = max(0, s["tension"] + p["tension"])
+    if action == "reel":
+        s["tension"] = max(0, s["tension"] + reel_tension(s))
+        s["reel_streak"] = streak + 1
+        s["distance"] -= rod.get("reel_power", 10)
+    else:
+        if action == "wait":
+            s["reel_streak"] = max(0, streak - REEL_STREAK_WAIT_DECAY)
+        elif action == "release":
+            s["reel_streak"] = 0
+        s["tension"] = max(0, s["tension"] + p["tension"])
+        s["distance"] += p["distance"]
     s["stamina"] = _clamp(s["stamina"] + p["stamina"], 0, s["max_stamina"])
+    if s["tension"] > s["max_tension"]:  # 最後一下也要撐得住，不能硬拉上岸
+        s["tension"] = _clamp(s["tension"], 0, 999)
+        s["last"] = {"action": action, "intent": intent, "text": "💥 連續硬拉，張力太大，魚線斷了！"}
+        return s, "line_broken"
+    gate_note = ""
     if s["distance"] <= 0:
-        s["distance"] = 0
-        s["last"] = {"action": action, "intent": intent, "text": "🎉 收線成功，把魚拉出水面了！"}
-        return s, "landed"
+        if s["stamina"] <= land_stamina(s):
+            s["distance"] = 0
+            s["tension"] = _clamp(s["tension"], 0, 999)
+            s["last"] = {"action": action, "intent": intent, "text": "🎉 收線成功，把魚拉出水面了！"}
+            return s, "landed"
+        s["distance"] = LAND_GATE_DISTANCE  # 魚還有力氣：拉到水邊又被甩開
+        gate_note = "　🐟 魚還有力氣，到水邊又甩開了！"
     f = FISH_INTENTS[intent]
     spike = fish_spike(intent, rod)
     if spike > 0:
         spike *= p["spike_mul"]
     s["tension"] = _clamp(s["tension"] + spike, 0, 999)
-    s["distance"] = _clamp(s["distance"] + f["distance"] * p["dash_mul"] * (0.5 + 0.5 * ratio), 0, ESCAPE_DISTANCE)
+    s["distance"] = _clamp(s["distance"] + f["distance"] * p["dash_mul"] * (0.5 + 0.5 * ratio), 1, ESCAPE_DISTANCE)
     s["stamina"] = _clamp(s["stamina"] + f["stamina"], 0, s["max_stamina"])
-    s["last"] = {"action": action, "intent": intent, "text": ACTION_RESULT_TEXT[action] + "　" + INTENT_RESULT[intent]}
+    result_text = STEER_MISS_TEXT if action in STEER_ACTIONS else ACTION_RESULT_TEXT[action]
+    s["last"] = {"action": action, "intent": intent, "text": result_text + "　" + INTENT_RESULT[intent] + gate_note}
+    if dodge:
+        s["tension"] = _clamp(s["tension"] + DODGE_MISS["tension"], 0, 999)
+        s["distance"] = _clamp(s["distance"] + DODGE_MISS["distance"], 1, ESCAPE_DISTANCE)
+        s["last"]["text"] += "　⚠️ 沒壓對方向，魚線被猛扯了一下！"
     if s["tension"] > s["max_tension"]:
         s["last"]["text"] = "💥 張力太大，魚線斷了！"
         return s, "line_broken"
@@ -429,10 +594,32 @@ def step(state: dict, action: str, diff: dict, rod: dict, rng: Callable[[], floa
         s["last"]["text"] = "🌊 魚游得太遠，掙脫逃走了！"
         return s, "escaped"
     s["intent"] = next_intent(s, diff, intent, rng)
+    s["dodge"] = next_dodge(s, diff, dodge, rng)
     return s, None
 
 
+def new_guard_challenge(pick: Callable, shuffle: Callable) -> dict:
+    """出一題人機確認；pick(序列, 數量) 取不重複的選項、shuffle 打亂順序（由服務層傳入）。"""
+    options = list(pick(list(GUARD_CREATURES), GUARD_OPTIONS))
+    answer = options[0]
+    shuffle(options)
+    return {"answer": answer, "options": options}
+
+
+def guard_lock_minutes(consecutive_failures: int) -> int:
+    return min(GUARD_LOCK_MAX_MINUTES, GUARD_LOCK_MINUTES * 2 ** max(0, consecutive_failures - 1))
+
+
+def regular_rhythm(gaps: list[float]) -> bool:
+    """一場的操作間隔是否規律得不像人（真人的間隔會隨畫面內容明顯變動）。"""
+    if len(gaps) < GUARD_REGULAR_MIN_SAMPLES:
+        return False
+    mean = sum(gaps) / len(gaps)
+    return math.sqrt(sum((g - mean) ** 2 for g in gaps) / len(gaps)) < GUARD_REGULAR_STDEV_SECONDS
+
+
 ACTION_RESULT_TEXT = {"reel": "🎣 你用力收線。", "release": "↩️ 你放出一些線。", "wait": "⏳ 你穩住魚竿觀察。"}
+STEER_MISS_TEXT = "🎣 你壓了一下竿。"
 INTENT_RESULT = {
     "calm": "魚游得很平穩。", "struggle": "魚左右掙扎！", "surge": "魚突然衝刺！", "strong": "魚強力衝刺！",
     "tired": "魚累得游不動了。",
@@ -441,17 +628,23 @@ INTENT_RESULT = {
 
 # ---------- 模擬（測試與調整數值用） ----------
 
+POLICY_KEYS = ("intent", "tension", "distance", "stamina", "max_stamina", "max_tension", "dodge", "reel_streak", "turn")
+
 
 def smart_action(state: dict, diff: dict, rod: dict, margin: int = 4) -> str:
-    """依提示操作的玩家：收線不會斷線或讓魚逃走時收線，否則等待，最後才放線。"""
+    """依提示操作的玩家：魚竄動時壓同方向；收線不會斷線或讓魚逃走時收線，否則等待，最後才放線。"""
+    if state.get("dodge"):
+        return state["dodge"]
     intent, t, d, mt = state["intent"], state["tension"], state["distance"], state["max_tension"]
     spike = max(0.0, fish_spike(intent, rod))
     ratio = state["stamina"] / state["max_stamina"] if state["max_stamina"] else 0
     dash = FISH_INTENTS[intent]["distance"] * (0.5 + 0.5 * ratio)
     reel = rod.get("reel_power", 10)
-    if d - reel <= 0:
+    pull = reel_tension(state)
+    tired_enough = state["stamina"] + PLAYER_ACTIONS["reel"]["stamina"] <= land_stamina(state)
+    if d - reel <= 0 and tired_enough and t + pull <= mt:
         return "reel"
-    if t + 14 + spike <= mt - margin and d - reel + dash < ESCAPE_DISTANCE:
+    if t + pull + spike <= mt - margin and d - reel + dash < ESCAPE_DISTANCE:
         return "reel"
     if t - 12 + spike * 0.8 <= mt - margin and d + dash * 0.5 < ESCAPE_DISTANCE:
         return "wait"
@@ -459,8 +652,18 @@ def smart_action(state: dict, diff: dict, rod: dict, margin: int = 4) -> str:
 
 
 def naive_action(state: dict, diff: dict, rod: dict) -> str:
-    """不看提示的玩家：一直收線，張力超過七成才放線。"""
+    """不看提示的玩家：一直收線，張力超過七成才放線（不看魚往哪邊竄）。"""
     return "release" if state["tension"] > state["max_tension"] * 0.7 else "reel"
+
+
+def reel_only_action(state: dict, diff: dict, rod: dict) -> str:
+    """最簡單的連點腳本：只按收線。"""
+    return "reel"
+
+
+def alternate_action(state: dict, diff: dict, rod: dict) -> str:
+    """固定節奏的腳本：收線、等待輪流按，不看畫面。"""
+    return "reel" if state["turn"] % 2 == 0 else "wait"
 
 
 def simulate(settings: dict, rarity: str, rod: dict, line: dict, policy: Callable, rng: Callable[[], float],

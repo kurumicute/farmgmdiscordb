@@ -51,6 +51,11 @@ INITIAL_CROPS = [
     ("carrot", "胡蘿蔔", 20, 7200, 3, 25),
     ("tomato", "番茄", 35, 14400, 4, 20),
     ("strawberry", "草莓", 60, 28800, 5, 25),
+    # 以下 4 種由 Migration 0033 新增（數值就是寫進資料庫的值）：越長的作物每小時收益略低，但適合離線時種
+    ("corn", "玉米", 18, 3 * 3600, 3, 20),
+    ("pumpkin", "南瓜", 80, 12 * 3600, 4, 55),
+    ("grape", "葡萄", 120, 16 * 3600, 6, 45),
+    ("watermelon", "西瓜", 150, 24 * 3600, 3, 130),
 ]
 CROP_GROW_SECONDS_RANGE = (60, 7 * 24 * 3600)  # 網站可設定的生長時間範圍
 CROP_SEED_PRICE_RANGE = (1, 1_000_000)
@@ -252,6 +257,10 @@ INITIAL_VARIANTS = {
     "carrot": ("amethyst_carrot", "紫晶胡蘿蔔"),
     "tomato": ("black_tomato", "黑鑽番茄"),
     "strawberry": ("snow_strawberry", "白雪草莓"),
+    "corn": ("golden_corn", "金粒玉米"),
+    "pumpkin": ("moon_pumpkin", "月影南瓜"),
+    "grape": ("crystal_grape", "水晶葡萄"),
+    "watermelon": ("starry_watermelon", "星紋西瓜"),
 }
 MIN_GROW_SECONDS = 60  # 任何加速後的最短生長時間
 

@@ -59,7 +59,7 @@ def fight(svc, pid, view, rod=BAMBOO, policy=fishing.smart_action) -> dict:
     for _ in range(300):
         if view["phase"] != "fighting":
             return view
-        state = {k: view[k] for k in ("intent", "tension", "distance", "stamina", "max_stamina", "max_tension")}
+        state = {k: view[k] for k in fishing.POLICY_KEYS}
         view = svc.fishing_action(pid, view["id"], policy(state, None, rod), view["turn"])
     raise AssertionError("拉扯沒有結束")
 

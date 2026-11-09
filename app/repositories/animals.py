@@ -3,15 +3,18 @@
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db import txcache
+from app.db import catalog_cache, txcache
 from app.db.models import AnimalType
 
 
 def list_all(session: Session, *, active_only: bool = False) -> list[AnimalType]:
+    """唯讀快照（見 catalog_cache）；要修改動物種類請用 get(for_update=True)。"""
     stmt = select(AnimalType).order_by(AnimalType.price, AnimalType.id)
     if active_only:
         stmt = stmt.where(AnimalType.active.is_(True))
-    return txcache.read_memo(session, ("animals", active_only), lambda: list(session.scalars(stmt)))
+    key = ("animals", active_only)
+    return txcache.read_memo(
+        session, key, lambda: catalog_cache.rows(session, key, lambda: list(session.scalars(stmt))))
 
 
 def by_code(session: Session) -> dict[str, AnimalType]:

@@ -84,7 +84,7 @@ def test_reward_probabilities_sum_to_100_percent():
 def test_area_settings_match_requirements():
     a = exploration.AREAS
     assert [(a[c].unlock_level, a[c].duration_seconds) for c in exploration.AREA_ORDER] == [
-        (1, 8 * HOUR), (5, 16 * HOUR), (10, 24 * HOUR)
+        (1, 8 * HOUR), (5, 16 * HOUR), (10, 24 * HOUR), (4, 24 * HOUR)
     ]
     for area in a.values():  # 每個掉落項目都是已定義的素材或稀有種子
         for pool in area.pools.values():
@@ -97,7 +97,8 @@ def test_area_settings_match_requirements():
     assert names["mine"] >= {"石塊", "銅礦", "鐵礦", "齒輪", "水晶", "機械核心", "假幣"} and "木材" not in names["mine"]
     assert exploration.MOON_SEED in exploration.possible_items(a["forest"])
     assert exploration.AMBER_SEED in exploration.possible_items(a["grassland"])
-    assert len({frozenset(exploration.possible_items(x)) for x in a.values()}) == 3  # 三個區域掉落池都不同
+    # 三個一般區域掉落池都不同；古代遺跡以古老森林為模板
+    assert len({frozenset(exploration.possible_items(a[c])) for c in ("grassland", "forest", "mine")}) == 3
 
 
 @pytest.mark.parametrize("area", exploration.AREA_ORDER)
@@ -204,20 +205,21 @@ def test_only_one_area_at_a_time(explorer, player_id, clock, session_factory):
         return {a["code"] for a in explorer.exploration_overview(player_id)["areas"] if a["ready"]}
 
     assert ready() == set()
-    for area in exploration.AREA_ORDER:  # 探險中：哪個區域都不能出發，包含同一個區域
+    normal = [c for c in exploration.AREA_ORDER if not exploration.AREAS[c].needs_ruins]  # 古代遺跡是額外的探索
+    for area in normal:  # 探險中：哪個區域都不能出發，包含同一個區域
         with pytest.raises(ValidationError, match="一次只能去一個區域"):
             explorer.explore(player_id, area)
     clock.advance(8 * HOUR)
-    for area in exploration.AREA_ORDER:  # 回來了但還沒領取：也不能出發
+    for area in normal:  # 回來了但還沒領取：也不能出發
         with pytest.raises(ValidationError, match="先領取"):
             explorer.explore(player_id, area)
     explorer.claim_exploration(player_id)
-    assert ready() == set(exploration.AREA_ORDER)
+    assert ready() == set(exploration.AREA_ORDER) - {"ruins"}  # 古代遺跡要所屬群組修好才能出發
     explorer.explore(player_id, "mine")  # 領取後可以立刻去另一個區域
     clock.advance(24 * HOUR)
     explorer.claim_exploration(player_id)
     explorer.explore(player_id, "grassland")  # 也可以立刻再去同一個區域
-    assert [a["explore_count"] for a in explorer.exploration_overview(player_id)["areas"]] == [2, 0, 1]
+    assert [a["explore_count"] for a in explorer.exploration_overview(player_id)["areas"]] == [2, 0, 1, 0]
 
 
 def test_explore_records_log_transaction_and_inventory(explorer, player_id, session_factory, clock):

@@ -126,7 +126,17 @@
         <article class="card">
           <span class="card-icon" aria-hidden="true">⛰️</span>
           <h3>山洞冒險</h3>
-          <p>探索<span id="c-areas">青青草原、古老森林、神秘礦坑</span>，收集木材、礦石、水晶等素材，還有機會撿到假幣與稀有種子（<span id="c-rare-seeds">琥珀瓜、月光花</span>）。</p>
+          <p>探索<span id="c-areas">青青草原、古老森林、神秘礦坑、古代遺跡</span>，收集木材、礦石、水晶等素材，還有機會撿到假幣與稀有種子（<span id="c-rare-seeds">琥珀瓜、月光花</span>）。</p>
+        </article>
+        <article class="card">
+          <span class="card-icon" aria-hidden="true">🏛️</span>
+          <h3>古代遺跡與守護者</h3>
+          <p>伺服器成員一起捐素材修復古代遺跡，修好後每個人每天都能<b>額外</b>探索一次；每週還要合力打倒石像守護者，否則遺跡會崩塌。</p>
+        </article>
+        <article class="card">
+          <span class="card-icon" aria-hidden="true">📰</span>
+          <h3>農場日報與傳聞</h3>
+          <p>總覽最下方每天刊出伺服器昨天的大事；偶爾還有「某座農場埋了寶藏」的傳聞，去那裡偷菜時順手挖挖看，第一個挖到的人獨得寶藏。</p>
         </article>
         <article class="card">
           <span class="card-icon" aria-hidden="true">🔧</span>
@@ -240,17 +250,23 @@
             </ol>
             <div class="table-scroll">
               <table class="guide-table">
-                <thead><tr><th>作物</th><th>種子</th><th>生長時間</th><th>收成</th><th>售價（普通）</th><th>珍稀變種</th></tr></thead>
+                <thead><tr><th>作物</th><th>種子</th><th>生長時間</th><th>收成</th><th>售價（普通）</th><th>珍稀變種</th><th>可種季節</th></tr></thead>
                 <tbody id="g-crops">
-                  <tr><td>🌾 小麥</td><td>5</td><td>1 小時</td><td>×2</td><td>11</td><td>琥珀小麥</td></tr>
-                  <tr><td>🥕 胡蘿蔔</td><td>12</td><td>2 小時</td><td>×3</td><td>15</td><td>紫晶胡蘿蔔</td></tr>
-                  <tr><td>🍅 番茄</td><td>25</td><td>4 小時</td><td>×4</td><td>22</td><td>黑鑽番茄</td></tr>
-                  <tr><td>🍓 草莓</td><td>60</td><td>8 小時</td><td>×5</td><td>34</td><td>白雪草莓</td></tr>
-                  <tr><td>🍈 琥珀瓜</td><td>不販售（探索／培育）</td><td>12 小時</td><td>×3</td><td>120</td><td>黃金琥珀瓜</td></tr>
-                  <tr><td>🌙 月光花</td><td>不販售（探索／培育）</td><td>24 小時</td><td>×2</td><td>450</td><td>星辰花</td></tr>
+                  <tr><td>🌾 小麥</td><td>5</td><td>1 小時</td><td>×2</td><td>11</td><td>琥珀小麥</td><td>四季</td></tr>
+                  <tr><td>🥕 胡蘿蔔</td><td>12</td><td>2 小時</td><td>×3</td><td>15</td><td>紫晶胡蘿蔔</td><td>🍂❄️秋、冬季限定</td></tr>
+                  <tr><td>🍅 番茄</td><td>25</td><td>4 小時</td><td>×4</td><td>22</td><td>黑鑽番茄</td><td>❄️🌸冬、春季限定</td></tr>
+                  <tr><td>🍓 草莓</td><td>60</td><td>8 小時</td><td>×5</td><td>34</td><td>白雪草莓</td><td>❄️🌸冬、春季限定</td></tr>
+                  <tr><td>🌽 玉米</td><td>18</td><td>3 小時</td><td>×3</td><td>20</td><td>金粒玉米</td><td>🌸☀️春、夏季限定</td></tr>
+                  <tr><td>🎃 南瓜</td><td>80</td><td>12 小時</td><td>×4</td><td>55</td><td>月影南瓜</td><td>☀️🍂夏、秋季限定</td></tr>
+                  <tr><td>🍇 葡萄</td><td>120</td><td>16 小時</td><td>×6</td><td>45</td><td>水晶葡萄</td><td>☀️🍂夏、秋季限定</td></tr>
+                  <tr><td>🍉 西瓜</td><td>150</td><td>24 小時</td><td>×3</td><td>130</td><td>星紋西瓜</td><td>🌸☀️春、夏季限定</td></tr>
+                  <tr><td>🍈 琥珀瓜</td><td>不販售（探索／培育）</td><td>12 小時</td><td>×3</td><td>120</td><td>黃金琥珀瓜</td><td>🍂❄️秋、冬季限定</td></tr>
+                  <tr><td>🌙 月光花</td><td>不販售（探索／培育）</td><td>24 小時</td><td>×2</td><td>450</td><td>星辰花</td><td>❄️🌸冬、春季限定</td></tr>
                 </tbody>
               </table>
             </div>
+            <p class="note">🗓️ <b>季節限定</b>：季節依台灣的真實月份（春 3–5 月、夏 6–8 月、秋 9–11 月、冬 12–2 月），<span id="g-season-now">現在是秋季</span>。
+              季節只限制<b>種下</b>的時間：種子隨時可以買，種下後過了季節照樣長大、收成；種植選單只列出現在能種的作物。</p>
             <p class="note">標示「不販售」的是稀有作物：商店買不到種子，只能從「⛰️ 山洞」探索或用「🧬 稀有作物培育器」取得；一鍵種植也不會自動購買。</p>
           </div>
         </details>
@@ -371,14 +387,17 @@
               <li>畫面出現「‼️ 魚上鉤了！」時，要在 <b id="g-fish-react">5 秒</b>內按「🎣 拉竿」（魚竿可以延長），太慢魚會把餌吃掉跑走。</li>
               <li>拉竿成功後進入<b>拉扯</b>：畫面顯示 🐟 魚的體力、📏 魚的距離、🪢 魚線張力，以及 💬 魚接下來要做什麼。
                 <ul>
-                  <li><b>🎣 收線</b>：拉近距離、消耗魚的體力，但張力會上升。</li>
-                  <li><b>↩️ 放線</b>：張力大幅下降，魚會游遠一些，可以避免斷線。</li>
-                  <li><b>⏳ 等待</b>：穩住魚竿，張力慢慢下降，魚衝刺時只能拉走一半距離。</li>
+                  <li><b>🎣 收線</b>：拉近距離、消耗魚的體力，但張力會上升；<b>連續收線時張力越加越多</b>，裝備再好也一樣。</li>
+                  <li><b>↩️ 放線</b>：張力大幅下降，魚會游遠一些，並清除連續收線的累積。</li>
+                  <li><b>⏳ 等待</b>：穩住魚竿，張力慢慢下降，魚衝刺時只能拉走一半距離，但魚會回一點體力。</li>
+                  <li><b>⬅️ 左壓／➡️ 右壓</b>：魚竄向一邊時按同方向，魚會耗力、張力下降；按錯或沒壓，張力暴增、魚被拉遠。按鈕順序每回合都會變。</li>
                 </ul>
               </li>
+              <li>魚<b>累了（體力降到四分之一以下）</b>才拉得上岸，還有力氣時拉到水邊也會被甩開。</li>
               <li>把<b>距離拉到 0</b> 就釣起來了，魚會放進魚簍（<span id="g-fish-basket">最多 20 隻</span>）。</li>
+              <li>偶爾會出現<b>人機確認</b>：按下題目指定的生物就會繼續釣魚；答錯會暫停釣魚一段時間，但不會扣金幣、魚或魚餌。</li>
               <li>失敗的情況：<b>張力超過魚線上限</b>（斷線）、<b>距離達到 100</b>（魚逃走）、<b>沒有及時拉竿</b>、<b>拉扯時 <span id="g-fish-timeout">20 秒</span>沒有操作</b>，或魚鉤沒有咬牢（脫鉤）。</li>
-              <li>小訣竅：💬 提示魚要「衝刺」或「猛烈掙扎」時先放線或等待；魚「平靜」或「累了」時收線。依提示操作，任何稀有度的成功率都接近基礎成功率。</li>
+              <li>小訣竅：💬 提示魚要「衝刺」或「猛烈掙扎」時先放線或等待；魚「平靜」或「累了」時收線，但不要一直收。依提示操作，任何稀有度的成功率都接近基礎成功率。</li>
             </ol>
             <div class="table-scroll">
               <table class="guide-table">
@@ -413,15 +432,16 @@
             <p class="note">魚竿、魚線、魚餌分別裝備，可以在釣魚中心或釣具商店的「🔧 更換裝備」切換；魚餌加成的機率是從普通魚扣除。</p>
             <div class="table-scroll">
               <table class="guide-table">
-                <thead><tr><th>魚類圖鑑</th><th>稀有度</th><th>售價</th><th>重量</th><th>說明</th></tr></thead>
+                <thead><tr><th>魚類圖鑑</th><th>稀有度</th><th>售價</th><th>重量</th><th>出現條件</th><th>說明</th></tr></thead>
                 <tbody id="g-fish-list">
-                  <tr><td>🐟 鯽魚</td><td>⚪ 普通</td><td>1–12</td><td>100 g–800 g</td><td>池塘裡最常見的魚。</td></tr>
-                  <tr><td>🐠 鱸魚</td><td>🔵 稀有</td><td>21–40</td><td>1.00 kg–6.00 kg</td><td>會突然衝刺的掠食魚。</td></tr>
-                  <tr><td>🐡 鮭魚</td><td>🟣 史詩</td><td>51–80</td><td>2.00 kg–10.00 kg</td><td>逆流而上的勇者。</td></tr>
-                  <tr><td>🎏 黃金錦鯉</td><td>🟡 傳說</td><td>140–200</td><td>3.00 kg–12.00 kg</td><td>傳說釣到就會好運連連。</td></tr>
+                  <tr><td>🐟 鯽魚</td><td>⚪ 普通</td><td>1–12</td><td>100 g–800 g</td><td>隨時</td><td>池塘裡最常見的魚。</td></tr>
+                  <tr><td>🐍 鰻魚</td><td>🔵 稀有</td><td>30–50</td><td>500 g–3.00 kg</td><td>🕒 18:00–06:00</td><td>滑溜又有力，咬到餌就往石縫裡鑽。</td></tr>
+                  <tr><td>🐟 黃鰭鮪</td><td>🟣 史詩</td><td>120–180</td><td>10.00 kg–80.00 kg</td><td>需要🦑 深海誘餌或🐉 龍涎香餌；☀️夏季限定</td><td>深海的速度之王。</td></tr>
+                  <tr><td>🧊 霜龍魚</td><td>🟡 傳說</td><td>450–700</td><td>10.00 kg–60.00 kg</td><td>需要🐉 龍涎香餌；❄️冬季限定　🕒 22:00–02:00</td><td>冬天深夜冰海中的龍形巨魚。</td></tr>
                 </tbody>
               </table>
             </div>
+            <p class="note">🔒 部分史詩、傳說魚只吃<b>指定的高級魚餌</b>（深海誘餌、龍涎香餌），還有些魚只在特定<b>季節</b>（台灣月份）或<b>時段</b>（台灣時間）出現；拋竿當下三個條件都符合才釣得到。</p>
             <p class="note">同一種魚越重越值錢（在該魚的售價範圍內）。釣到過的魚會登記在「📖 魚類圖鑑」，賣掉也算。</p>
             <h4>魚簍、販售與分享</h4>
             <ul>
@@ -496,6 +516,45 @@
                 </tbody>
               </table>
             </div>
+          </div>
+        </details>
+
+        <details class="guide" id="ruins">
+          <summary>🏛️ 古代遺跡與守護者</summary>
+          <div class="guide-body">
+            <ol>
+              <li>「⛰️ 山洞」→「🏛️ 修復遺跡」：所屬伺服器的成員一起捐山洞素材，分三個階段修復（捐超過還缺的數量只會扣需要的部分）。</li>
+              <li>修好後，伺服器每個人（<span id="g-ruins-level">Lv.4</span> 起）每天都能<b>額外</b>探索一次古代遺跡：不佔一般探險的名額，按下立即拿到獎勵，<span id="g-ruins-cooldown">冷卻 1 天</span>；掉落和古老森林一樣，每次再多 <span id="g-ruins-extra">1–2</span> 份。</li>
+              <li>所有捐過素材的成員獲得稱號「<span id="g-ruins-title">遺跡修復者</span>」。遺跡屬於農場的所屬伺服器，轉移後改看新伺服器的遺跡。</li>
+            </ol>
+            <div class="table-scroll">
+              <table class="guide-table">
+                <thead><tr><th>階段</th><th>需要的素材</th><th>說明</th></tr></thead>
+                <tbody id="g-ruins-stages">
+                  <tr><td>1. 清除碎石</td><td>石塊 ×150、木材 ×150</td><td>把堵住入口的碎石與倒下的樹木搬開。</td></tr>
+                  <tr><td>2. 修補石柱</td><td>銅礦 ×80、鐵礦 ×50、樹脂 ×80</td><td>用礦石與樹脂補強快要倒塌的石柱。</td></tr>
+                  <tr><td>3. 喚醒遺跡核心</td><td>齒輪 ×20、水晶 ×12、古木核心 ×3、機械核心 ×3</td><td>把齒輪、水晶與核心裝回遺跡中央的古代裝置。</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <h4>🗿 遺跡守護者</h4>
+            <ul id="g-guardian">
+              <li>修好後的下一個週一（台灣時間）起，每週出現一隻石像守護者：HP 3,000，伺服器每多一座農場 +1,000（最多 40,000），本週第一次受到傷害時固定。</li>
+              <li>在修復遺跡頁選素材攻擊：普通素材每個 3、稀有 15、極稀有 80 傷害（假幣不行）；每次探索遺跡也會自動造成 200 傷害。</li>
+              <li>打倒後當週每次探索遺跡多 2 份獎勵；整週都沒打倒，遺跡崩塌回第三階段，要重新捐核心素材才能再進去。</li>
+            </ul>
+          </div>
+        </details>
+
+        <details class="guide" id="news">
+          <summary>📰 農場日報與傳聞寶藏</summary>
+          <div class="guide-body">
+            <ul id="g-news">
+              <li>打開 <code>/farm</code>，總覽最下方的「📰 昨日農場日報」會刊出所屬伺服器成員<b>昨天</b>的大事：銷售冠軍、稀有突變、偷菜、防守、稀有魚、遺跡進度與守護者、賭場（最多 4 條）。昨天完全沒有動靜就不顯示。</li>
+              <li>日報只在你自己的面板裡顯示，Bot 不會發訊息到頻道，也沒有額外的按鈕。</li>
+              <li>約 50% 的日子最後會多一條「🗺️ 傳聞：某座農場的田底下埋了寶藏」，約 70% 是真的。</li>
+              <li>當天偷那座農場的菜成功時會順手挖一次（每人每天一次）；傳聞是真的就有 35% 機率挖到 300–800 金幣，寶藏只有第一個挖到的人拿得到，隔天的日報會報導是誰挖到的。</li>
+            </ul>
           </div>
         </details>
 

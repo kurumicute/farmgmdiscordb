@@ -25,6 +25,22 @@ def scoring_group(farm: Farm, tx: GameTransaction) -> int | None:
     return tx.context_group_id
 
 
+def _open_quests(session: Session, group_id: int, now) -> list:
+    return txcache.memo(session, ("quests", group_id),
+                        lambda: community_repo.open_quests_for_event(session, group_id, now))
+
+
+def _open_competitions(session: Session, now) -> list:
+    return txcache.memo(session, "competitions", lambda: community_repo.open_competitions_for_event(session, now))
+
+
+def may_score(session: Session, farm: Farm, event_type: str, context_group_id: int | None, now) -> bool:
+    """這筆交易可能計入任務或競賽嗎？（計分要交易紀錄的 ID，可能時不能延後寫入；查詢結果與 on_event 共用快取。）"""
+    if event_type not in SCORING_EVENTS or context_group_id is None or farm.home_group_id != context_group_id:
+        return False
+    return bool(_open_quests(session, context_group_id, now) or _open_competitions(session, now))
+
+
 def on_event(session: Session, farm: Farm, tx: GameTransaction) -> None:
     if tx.event_type not in SCORING_EVENTS:
         return
@@ -33,8 +49,7 @@ def on_event(session: Session, farm: Farm, tx: GameTransaction) -> None:
         return
     now = tx.created_at
 
-    quests = txcache.memo(session, ("quests", group_id),
-                          lambda: community_repo.open_quests_for_event(session, group_id, now))
+    quests = _open_quests(session, group_id, now)
     for quest in quests:
         # 快取的清單：迴圈中已達標完成、或時間已過的任務不再計入（與重新查詢的結果相同）
         if quest.status != "active" or not quest.starts_at <= now < quest.ends_at:
@@ -51,7 +66,7 @@ def on_event(session: Session, farm: Farm, tx: GameTransaction) -> None:
                 quest.status = "completed"
                 quest.completed_at = now
 
-    comps = txcache.memo(session, "competitions", lambda: community_repo.open_competitions_for_event(session, now))
+    comps = _open_competitions(session, now)
     for comp in comps:
         if comp.status != "active" or not comp.starts_at <= now < comp.ends_at:
             continue

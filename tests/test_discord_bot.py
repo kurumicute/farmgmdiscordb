@@ -326,7 +326,7 @@ def test_slow_command_defers_then_follows_up(admin):
 
 
 def test_database_outage_reports_safe_message(clock):
-    engine = make_engine("postgresql+psycopg://farmgm:x@127.0.0.1:1/none_test")
+    engine = make_engine("postgresql+psycopg://farmgm:x@0.0.0.0:1/none_test")
     runner = ServiceRunner(1)
     try:
         cmds = FarmCommands(AdminService(make_session_factory(engine), clock), runner)

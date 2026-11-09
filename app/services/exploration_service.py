@@ -8,7 +8,10 @@
 import logging
 from datetime import timedelta
 
-from app.game import balance, exploration, genetics, rules
+from sqlalchemy import select
+
+from app.db.models import Farm
+from app.game import balance, exploration, genetics, ruins, rules
 from app.game.errors import (
     AlreadyExistsError,
     GameError,
@@ -22,10 +25,13 @@ from app.repositories import catalog as catalog_repo
 from app.repositories import codex as codex_repo
 from app.repositories import exploration as exploration_repo
 from app.repositories import farms as farms_repo
+from app.repositories import groups as groups_repo
 from app.repositories import inventory as inventory_repo
 from app.repositories import items as items_repo
 from app.repositories import players as players_repo
 from app.repositories import ranch as ranch_repo
+from app.repositories import ruins as ruins_repo
+from app.repositories import titles as titles_repo
 from app.services.dto import ActionResult
 from app.services.game_service import harvest_highlight
 from app.services.ranch_service import RanchService
@@ -81,11 +87,13 @@ class ExplorationService(RanchService):
             trip = self._trip_view(exploration_repo.get_active(session, farm.id), now)
             codes = {d.item for a in exploration.AREAS.values() for pool in a.pools.values() for d in pool}
             names = _names(session, codes | {exploration.FAKE_COIN})
+            self._settle_guardian(session, farm.home_group_id)
+            ruins_open = ruins_repo.is_completed(session, farm.home_group_id)
             areas = []
             for code in exploration.AREA_ORDER:
                 area = exploration.AREAS[code]
                 row = counts.get(code)
-                unlocked = farm.level >= area.unlock_level
+                unlocked = farm.level >= area.unlock_level and (ruins_open or not area.needs_ruins)
 
                 def pool(kind, area=area):
                     return list(dict.fromkeys(names[d.item] for d in area.pools.get(kind, ())))
@@ -93,9 +101,13 @@ class ExplorationService(RanchService):
                 areas.append({
                     "code": code, "emoji": area.emoji, "name": area.name, "description": area.description,
                     "unlock_level": area.unlock_level, "unlocked": unlocked,
+                    "needs_ruins": area.needs_ruins, "ruins_open": ruins_open,
                     "duration_seconds": area.duration_seconds,
-                    # 一次只能進行一趟探險：有進行中或待領取的探險時，所有區域都不能出發
-                    "ready": unlocked and trip is None, "exploring": trip is not None and trip["area"] == code,
+                    # 一次只能進行一趟探險：有進行中或待領取的探險時，三個一般區域都不能出發；
+                    # 古代遺跡是額外的探索，只看自己的冷卻
+                    "ready": unlocked and (self._ruins_ready(row, now) if area.needs_ruins else trip is None),
+                    "exploring": trip is not None and trip["area"] == code,
+                    "next_at": row.next_available_at if area.needs_ruins and row else None,
                     "advanced": exploration.is_advanced(area, farm.level),
                     "advanced_level": area.advanced_level, "rolls": area.rolls,
                     "explore_count": row.explore_count if row else 0,
@@ -105,13 +117,20 @@ class ExplorationService(RanchService):
             return {"player_name": player.display_name, "level": farm.level, "areas": areas, "trip": trip,
                     "now": now}
 
+    @staticmethod
+    def _ruins_ready(row, now) -> bool:
+        return row is None or now >= row.next_available_at
+
     def explore(self, player_id: int, area_key: str) -> dict:
-        """出發探險：獎勵在出發時決定並記錄，探險時間結束後用 claim_exploration 領取。一次只能去一個區域。"""
+        """出發探險：獎勵在出發時決定並記錄，探險時間結束後用 claim_exploration 領取。一次只能去一個區域。
+        古代遺跡另外處理（explore_ruins）：不佔名額、立即拿到獎勵，回傳的是領取結果。"""
         code = exploration.find_area(area_key)
         if code is None:
             names = "、".join(a.name for a in exploration.AREAS.values())
             raise NotFoundError(f"沒有「{area_key}」這個探索區域。可探索區域：{names}")
         area = exploration.AREAS[code]
+        if area.needs_ruins:
+            return self.explore_ruins(player_id)
         with self._transaction() as session:
             farm = self._locked_farm(session, player_id)
             if farm.level < area.unlock_level:
@@ -137,6 +156,40 @@ class ExplorationService(RanchService):
                     "advanced": result.advanced, "level": farm.level, "started_at": now, "ends_at": until,
                     "duration_seconds": area.duration_seconds}
 
+    def explore_ruins(self, player_id: int) -> dict:
+        """探索古代遺跡（所屬群組修好後的額外探索）：不受一次一趟限制，立即拿到獎勵，冷卻 1 天。
+        掉落用古老森林模板再多抽 1–2 份；本週守護者已被打倒時再多抽 DEFEAT_BONUS_ROLLS 份，並對守護者造成傷害。"""
+        area = exploration.AREAS["ruins"]
+        with self._transaction() as session:
+            found = session.execute(select(Farm.home_group_id).where(Farm.player_id == player_id)).first()
+            self._settle_guardian(session, found[0] if found else None)  # 會鎖遺跡列，必須在鎖農場列之前
+            farm = self._locked_farm(session, player_id)
+            if not ruins_repo.is_completed(session, farm.home_group_id):
+                raise ValidationError(f"{area.name}還沒修好：要所屬群組的成員一起捐素材修復完成後才能進入"
+                                      "（「⛰️ 山洞」→「🏛️ 修復遺跡」）。")
+            if farm.level < area.unlock_level:
+                raise ValidationError(f"{area.name}需要農場 Lv.{area.unlock_level} 才能探索（目前 Lv.{farm.level}）。")
+            now = self._clock.now()
+            row = exploration_repo.get_cooldown(session, farm.id, "ruins", for_update=True)
+            if not self._ruins_ready(row, now):
+                left = rules.format_duration(rules.remaining_seconds(row.next_available_at, now))
+                raise ValidationError(f"今天已經探索過{area.name}了，{left}後才能再探索。")
+            g = ruins_repo.get_guardian(session, farm.home_group_id, ruins.week_start(now))
+            bonus = ruins.DEFEAT_BONUS_ROLLS if g is not None and g.defeated_at is not None else 0
+            low, high = exploration.RUINS_EXTRA_ROLLS
+            extra = low + min(high - low, int(self._explore_rng() * (high - low + 1)))
+            result = exploration.explore("ruins", farm.level, self._explore_rng, extra_rolls=extra + bonus)
+            until = now + timedelta(seconds=area.duration_seconds)
+            exploration_repo.set_cooldown(session, row, farm.id, "ruins", now, until)
+            # 建立時就標記已領取：不會和一般探險「每座農場最多一筆未領取」的唯一索引衝突
+            log = exploration_repo.add_log(
+                session, farm_id=farm.id, area_code="ruins", farm_level=farm.level, advanced=result.advanced,
+                rewards=dict(result.items), events=list(result.events), explored_at=now, next_available_at=until,
+                claimed_at=now,
+            )
+            out = self._grant_log(session, farm, log, now)
+            return {**out, "instant": True, "next_at": until, "extra_rolls": extra, "bonus_rolls": bonus}
+
     def claim_exploration(self, player_id: int) -> dict:
         """領取已回來的探險獎勵：素材、假幣與稀有種子都放進素材背包（不佔倉庫）；放不下時不領取。"""
         with self._transaction() as session:
@@ -149,37 +202,49 @@ class ExplorationService(RanchService):
             if now < log.next_available_at:
                 left = rules.format_duration(rules.remaining_seconds(log.next_available_at, now))
                 raise ValidationError(f"還在{area.name}探險中，{left}後才會回來。")
-            items = dict(log.rewards)
-            total = sum(items.values())
-            materials = sum(q for c, q in items.items() if inventory_repo.is_material(c))
-            try:
-                self._ensure_space(session, farm, total - materials)  # 一般物品放倉庫（目前掉落表沒有）
-                self._ensure_material_space(session, farm, materials)  # 素材、假幣與稀有種子放素材背包
-            except WarehouseFullError as exc:
-                raise WarehouseFullError(f"{exc} 探險帶回來的物品放不下，清出空間後再領取。") from None
-            for item, qty in items.items():
-                inventory_repo.add(session, farm.id, item, qty)
-                codex_repo.register(session, farm.id, item, qty, None, now)  # 山洞素材圖鑑
-            log.claimed_at = now
-            names = _names(session, items)
-            text = f"探索{area.name}：{_join(items, names) or '一無所獲'}"
-            if log.events:
-                text += f"（{'、'.join(log.events)}）"
-            self._record(session, farm, EventType.EXPLORE, text[:200], quantity=total)
-            seeds = {exploration.AMBER_SEED, exploration.MOON_SEED}
-            return {
-                "log_id": log.id, "area": log.area_code, "area_name": area.name, "emoji": area.emoji,
-                "advanced": log.advanced, "level": log.farm_level,
-                "items": [
-                    {"code": c, "name": names[c], "quantity": q,
-                     "rarity": exploration.MATERIALS[c][1] if c in exploration.MATERIALS else "稀有種子"}
-                    for c, q in items.items()
-                ],
-                "events": list(log.events),
-                "seeds": {names[c]: q for c, q in items.items() if c in seeds},
-                "fake_coins": items.get(exploration.FAKE_COIN, 0),
-                "started_at": log.explored_at, "ends_at": log.next_available_at,
-            }
+            return self._grant_log(session, farm, log, now)
+
+    def _grant_log(self, session, farm, log, now) -> dict:
+        """把探險紀錄的獎勵放進背包、寫交易紀錄並回傳結果（呼叫端已鎖農場列）；放不下時整筆不領取。"""
+        area = exploration.AREAS[log.area_code]
+        items = dict(log.rewards)
+        total = sum(items.values())
+        materials = sum(q for c, q in items.items() if inventory_repo.is_material(c))
+        try:
+            self._ensure_space(session, farm, total - materials)  # 一般物品放倉庫（目前掉落表沒有）
+            self._ensure_material_space(session, farm, materials)  # 素材、假幣與稀有種子放素材背包
+        except WarehouseFullError as exc:
+            raise WarehouseFullError(f"{exc} 探險帶回來的物品放不下，清出空間後再領取。") from None
+        for item, qty in items.items():
+            inventory_repo.add(session, farm.id, item, qty)
+            codex_repo.register(session, farm.id, item, qty, None, now)  # 山洞素材圖鑑
+        log.claimed_at = now
+        names = _names(session, items)
+        text = f"探索{area.name}：{_join(items, names) or '一無所獲'}"
+        if log.events:
+            text += f"（{'、'.join(log.events)}）"
+        self._record(session, farm, EventType.EXPLORE, text[:200], quantity=total)
+        guardian_note = ""
+        if area.needs_ruins and farm.home_group_id is not None:
+            hit = self._hit_guardian(session, farm.home_group_id, farm.id, ruins.EXPEDITION_DAMAGE)
+            if hit and hit[0]:
+                guardian_note = f"⚔️ 在遺跡裡和{ruins.GUARDIAN_NAME}交手，造成 {hit[0]} 點傷害！"
+                if hit[1]:
+                    guardian_note += f"🎉 {ruins.GUARDIAN_NAME}倒下了！"
+        seeds = {exploration.AMBER_SEED, exploration.MOON_SEED}
+        return {
+            "log_id": log.id, "area": log.area_code, "area_name": area.name, "emoji": area.emoji,
+            "advanced": log.advanced, "level": log.farm_level,
+            "items": [
+                {"code": c, "name": names[c], "quantity": q,
+                 "rarity": exploration.MATERIALS[c][1] if c in exploration.MATERIALS else "稀有種子"}
+                for c, q in items.items()
+            ],
+            "events": list(log.events),
+            "seeds": {names[c]: q for c, q in items.items() if c in seeds},
+            "fake_coins": items.get(exploration.FAKE_COIN, 0),
+            "started_at": log.explored_at, "ends_at": log.next_available_at, "guardian_note": guardian_note,
+        }
 
     def exploration_logs(self, player_id: int, limit: int = 10) -> list[dict]:
         limit = max(1, min(int(limit), 50))
@@ -195,6 +260,207 @@ class ExplorationService(RanchService):
                  "claimed_at": log.claimed_at}
                 for log in logs
             ]
+
+    # ---------- 古代遺跡（群組修復） ----------
+
+    def ruins_status(self, player_id: int) -> dict:
+        """所屬群組的遺跡修復進度、目前階段還缺的素材、我的背包數量、捐獻排行與本週守護者。
+        讀取前先結算已結束的守護者週（沒打倒時遺跡崩壞）。"""
+        with self._transaction() as session:
+            farm = self._farm_for_read(session, player_id)
+            group_id = farm.home_group_id
+            self._settle_guardian(session, group_id)
+            group = groups_repo.get(session, group_id) if group_id is not None else None
+            row = ruins_repo.get(session, group_id) if group_id is not None else None
+            stage = row.stage if row else 0
+            progress = dict(row.progress) if row else {}
+            info = ruins.stage_info(stage)
+            codes = set(info.materials) if info else set()
+            names = _names(session, codes)
+            return {
+                "group_id": group_id, "group_name": group.name if group else None,
+                "stage": stage, "stages": len(ruins.STAGES), "completed": info is None,
+                "completed_at": row.completed_at if row else None,
+                "stage_name": info.name if info else None, "stage_description": info.description if info else None,
+                "percent": ruins.percent(stage, progress),
+                "materials": [
+                    {"code": c, "name": names[c], "need": n, "donated": min(progress.get(c, 0), n),
+                     "have": inventory_repo.get_quantity(session, farm.id, c)}
+                    for c, n in (info.materials.items() if info else ())
+                ],
+                "mine": ruins_repo.contribution(session, group_id, farm.id) if group_id is not None else 0,
+                "top": ruins_repo.top_contributors(session, group_id) if group_id is not None else [],
+                "title": ruins.TITLE,
+                "stage_names": [st.name for st in ruins.STAGES],
+                "collapsed_at": row.collapsed_at if row else None,
+                "guardian": self._guardian_view(session, row, farm) if row and row.completed_at else None,
+            }
+
+    def _guardian_view(self, session, row, farm) -> dict:
+        now = self._clock.now()
+        week = ruins.week_start(now)
+        active = ruins.guardian_active(row.completed_at, now)
+        g = ruins_repo.get_guardian(session, row.group_id, week) if active else None
+        hp_max = g.hp_max if g else ruins.guardian_hp(ruins_repo.member_farms(session, row.group_id))
+        bag = [(c, inventory_repo.get_quantity(session, farm.id, c)) for c in exploration.MATERIALS
+               if ruins.material_damage(c)]
+        names = _names(session, [c for c, _q in bag])
+        first = ruins.first_guardian_week(row.completed_at)
+        return {
+            "name": ruins.GUARDIAN_NAME, "active": active,
+            "appears_at": ruins.week_end(first - timedelta(days=7)), "ends_at": ruins.week_end(week),
+            "hp_max": hp_max, "damage": min(g.damage, hp_max) if g else 0, "defeated": bool(g and g.defeated_at),
+            "mine": ruins_repo.my_hits(session, row.group_id, week, farm.id) if active else 0,
+            "top": ruins_repo.top_hits(session, row.group_id, week) if active else [],
+            "weapons": [{"code": c, "name": names[c], "have": q, "damage": ruins.material_damage(c)}
+                        for c, q in bag if q > 0],
+            "expedition_damage": ruins.EXPEDITION_DAMAGE, "bonus_rolls": ruins.DEFEAT_BONUS_ROLLS,
+        }
+
+    def _settle_guardian(self, session, group_id: int | None) -> None:
+        """結算已經結束的守護者週：該週沒打倒（或根本沒人攻擊）時遺跡崩壞回第三階段。
+        沒有要結算的週時只讀一列、不加鎖；呼叫端不可已持有農場列的鎖（順序：遺跡列 → 農場列 → 守護者列）。"""
+        if group_id is None:
+            return
+        now = self._clock.now()
+        row = ruins_repo.get(session, group_id)
+        if row is None or row.completed_at is None or not ruins.weeks_to_settle(row.completed_at,
+                                                                                 row.guardian_settled, now):
+            return
+        row = ruins_repo.get(session, group_id, for_update=True)
+        if row.completed_at is None:
+            return
+        for week in ruins.weeks_to_settle(row.completed_at, row.guardian_settled, now):
+            guardian = ruins_repo.get_guardian(session, group_id, week)
+            row.guardian_settled = week
+            if guardian is None or guardian.defeated_at is None:
+                row.stage, row.progress, row.completed_at = ruins.COMPLETED - 1, {}, None
+                row.collapsed_at, row.updated_at = ruins.week_end(week), now
+                logger.info("群組 #%s 的古代遺跡因 %s 那週的守護者沒被打倒而崩壞", group_id, week)
+                break
+
+    def _hit_guardian(self, session, group_id: int, farm_id: int, damage: int) -> tuple[int, bool] | None:
+        """對本週守護者造成傷害（呼叫端已鎖農場列）。回傳 (實際傷害, 這次打倒)；守護者還沒出現時 None。"""
+        now = self._clock.now()
+        row = ruins_repo.get(session, group_id)
+        if row is None or not ruins.guardian_active(row.completed_at, now):
+            return None
+        week = ruins.week_start(now)
+        g = ruins_repo.ensure_guardian(session, group_id, week,
+                                       ruins.guardian_hp(ruins_repo.member_farms(session, group_id)))
+        if g.defeated_at is not None:
+            return 0, False
+        dealt = min(damage, g.hp_max - g.damage)
+        g.damage += dealt
+        ruins_repo.add_hit(session, group_id, week, farm_id, dealt)
+        if g.damage >= g.hp_max:
+            g.defeated_at = now
+            return dealt, True
+        return dealt, False
+
+    def attack_guardian(self, player_id: int, item_key: str, quantity: int) -> ActionResult:
+        """捐素材攻擊所屬群組本週的遺跡守護者；超過剩餘 HP 所需的數量不會扣。"""
+        quantity = rules.validate_quantity(quantity)
+        if quantity > ruins.ATTACK_MAX:
+            raise ValidationError(f"一次最多用 {ruins.ATTACK_MAX} 個素材。")
+        code = (item_key or "").strip()
+        per = ruins.material_damage(code)
+        if per is None:
+            raise ValidationError("只能用山洞素材攻擊守護者（假幣不行）。")
+        with self._transaction() as session:
+            now = self._clock.now()
+            found = session.execute(select(Farm.home_group_id).where(Farm.player_id == player_id)).first()
+            if found is None:
+                self._locked_farm(session, player_id)
+            group_id = found[0]
+            self._settle_guardian(session, group_id)  # 先結算（鎖遺跡列），再鎖農場列
+            row = ruins_repo.get(session, group_id) if group_id is not None else None
+            if row is None or row.completed_at is None:
+                raise ValidationError("古代遺跡還沒修好（或已經崩壞），現在沒有守護者。")
+            if not ruins.guardian_active(row.completed_at, now):
+                raise ValidationError("守護者還沒出現：遺跡修好後的下一個週一（台灣時間）才會出現。")
+            farm = self._locked_farm(session, player_id)
+            if farm.home_group_id != group_id:
+                raise ValidationError("農場的所屬群組剛剛變更了，請重新開啟遺跡頁面。")
+            week = ruins.week_start(now)
+            g = ruins_repo.ensure_guardian(session, group_id, week,
+                                           ruins.guardian_hp(ruins_repo.member_farms(session, group_id)))
+            if g.defeated_at is not None:
+                raise ValidationError(f"本週的{ruins.GUARDIAN_NAME}已經被打倒了，下週一再來！")
+            qty = min(quantity, -(-(g.hp_max - g.damage) // per))  # 剩餘 HP 需要幾個（無條件進位）
+            name = _names(session, [code])[code]
+            if not inventory_repo.remove(session, farm.id, code, qty):
+                have = inventory_repo.get_quantity(session, farm.id, code)
+                raise InsufficientItemsError(f"{name}不足：想用 {qty} 個，背包只有 {have} 個。")
+            dealt, defeated = self._hit_guardian(session, group_id, farm.id, qty * per)
+            self._record(session, farm, EventType.RUINS_GUARDIAN,
+                         f"用 {name} ×{qty} 攻擊{ruins.GUARDIAN_NAME}，造成 {dealt} 傷害",
+                         item_code=code, quantity=qty)
+            text = f"⚔️ 用 {name} ×{qty} 攻擊{ruins.GUARDIAN_NAME}，造成 **{dealt}** 點傷害！"
+            if qty < quantity:
+                text += "（剩餘 HP 只需要這些，其餘留在背包）"
+            if defeated:
+                text += (f"\n🎉 {ruins.GUARDIAN_NAME}倒下了！本週古代遺跡探索每次多 {ruins.DEFEAT_BONUS_ROLLS} 份獎勵，"
+                         "遺跡也安全度過這一週。")
+            return ActionResult(text, farm.gold, item_code=code, quantity=qty)
+
+    def donate_ruins(self, player_id: int, item_key: str, quantity: int) -> ActionResult:
+        """捐素材修復所屬群組的遺跡；超過目前階段還缺的數量時只捐需要的部分。階段湊齊就進入下一階段，
+        三個階段都完成時，所有捐過素材的成員獲得稱號。先鎖遺跡列再鎖農場列（和世界 Boss 相同順序）。"""
+        quantity = rules.validate_quantity(quantity)
+        if quantity > ruins.DONATE_MAX:
+            raise ValidationError(f"一次最多捐 {ruins.DONATE_MAX} 個。")
+        code = (item_key or "").strip()
+        with self._transaction() as session:
+            now = self._clock.now()
+            # 只讀欄位、不載入 Farm 物件：之後 FOR UPDATE 載入時才是鎖定後的最新值（避免 identity map 留著舊值）
+            found = session.execute(select(Farm.home_group_id).where(Farm.player_id == player_id)).first()
+            if found is None:
+                self._locked_farm(session, player_id)  # 產生正確的錯誤訊息
+            group_id = found[0]
+            if group_id is None:
+                raise ValidationError("你的農場還沒有所屬群組，無法修復遺跡。")
+            self._settle_guardian(session, group_id)  # 遺跡可能剛因守護者沒被打倒而崩壞
+            row = ruins_repo.get_or_create(session, group_id, now)
+            farm = self._locked_farm(session, player_id)
+            if farm.home_group_id != group_id:  # 讀取後到鎖定前剛好轉移了所屬群組
+                raise ValidationError("農場的所屬群組剛剛變更了，請重新開啟遺跡頁面。")
+            info = ruins.stage_info(row.stage)
+            if info is None:
+                raise ValidationError("古代遺跡已經修復完成了，直接到山洞出發探險吧！")
+            need = ruins.remaining(row.stage, row.progress)
+            if code not in info.materials:
+                names = _names(session, info.materials)
+                raise ValidationError(f"「{info.name}」階段只需要：{'、'.join(names.values())}。")
+            if code not in need:
+                raise ValidationError(f"{_names(session, [code])[code]}已經夠了，捐其他還缺的素材吧。")
+            qty = min(quantity, need[code])
+            name = _names(session, [code])[code]
+            if not inventory_repo.remove(session, farm.id, code, qty):
+                have = inventory_repo.get_quantity(session, farm.id, code)
+                raise InsufficientItemsError(f"{name}不足：想捐 {qty} 個，背包只有 {have} 個。")
+            progress = dict(row.progress)
+            progress[code] = progress.get(code, 0) + qty
+            row.progress = progress  # 指定新的 dict，SQLAlchemy 才會偵測到 JSON 變更
+            row.updated_at = now
+            ruins_repo.add_contribution(session, group_id, farm.id, qty, now)
+            self._record(session, farm, EventType.RUINS_DONATE, f"捐 {name} ×{qty} 修復古代遺跡（{info.name}）",
+                         item_code=code, quantity=qty)
+            text = f"🏛️ 捐出 {name} ×{qty}，幫忙{info.name}。"
+            if qty < quantity:
+                text += f"（這個階段只差 {qty} 個，其餘留在背包）"
+            if ruins.stage_done(row.stage, row.progress):
+                row.stage += 1
+                row.progress = {}
+                if row.stage >= ruins.COMPLETED:
+                    row.completed_at = now
+                    for farm_id in ruins_repo.contributor_farms(session, group_id):
+                        titles_repo.grant(session, farm_id, ruins.TITLE, ruins.TITLE_SOURCE, now)
+                    text += ("\n🎉 古代遺跡修復完成！整個群組都能到山洞探索「🏛️ 古代遺跡」，"
+                             f"所有出過力的成員獲得稱號「{ruins.TITLE}」。")
+                else:
+                    text += f"\n✨ 「{info.name}」完成！下一階段：「{ruins.STAGES[row.stage].name}」。"
+            return ActionResult(text, farm.gold, item_code=code, quantity=qty)
 
     # ---------- 假幣 ----------
 

@@ -54,7 +54,7 @@ def fight_until_done(p, admin, clock):
         view = admin.fishing_state(p.panel.player_id)
         if view["phase"] != "fighting":
             return view
-        state = {k: view[k] for k in ("intent", "tension", "distance", "stamina", "max_stamina", "max_tension")}
+        state = {k: view[k] for k in fishing.POLICY_KEYS}
         action = fishing.smart_action(state, None, {"reel_power": 10, "control_pct": 0})
         p.click(fishing.ACTION_NAMES[action])
         clock.advance(1)
@@ -131,7 +131,7 @@ def test_multi_select_and_sell_all_need_confirmation(cmds, admin, clock):
         clock._now = view["bite_at"]
         admin.hook_fish(p.panel.player_id, view["id"])
         while (v := admin.fishing_state(p.panel.player_id))["phase"] == "fighting":
-            state = {k: v[k] for k in ("intent", "tension", "distance", "stamina", "max_stamina", "max_tension")}
+            state = {k: v[k] for k in fishing.POLICY_KEYS}
             admin.fishing_action(p.panel.player_id, v["id"], fishing.smart_action(state, None, {"reel_power": 10}),
                                  v["turn"])
     basket = admin.fish_basket(p.panel.player_id)["fish"]

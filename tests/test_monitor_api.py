@@ -188,7 +188,7 @@ def test_monitor_session_is_read_only_transaction(monitor):
 
 
 def test_database_down_returns_error_not_fake_data():
-    engine = make_engine("postgresql+psycopg://u:p@127.0.0.1:1/nope_test")
+    engine = make_engine("postgresql+psycopg://u:p@0.0.0.0:1/nope_test")
     app = create_app(make_session_factory(engine), refresh_seconds=0.2, check=False, allowed_hosts=["testserver"])
     try:
         with TestClient(app) as c:

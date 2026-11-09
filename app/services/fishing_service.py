@@ -8,14 +8,17 @@
 - 販售以「鎖定 + sold_at IS NULL」標記，金幣經 _record 寫入交易紀錄（fish_sell），不會重複發錢。
 - 分享只寫分享紀錄，不轉移、不消耗魚；只能分享自己的魚（以農場比對，不接受他人的魚 ID）。
 - 時間到期（沒有及時拉竿、拉扯操作逾時）在下一次讀取或操作時判定，不靠排程；Bot 啟動時另外清理殘留的 Session。
+- 防腳本：定期（每 25–45 次拋竿）或操作時間異常時，start_fishing 回傳人機確認題目（phase = check）而不拋竿；
+  答錯暫停釣魚並記 log。判定都在伺服器端，暫停只影響拋竿，不扣任何資產。
 """
 
+import logging
 import random
 from collections.abc import Callable
 from datetime import timedelta
 
-from app.db.models import FarmFish, FishingSession
-from app.game import fishing
+from app.db.models import FarmFish, FishingGuard, FishingSession
+from app.game import fishing, seasons
 from app.game.errors import (
     AlreadyExistsError,
     InsufficientGoldError,
@@ -29,6 +32,9 @@ from app.repositories import groups as groups_repo
 from app.repositories import players as players_repo
 from app.services.dto import ActionResult
 from app.services.exploration_service import ExplorationService
+
+logger = logging.getLogger(__name__)
+_guard_random = random.SystemRandom()  # 題目與確認間隔不可預測，也不影響 _fishing_rng 的序列
 
 
 def gear_view(g, owned=None, level: int | None = None) -> dict:
@@ -50,7 +56,9 @@ def fish_type_view(f) -> dict:
         "rarity_name": fishing.RARITY_NAMES[f.rarity], "rarity_emoji": fishing.RARITY_EMOJI[f.rarity],
         "min_price": f.min_price, "max_price": f.max_price, "min_weight_g": f.min_weight_g,
         "max_weight_g": f.max_weight_g, "difficulty": f.difficulty, "description": f.description,
-        "sort_order": f.sort_order, "active": f.active,
+        "sort_order": f.sort_order, "active": f.active, "required_baits": list(f.required_baits or []),
+        "seasons": list(f.seasons or []), "hour_start": f.hour_start, "hour_end": f.hour_end,
+        "limit_text": seasons.describe(f.seasons, f.hour_start, f.hour_end),
     }
 
 
@@ -123,6 +131,10 @@ class FishingService(ExplorationService):
             "tension": state.get("tension", 0), "max_tension": state.get("max_tension", fishing.BASE_MAX_TENSION),
             "intent": state.get("intent"), "intent_text": fishing.INTENT_TEXT.get(state.get("intent"), ""),
             "last_text": (state.get("last") or {}).get("text"), "fish": None, "record": None,
+            "dodge": state.get("dodge"), "dodge_text": fishing.DODGE_TEXT.get(state.get("dodge"), ""),
+            "reel_streak": state.get("reel_streak", 0),
+            "next_reel_tension": round(fishing.reel_tension(state)) if "max_tension" in state else 0,
+            "land_stamina": fishing.land_stamina(state) if "max_stamina" in state else 0,
         }
         if row.status == "landed":
             got = fishing_repo.get_farm_fish(session, row.farm_id, fishing_repo.session_fish(session, row.id).id)
@@ -268,51 +280,141 @@ class FishingService(ExplorationService):
         return row.action_deadline is not None and now > row.action_deadline + grace
 
     def start_fishing(self, player_id: int) -> dict:
-        """拋竿：檢查裝備、魚餌與魚簍空間，扣 1 個魚餌，決定魚種與上鉤時間。"""
+        """拋竿：檢查裝備、魚餌與魚簍空間，扣 1 個魚餌，決定魚種與上鉤時間。
+        需要人機確認時不拋竿，回傳題目（phase = check），由 answer_fishing_check 作答。"""
         now = self._clock.now()
-        rng = self._fishing_rng
         with self._transaction() as session:
             farm = self._locked_farm(session, player_id)
-            active = self._expire(fishing_repo.active_session(session, farm.id, for_update=True), now)
-            if active is not None:
-                raise ValidationError("你已經在釣魚了，請先完成這一次。")
-            version, settings = fishing_repo.current_settings(session)
-            equipped = fishing_repo.equipped_gear(session, farm.id)
-            missing = [fishing.GEAR_KIND_NAMES[k] for k in fishing.GEAR_KINDS if k not in equipped]
-            if missing:
-                raise ValidationError(f"還沒有裝備{'、'.join(missing)}，請先到「🛒 釣具商店」購買並裝備。")
-            bait_row, bait = equipped["bait"]
-            if bait_row.quantity <= 0:
-                raise InsufficientItemsError(f"{bait.name}用完了，請到釣具商店補充魚餌。")
-            capacity = settings["basket_capacity"]
-            if fishing_repo.basket_count(session, farm.id) >= capacity:
-                raise ValidationError(f"魚簍已滿（{capacity} 隻），請先賣掉一些魚再來釣。")
-            fish_types = fishing_repo.list_fish_types(session, active_only=True)
-            pools: dict[str, list] = {}
-            for f in fish_types:
+            self._ensure_not_fishing(session, farm, now)
+            if fishing.GUARD_ENABLED:
+                guard = self._guard_row(session, farm)
+                if guard.locked_until is not None and now < guard.locked_until:
+                    left = max(1, int((guard.locked_until - now).total_seconds() // 60) + 1)
+                    raise ValidationError(f"人機確認沒有通過，釣魚暫停中，約 {left} 分鐘後才能再拋竿。")
+                if self._guard_needs_check(guard):
+                    return self._guard_check_view(guard, now)
+                guard.casts_since_check += 1
+            return self._cast(session, farm, now)
+
+    def _ensure_not_fishing(self, session, farm, now) -> None:
+        active = self._expire(fishing_repo.active_session(session, farm.id, for_update=True), now)
+        if active is not None:
+            raise ValidationError("你已經在釣魚了，請先完成這一次。")
+
+    def _cast(self, session, farm, now) -> dict:
+        rng = self._fishing_rng
+        version, settings = fishing_repo.current_settings(session)
+        equipped = fishing_repo.equipped_gear(session, farm.id)
+        missing = [fishing.GEAR_KIND_NAMES[k] for k in fishing.GEAR_KINDS if k not in equipped]
+        if missing:
+            raise ValidationError(f"還沒有裝備{'、'.join(missing)}，請先到「🛒 釣具商店」購買並裝備。")
+        bait_row, bait = equipped["bait"]
+        if bait_row.quantity <= 0:
+            raise InsufficientItemsError(f"{bait.name}用完了，請到釣具商店補充魚餌。")
+        capacity = settings["basket_capacity"]
+        if fishing_repo.basket_count(session, farm.id) >= capacity:
+            raise ValidationError(f"魚簍已滿（{capacity} 隻），請先賣掉一些魚再來釣。")
+        fish_types = fishing_repo.list_fish_types(session, active_only=True)
+        pools: dict[str, list] = {}
+        for f in fish_types:  # 只放目前魚餌、季節與時段釣得到的魚
+            if fishing.bait_allows(f.required_baits, bait.code) and seasons.available(
+                    f.seasons, f.hour_start, f.hour_end, now):
                 pools.setdefault(f.rarity, []).append(f)
-            rarity = fishing.roll_rarity(settings["rarity_bp"], dict(bait.effects), rng)
-            ftype = fishing.pick_fish(pools, rarity, rng)
-            if ftype is None:
-                raise ValidationError("目前沒有可以釣的魚，請稍後再試。")
-            weight = fishing.roll_weight(ftype.min_weight_g, ftype.max_weight_g, rng)
-            price = fishing.fish_price(ftype.min_price, ftype.max_price, ftype.min_weight_g, ftype.max_weight_g,
-                                       weight)
-            rod, line = dict(equipped["rod"][1].effects), dict(equipped["line"][1].effects)
-            state = fishing.new_fight(settings, ftype.rarity, ftype.difficulty, line, rng)
-            bite_at = now + timedelta(seconds=fishing.bite_wait_seconds(settings, dict(bait.effects), rng))
-            react_deadline = bite_at + timedelta(seconds=fishing.reaction_seconds(settings, rod))
-            bait_row.quantity -= 1  # 扣魚餌與建立 Session 在同一筆交易
-            gear = {k: {"code": g.code, "name": g.name, "effects": dict(g.effects)} for k, (_o, g) in equipped.items()}
-            row = FishingSession(
-                farm_id=farm.id, status="casting", settings_version=version, settings=settings, gear=gear,
-                fish_code=ftype.code, rarity=ftype.rarity, weight_g=weight, price=price, state=state, turns=0,
-                started_at=now, bite_at=bite_at, react_deadline=react_deadline,
-                context_group_id=self._context_group(session, farm),
-            )
-            session.add(row)
-            session.flush()  # 部分唯一索引：並行拋竿時第二筆在這裡失敗並回滾（魚餌也不會被扣）
-            return self._session_view(session, row, now)
+        rarity = fishing.roll_rarity(settings["rarity_bp"], dict(bait.effects), rng)
+        ftype = fishing.pick_fish(pools, rarity, rng)
+        if ftype is None:
+            raise ValidationError("目前沒有可以釣的魚，請稍後再試。")
+        weight = fishing.roll_weight(ftype.min_weight_g, ftype.max_weight_g, rng)
+        price = fishing.fish_price(ftype.min_price, ftype.max_price, ftype.min_weight_g, ftype.max_weight_g,
+                                   weight)
+        rod, line = dict(equipped["rod"][1].effects), dict(equipped["line"][1].effects)
+        state = fishing.new_fight(settings, ftype.rarity, ftype.difficulty, line, rng)
+        bite_at = now + timedelta(seconds=fishing.bite_wait_seconds(settings, dict(bait.effects), rng))
+        react_deadline = bite_at + timedelta(seconds=fishing.reaction_seconds(settings, rod))
+        bait_row.quantity -= 1  # 扣魚餌與建立 Session 在同一筆交易
+        gear = {k: {"code": g.code, "name": g.name, "effects": dict(g.effects)} for k, (_o, g) in equipped.items()}
+        row = FishingSession(
+            farm_id=farm.id, status="casting", settings_version=version, settings=settings, gear=gear,
+            fish_code=ftype.code, rarity=ftype.rarity, weight_g=weight, price=price, state=state, turns=0,
+            started_at=now, bite_at=bite_at, react_deadline=react_deadline,
+            context_group_id=self._context_group(session, farm),
+        )
+        session.add(row)
+        session.flush()  # 部分唯一索引：並行拋竿時第二筆在這裡失敗並回滾（魚餌也不會被扣）
+        return self._session_view(session, row, now)
+
+    # ---------- 防腳本（呼叫端都已鎖定農場列） ----------
+
+    @staticmethod
+    def _next_check_after() -> int:
+        return _guard_random.randint(*fishing.GUARD_CHECK_EVERY_CASTS)
+
+    def _guard_row(self, session, farm) -> FishingGuard:
+        guard = fishing_repo.get_guard(session, farm.id)
+        if guard is None:
+            guard = FishingGuard(farm_id=farm.id, casts_since_check=0, check_after=self._next_check_after(),
+                                 suspicion=0, consecutive_failures=0, failed_total=0, passed_total=0)
+            session.add(guard)
+            session.flush()
+        return guard
+
+    @staticmethod
+    def _guard_needs_check(guard: FishingGuard) -> bool:
+        return (guard.challenge is not None or guard.casts_since_check >= guard.check_after
+                or guard.suspicion >= fishing.GUARD_SUSPICION_LIMIT)
+
+    @staticmethod
+    def _guard_check_view(guard: FishingGuard, now, note: str | None = None) -> dict:
+        """出題或沿用還沒過期的題目；回傳給面板的內容不含答案代碼以外的提示（題目只寫中文名稱）。"""
+        if guard.challenge is None or guard.challenge_expires_at is None or now >= guard.challenge_expires_at:
+            guard.challenge = fishing.new_guard_challenge(_guard_random.sample, _guard_random.shuffle)
+            guard.challenge_expires_at = now + timedelta(seconds=fishing.GUARD_CHALLENGE_SECONDS)
+        creatures = fishing.GUARD_CREATURES
+        return {
+            "phase": "check", "status": "check", "note": note, "expires_at": guard.challenge_expires_at,
+            "target": creatures[guard.challenge["answer"]][1],
+            "options": [{"code": c, "emoji": creatures[c][0]} for c in guard.challenge["options"]],
+        }
+
+    def answer_fishing_check(self, player_id: int, code: str) -> dict:
+        """回答人機確認：答對接著拋竿；答錯暫停釣魚（連續答錯加倍）；題目過期換一題、不算答錯。"""
+        now = self._clock.now()
+        with self._transaction() as session:
+            farm = self._locked_farm(session, player_id)
+            self._ensure_not_fishing(session, farm, now)
+            guard = self._guard_row(session, farm)
+            if guard.challenge is None:  # 重複點擊：題目已經答過，照一般拋竿流程走（暫停中會被擋下）
+                if guard.locked_until is not None and now < guard.locked_until:
+                    raise ValidationError("人機確認沒有通過，釣魚暫停中，請稍後再試。")
+                guard.casts_since_check += 1
+                return self._cast(session, farm, now)
+            if guard.challenge_expires_at is None or now >= guard.challenge_expires_at:
+                return self._guard_check_view(guard, now, "⌛ 題目過期了，換一題。")
+            passed = code == guard.challenge["answer"]
+            guard.challenge, guard.challenge_expires_at = None, None
+            if not passed:
+                guard.consecutive_failures += 1
+                guard.failed_total += 1
+                minutes = fishing.guard_lock_minutes(guard.consecutive_failures)
+                guard.locked_until = now + timedelta(minutes=minutes)
+                logger.warning("釣魚人機確認答錯：農場 #%s，連續 %d 次，累計 %d 次，暫停 %d 分鐘",
+                               farm.id, guard.consecutive_failures, guard.failed_total, minutes)
+                return {"phase": "check_failed", "status": "check_failed", "minutes": minutes,
+                        "locked_until": guard.locked_until}
+            guard.consecutive_failures = 0
+            guard.passed_total += 1
+            guard.casts_since_check = 1  # 這次答對後的拋竿也算一次
+            guard.check_after = self._next_check_after()
+            guard.suspicion = 0
+            guard.locked_until = None
+            return self._cast(session, farm, now)
+
+    def _guard_flag(self, session, farm, reason: str) -> None:
+        """累積可疑分數：只會讓下一次拋竿要確認，誤判的代價只有多按一題。"""
+        guard = self._guard_row(session, farm)
+        guard.suspicion += fishing.GUARD_SCORE[reason]
+        if guard.suspicion >= fishing.GUARD_SUSPICION_LIMIT:
+            logger.info("釣魚操作時間異常：農場 #%s，原因 %s，可疑分數 %d", farm.id, reason, guard.suspicion)
 
     def _active_for_action(self, session, farm, session_id: int, now) -> FishingSession | None:
         row = fishing_repo.active_session(session, farm.id, for_update=True)
@@ -335,6 +437,8 @@ class FishingService(ExplorationService):
                 elif now < row.bite_at:
                     raise ValidationError("魚還沒上鉤，再等一下！")
                 else:
+                    if fishing.GUARD_ENABLED and (now - row.bite_at).total_seconds() < fishing.GUARD_FAST_HOOK_SECONDS:
+                        self._guard_flag(session, farm, "fast_hook")
                     row.status = "fighting"
                     row.action_deadline = now + timedelta(seconds=row.settings["action_timeout_seconds"])
                     state = dict(row.state)
@@ -361,6 +465,8 @@ class FishingService(ExplorationService):
                     diff = row.settings["difficulty"][row.rarity]
                     rod = (row.gear.get("rod") or {}).get("effects", {})
                     state, result = fishing.step(row.state, action, diff, rod, self._fishing_rng)
+                    if fishing.GUARD_ENABLED:
+                        self._guard_timing(session, farm, row, state, result, now)
                     row.state = state
                     row.turns = state["turn"]
                     if result is None:
@@ -374,6 +480,17 @@ class FishingService(ExplorationService):
                             session.flush()  # session_id 唯一：同一次釣魚不會發兩隻魚
             target = row or fishing_repo.last_session(session, farm.id)
             return {**self._session_view(session, target, now), **view_extra}
+
+    def _guard_timing(self, session, farm, row: FishingSession, state: dict, result: str | None, now) -> None:
+        """記錄這次操作距離上一步多久：太快或整場節奏規律得不像人時累積可疑分數。"""
+        previous = row.action_deadline - timedelta(seconds=row.settings["action_timeout_seconds"])
+        gap = (now - previous).total_seconds()
+        if gap < fishing.GUARD_FAST_ACTION_SECONDS:
+            self._guard_flag(session, farm, "fast_action")
+        gaps = [*state.get("gaps", []), round(gap, 3)][-fishing.GUARD_GAPS_KEPT:]
+        state["gaps"] = gaps
+        if result is not None and fishing.regular_rhythm(gaps):
+            self._guard_flag(session, farm, "regular")
 
     def give_up_fishing(self, player_id: int, session_id: int) -> dict:
         """收竿放棄（已扣的魚餌不退還）。"""
@@ -487,13 +604,15 @@ class FishingService(ExplorationService):
         with self._transaction() as session:
             farm = self._farm_for_read(session, player_id)
             caught = fishing_repo.codex(session, farm.id)
+            gear_names = {g.code: g.name for g in fishing_repo.list_gear(session)}
             entries = []
             for t in fishing_repo.list_fish_types(session):
                 c = caught.get(t.code)
                 if not t.active and c is None:
                     continue
                 entries.append({**fish_type_view(t), "caught": c is not None, "count": c["count"] if c else 0,
-                                "max_weight_g": c["max_weight_g"] if c else None})
+                                "max_weight_g": c["max_weight_g"] if c else None,
+                                "bait_names": [gear_names.get(b, b) for b in (t.required_baits or [])]})
             return {"entries": entries, "discovered": sum(1 for e in entries if e["caught"]), "total": len(entries)}
 
     def fishing_leaderboard(self, group_id: int | None) -> dict:

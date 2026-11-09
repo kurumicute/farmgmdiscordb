@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.clock import TAIPEI_TZ
 from app.db.models import Group, Player
-from app.game import balance, genetics, pets, rules
+from app.game import balance, genetics, news, pets, rules
 from app.game.errors import (
     AlreadyExistsError,
     AlreadyStolenError,
@@ -37,8 +37,10 @@ from app.repositories import groups as groups_repo
 from app.repositories import inventory as inventory_repo
 from app.repositories import items as items_repo
 from app.repositories import leaderboard as leaderboard_repo
+from app.repositories import news as news_repo
 from app.repositories import pets as pets_repo
 from app.repositories import players as players_repo
+from app.repositories import rumors as rumors_repo
 from app.repositories import steals as steals_repo
 from app.services.dto import ActionResult, ExternalContext, FarmStatus, GroupInfo, StealFarmView, StealTarget
 from app.services.fishing_service import FishingService
@@ -510,13 +512,42 @@ class SocialService(FishingService):
             tail = "，這塊土地已被偷光，恢復為空地" if emptied else ""
             value = self._estimate_value(session, crop, quantity, quality, mutation)
             head = "✨ 偷到稀有貨！" if is_rare(quality, mutation) else "🥷 得手了！"
+            dig = self._rumor_dig(session, thief_farm, victim_farm, now)
             return ActionResult(
                 f"{head}成功從 {victim.display_name} 的第 {plot_number} 格偷走 {quantity} 個{crop_label}{tail}。\n"
-                f"📦 約值 {value:,} 金\n👀 {victim.display_name} 下次打開農場時會知道是你偷的",
+                f"📦 約值 {value:,} 金\n👀 {victim.display_name} 下次打開農場時會知道是你偷的{dig}",
                 thief_farm.gold,
                 item_code=item,
                 quantity=quantity,
             )
+
+    def _rumor_dig(self, session: Session, thief_farm, victim_farm, now) -> str:
+        """偷菜成功後，被偷的農場剛好是今天日報傳聞的主角時順手挖寶（每人每天一次；寶藏只有第一個人挖得到）。
+        雙方農場列已鎖定：同一個傳聞的挖寶都會鎖同一座被偷的農場，判斷「已被挖走」與寫入不會交錯。"""
+        group_id = victim_farm.home_group_id
+        if group_id is None:
+            return ""
+        day = news.news_day(now)
+        start, end = news.day_range(day)
+        candidates = sorted({r[0] for r in news_repo.farm_events(session, group_id, start, end)})
+        rumor = news.rumor(group_id, day, candidates)
+        if rumor is None or rumor.target != victim_farm.id:
+            return ""
+        if rumors_repo.dug(session, thief_farm.id, day):
+            return "\n🕳️ 今天你已經在傳聞說的地方挖過了。"
+        taken = rumors_repo.found(session, group_id, day)
+        found = rumor.real and not taken and self._rumor_rng() < news.DIG_CHANCE
+        gold = news.treasure_gold(self._rumor_rng()) if found else 0
+        rumors_repo.add(session, farm_id=thief_farm.id, day=day, group_id=group_id, target_farm_id=victim_farm.id,
+                        found=found, gold=gold, now=now)
+        if found:
+            thief_farm.gold += gold
+            self._record(session, thief_farm, EventType.RUMOR_TREASURE,
+                         f"在 {victim_farm.name} 的田裡挖到傳聞中的寶藏，金幣 +{gold}", gold_delta=gold)
+            return f"\n💎 傳聞是真的！你順手一挖，挖出一箱寶藏：金幣 **+{gold:,}**！"
+        if rumor.real and taken:
+            return "\n🕳️ 你在傳聞說的地方挖了挖…只剩一個被挖開的空坑，寶藏已經被別人拿走了。"
+        return "\n🕳️ 你在傳聞說的地方順手挖了挖，什麼都沒有。"
 
     # ---------- 防守設施 ----------
 

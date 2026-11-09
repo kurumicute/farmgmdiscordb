@@ -27,7 +27,7 @@ from app.db.models import (
     Quest,
     StealRecord,
 )
-from app.game import balance, fishing, genetics, rules
+from app.game import balance, fishing, genetics, rules, seasons
 from app.game import events as event_rules
 from app.game.errors import AlreadyExistsError, NotFoundError, ValidationError, WarehouseFullError
 from app.game.rules import EventType
@@ -63,6 +63,7 @@ def crop_view(c: CropType) -> dict:
         "variant_code": c.variant_code,
         "variant_name": c.variant_name,
         "active": c.active,
+        "seasons": list(c.seasons or []), "hour_start": c.hour_start, "hour_end": c.hour_end,
     }
 
 
@@ -85,14 +86,26 @@ def _code(value, label: str) -> str:
     return value
 
 
+def _limit_values(data: dict) -> dict:
+    """季節／時段限定：limits 沒送（None）時不變更；送 {} 或 {"seasons": [], ...} 就是取消限制。"""
+    limits = data.get("limits")
+    if limits is None:
+        return {}
+    if not isinstance(limits, dict):
+        raise ValidationError("季節／時段限定的格式不正確。")
+    s, start, end = seasons.validate(limits.get("seasons"), limits.get("hour_start"), limits.get("hour_end"))
+    return {"seasons": s, "hour_start": start, "hour_end": end}
+
+
 def _snapshot(obj, fields) -> dict:
     return {f: getattr(obj, f) for f in fields}
 
 
-CROP_FIELDS = ("name", "seed_price", "grow_seconds", "harvest_quantity", "sell_price", "variant_name", "active")
+CROP_FIELDS = ("name", "seed_price", "grow_seconds", "harvest_quantity", "sell_price", "variant_name", "active",
+               "seasons", "hour_start", "hour_end")
 FISH_FIELDS = (
     "name", "emoji", "rarity", "min_price", "max_price", "min_weight_g", "max_weight_g", "difficulty", "description",
-    "sort_order", "active",
+    "sort_order", "active", "required_baits", "seasons", "hour_start", "hour_end",
 )
 GEAR_FIELDS = ("name", "emoji", "description", "price", "required_level", "stock", "effects", "sort_order", "active")
 ANIMAL_FIELDS = (
@@ -132,6 +145,7 @@ class AdminService(ProgressAdmin, ProgressService):
                 data.get("harvest_quantity"), "收成數量", *balance.CROP_HARVEST_QUANTITY_RANGE
             ),
             "sell_price": _int(data.get("sell_price"), "售價", *balance.CROP_SELL_PRICE_RANGE),
+            **_limit_values(data),
         }
 
     @staticmethod
@@ -319,12 +333,27 @@ class AdminService(ProgressAdmin, ProgressService):
         values["emoji"] = self._text(data.get("emoji"), "圖示", 16, required=True)
         values["description"] = self._text(data.get("description"), "說明", 200)
         values["sort_order"] = _int(data.get("sort_order", 0), "排序", 0, 100_000)
+        # 指定魚餌：沒有送（None）時不變更；空清單 = 任何魚餌都可以
+        baits = data.get("required_baits")
+        if baits is not None:
+            if not isinstance(baits, list) or len(baits) > 10 or not all(isinstance(b, str) for b in baits):
+                raise ValidationError("指定魚餌必須是魚餌代碼清單（最多 10 個）。")
+            values["required_baits"] = list(dict.fromkeys(baits)) or None
+        values.update(_limit_values(data))
         return values
+
+    @staticmethod
+    def _check_baits(session, values: dict) -> None:
+        for code in values.get("required_baits") or ():
+            gear = fishing_repo.get_gear(session, code)
+            if gear is None or gear.kind != "bait":
+                raise ValidationError(f"「{code}」不是魚餌代碼。")
 
     def create_fish_type(self, actor: str, data: dict) -> dict:
         code = _code(data.get("code"), "魚類代碼")
         values = self._fish_values(data)
         with self._transaction() as session:
+            self._check_baits(session, values)
             if fishing_repo.get_fish_type(session, code) is not None:
                 raise AlreadyExistsError(f"代碼「{code}」已被使用。")
             if values["name"] in fishing_repo.fish_type_names(session):
@@ -339,6 +368,7 @@ class AdminService(ProgressAdmin, ProgressService):
         """修改後立即生效；已釣到的魚保留捕獲當下的稀有度與價值，進行中的釣魚也不受影響。"""
         values = self._fish_values(data)
         with self._transaction() as session:
+            self._check_baits(session, values)
             fish = fishing_repo.get_fish_type(session, code, for_update=True)
             if fish is None:
                 raise NotFoundError(f"找不到魚類「{code}」。")

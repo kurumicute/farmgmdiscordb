@@ -100,9 +100,24 @@ def add_prize(session: Session, farm_id: int, item_code: str, quality: str, muta
     session.execute(stmt)
 
 
+def _flush_deferred(session: Session, pending: dict) -> None:
+    for (farm_id, item_code, quality, mutation), quantity in pending.items():
+        _upsert(session, farm_id, item_code, quantity, quality, mutation)
+
+
 def add(
     session: Session, farm_id: int, item_code: str, quantity: int, quality: str = "normal", mutation: str = "none"
 ) -> None:
+    """一鍵操作中相同的物品合併成一次寫入（txcache.deferred）；其他情況立即寫入。"""
+    pending = txcache.deferred(session, _flush_deferred, dict)
+    if pending is None:
+        _upsert(session, farm_id, item_code, quantity, quality, mutation)
+    else:
+        key = (farm_id, item_code, quality, mutation)
+        pending[key] = pending.get(key, 0) + quantity
+
+
+def _upsert(session: Session, farm_id: int, item_code: str, quantity: int, quality: str, mutation: str) -> None:
     # 以唯一限制 (farm_id, item_code, quality, mutation) 做 upsert，避免重複建立庫存紀錄
     t = InventoryItem.__table__
     stmt = insert(t).values(farm_id=farm_id, item_code=item_code, quality=quality, mutation=mutation, quantity=quantity)
