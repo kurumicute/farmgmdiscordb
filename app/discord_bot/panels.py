@@ -242,7 +242,8 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, R
         self.message = None
         # 頁面狀態：數量選擇、排行榜條件、偷菜分頁、二次確認
         self.picker: dict | None = None
-        self.board = {"scope": "global", "kind": "money", "period": "all"}
+        self.sell_keys: list[str] | None = None  # 販售頁勾選的項目
+        self.board ={"scope": "global", "kind": "money", "period": "all"}
         self.steal_page = 0
         # 偷菜：玩家選單的頁數、正在查看農田的玩家
         self.steal_player_page = 0
@@ -504,7 +505,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, R
 
     async def goto(self, interaction: discord.Interaction, page: str, notice: str | None = None) -> None:
         self.page, self.picker, self.confirm = page, None, None
-        self.fish_sell_ids = None
+        self.fish_sell_ids = self.sell_keys = None
         await self.refresh(interaction, notice, metric="換頁")
 
     async def act(
@@ -1208,10 +1209,18 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, R
         rows = self._sellables(self.svc.get_backpack(self.player_id))
         if not rows:
             raise ValidationError("沒有可以賣的東西。")
+        return self._sell_rows(rows)
+
+    def _sell_rows(self, rows: list[dict]) -> str:
+        """依序賣出多項（每項一筆交易），失敗的項目列在最後；「全部賣出」與勾選販售共用。"""
         income, sold, failed, gold = 0, 0, [], None
         for row in rows:
             try:
-                result = self.svc.sell(self.player_id, row["code"], row["quantity"], row["quality"], row["mutation"])
+                if "prize_id" in row:
+                    result = self.svc.sell_prize(self.player_id, row["prize_id"], row["quantity"])
+                else:
+                    result = self.svc.sell(self.player_id, row["code"], row["quantity"], row["quality"],
+                                           row["mutation"])
                 income += result.gold_delta or 0
                 sold += row["quantity"]
                 gold = result.gold
@@ -1264,11 +1273,51 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, R
             self.picker = {"key": key, "label": label,
                            "verb": "賣", "max": row["quantity"], "presets": sorted({1, half, row["quantity"]}),
                            "run": run}
+            self.sell_keys = None
             await self.refresh(interaction)
 
         self.select("💰 選擇要賣的東西…", [(f"{r['name']} ×{r['quantity']}", r["key"], f"🏷️ 單價 {r['price']}",
                                           r["emoji"]) for r in rows + prize_rows], pick, row=0, selected=selected)
         self.quantity_buttons(row=1)
+
+        # 勾選多項一起賣出：每項賣全部，確認後才賣；賣的是畫面上顯示的數量，不會多賣之後才進背包的東西
+        choices = (rows + prize_rows)[:25]  # Discord 選單最多 25 項
+        chosen = [r for r in choices if r["key"] in (self.sell_keys or [])]
+        if choices:
+            async def tick(interaction, values):
+                self.sell_keys, self.picker, self.confirm = list(values), None, None
+                await self.refresh(interaction, "👇 確認勾選的項目，再按「確認賣出」。")
+
+            multi = discord.ui.Select(
+                placeholder="☑️ 勾選多項一起賣出（每項賣全部）…", row=2, min_values=1, max_values=len(choices),
+                options=[discord.SelectOption(
+                    label=cut(f"{r['name']} ×{r['quantity']}", 100), value=r["key"], emoji=r["emoji"],
+                    description=cut(f"💰 全賣 {money(r['quantity'] * r['price'])} 金", 100), default=r in chosen,
+                ) for r in choices])
+
+            async def ticked(interaction):
+                await tick(interaction, multi.values)
+
+            multi.callback = ticked
+            multi.farm_handler = tick  # 測試用：直接以選項值呼叫
+            self.add_item(multi)
+        if chosen:
+            chosen_total = sum(r["quantity"] * r["price"] for r in chosen)
+
+            async def sell_ticked(interaction):
+                self.sell_keys = None
+                await self.act(interaction, lambda: self._sell_rows(chosen))
+
+            async def clear_ticked(interaction):
+                self.sell_keys = None
+                await self.refresh(interaction)
+
+            e.add_field(name="☑️ 已勾選", inline=False, value=(
+                "\n".join(f"{r['emoji']} {r['name']} ×{r['quantity']}" for r in chosen)[:900]
+                + f"\n共 **{len(chosen)}** 項，約 **{money(chosen_total)}** 金幣"))
+            self.button(f"確認賣出 {len(chosen)} 項（約 {money(chosen_total)} 金）", sell_ticked, emoji="✅", row=3,
+                        style=discord.ButtonStyle.danger)
+            self.button("取消勾選", clear_ticked, emoji="✖️", row=3)
 
         async def sell_everything(interaction):
             if self.confirm != "sell_all":
@@ -1280,7 +1329,7 @@ class FarmPanel(FishingPages, WorldBossPages, ProgressPages, SpecialShopPages, R
             await self.act(interaction, self._sell_all)
 
         confirming = self.confirm == "sell_all"
-        self.button("確認全部賣出" if confirming else "全部賣出", sell_everything, emoji="💰", row=2, disabled=not rows,
+        self.button("確認全部賣出" if confirming else "全部賣出", sell_everything, emoji="💰", row=3, disabled=not rows,
                     style=discord.ButtonStyle.danger if confirming else discord.ButtonStyle.success)
         self._nav_back()
         return e

@@ -141,6 +141,12 @@ class FishingService(ExplorationService):
             fish, ftype = got
             view["fish"] = fish_view(fish, ftype)
             view["record"] = self._record_flags(session, row.farm_id, fish)
+        if phase == "ended":  # 結算畫面：目前裝備的魚餌還剩多少、魚簍還有多少空間
+            equipped_bait = fishing_repo.equipped_gear(session, row.farm_id).get("bait")
+            view["bait_left"] = ({"name": equipped_bait[1].name, "quantity": equipped_bait[0].quantity}
+                                 if equipped_bait else None)
+            view["basket"] = fishing_repo.basket_count(session, row.farm_id)
+            view["basket_capacity"] = fishing_repo.current_settings(session)[1]["basket_capacity"]
         return view
 
     @staticmethod

@@ -289,6 +289,53 @@ def test_craft_buttons_follow_ingredients_and_queue(cmds, admin):
     assert "排在訂單 #1 之後" in p.text and "⏳ 排隊 1 張" in p.text
 
 
+def test_sell_ticked_items(cmds, admin, session_factory):
+    p = make_player(cmds, ALICE)
+    pid = p.panel.player_id
+    admin.set_inventory("root", pid, "wheat", "normal", "none", 5)
+    admin.set_inventory("root", pid, "carrot", "normal", "none", 3)
+    admin.set_inventory("root", pid, "tomato", "normal", "none", 2)
+    p.go("sell")
+    gold = admin.get_farm_status(pid).gold
+    keys = p.options("勾選多項")
+    wheat, carrot = next(k for k in keys if "wheat" in k), next(k for k in keys if "carrot" in k)
+    p.choose("選擇要賣的東西", wheat)  # 勾選會清掉單項的數量按鈕，單項選擇也會清掉勾選
+    assert any(x.startswith("賣 ") for x in p.labels())
+    p.choose("勾選多項", [wheat, carrot])
+    assert not any(x.startswith("賣 ") for x in p.labels())
+    assert "已勾選" in p.text and "共 **2** 項" in p.text
+    assert admin.get_farm_status(pid).gold == gold  # 確認前不會賣
+    # 勾選在重繪後仍顯示為已選取
+    multi = next(c for c in p.panel.children if isinstance(c, discord.ui.Select) and "勾選多項" in c.placeholder)
+    assert {o.value for o in multi.options if o.default} == {wheat, carrot}
+    p.click("取消勾選")
+    assert "已勾選" not in p.text
+    p.choose("勾選多項", [wheat, carrot])
+    p.click("確認賣出 2 項")
+    assert "賣出 8 個商品" in p.text and "已勾選" not in p.text
+    assert admin.get_farm_status(pid).gold > gold
+    assert [k for k in p.options("勾選多項") if "tomato" in k]  # 沒勾的留著
+    assert not [k for k in p.options("勾選多項") if "wheat" in k or "carrot" in k]
+    with session_factory() as s:
+        assert s.scalar(select(func.sum(Farm.gold))) == s.scalar(select(func.sum(GameTransaction.gold_delta)))
+
+
+def test_sell_ticked_sells_shown_quantity_and_reports_failures(cmds, admin):
+    p = make_player(cmds, ALICE)
+    pid = p.panel.player_id
+    admin.set_inventory("root", pid, "wheat", "normal", "none", 5)
+    admin.set_inventory("root", pid, "carrot", "normal", "none", 3)
+    p.go("sell")
+    keys = p.options("勾選多項")
+    p.choose("勾選多項", keys)
+    admin.set_inventory("root", pid, "wheat", "normal", "none", 9)  # 確認前多出來的不賣
+    admin.set_inventory("root", pid, "carrot", "normal", "none", 1)  # 確認前變少的不會賣成負數
+    p.click("確認賣出 2 項")
+    assert "賣出 5 個商品" in p.text and "未賣出" in p.text and "胡蘿蔔" in p.text
+    backpack = {x.code: x.quantity for x in admin.get_backpack(pid).produce}
+    assert backpack == {"wheat": 4, "carrot": 1}
+
+
 def test_steal_from_panel_only_same_guild(cmds, clock, admin):
     alice = make_player(cmds, ALICE, name="Alice")
     bob = make_player(cmds, BOB, name="Bob")
@@ -492,8 +539,13 @@ def test_casino_bet_from_panel(admin, clock, session_factory):
         assert "賭場獎品" in p.text
         key = [v for v in p.options("選擇要賣的東西") if v.startswith("z|")][0]
         p.choose("選擇要賣的東西", key)
-        p.click("賣 4")
-        assert "已出售 4 個小麥【稀有】（賭場 ×2" in p.text
+        p.click("賣 1")
+        assert "已出售 1 個小麥【稀有】（賭場 ×2" in p.text
+        # 獎品要明確勾選才會賣（「全部賣出」不賣獎品）
+        p.choose("勾選多項", [key])
+        p.click("確認賣出 1 項")
+        assert "賣出 3 個商品" in p.text
+        assert not [v for v in p.options("選擇要賣的東西") if v.startswith("z|")]
     finally:
         runner.shutdown()
 

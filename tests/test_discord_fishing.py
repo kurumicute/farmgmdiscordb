@@ -103,6 +103,12 @@ def test_full_fishing_flow_sell_and_share(cmds, admin, clock):
     result = fight_until_done(p, admin, clock)
     assert result["status"] == "landed"
     assert "釣到了" in p.text and "已放進魚簍" in p.text
+    # 結算畫面：剩餘魚餌與魚簍容量（這隻魚已算進魚簍）
+    overview = admin.fishing_overview(p.panel.player_id)
+    assert overview["basket"] == 1
+    assert f"剩 **{overview['bait_quantity']}** 個" in p.text
+    assert f"**1 / {overview['basket_capacity']}** 隻" in p.text
+    assert f"還能放 **{overview['basket_capacity'] - 1}** 隻" in p.text
     # 分享到頻道：公開訊息，魚不會消失
     share = p.click("分享到群組")
     sent = [kw for kind, _c, kw in share.log if kind == "followup"]
@@ -162,6 +168,7 @@ def test_missed_bite_shows_failure(cmds, admin, clock):
     clock.advance(10)
     p.go("fish_game")
     assert "沒有及時拉竿" in p.text and "再釣一次" in p.labels()
+    assert "魚餌" in p.text and "魚簍" in p.text  # 沒釣到也顯示剩餘資源
 
 
 def test_double_click_does_not_repeat_action(cmds, admin, clock):

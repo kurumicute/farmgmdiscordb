@@ -356,7 +356,20 @@ class FishingPages:
             self.button("再釣一次", again, emoji="🎣", style=discord.ButtonStyle.success, row=0)
         self.nav("我的魚簍", "fish_basket", emoji="🎒", row=0)
         self.nav("釣魚中心", "fishing", emoji="↩️", row=0)
+        e.add_field(name="🎒 剩餘資源", inline=False, value=self._supplies_text(v))
         return e
+
+    @staticmethod
+    def _supplies_text(v) -> str:
+        """結算畫面：剩餘魚餌與魚簍容量；用完或滿了就提醒，不用等到拋竿才知道。"""
+        bait, count, capacity = v["bait_left"], v["basket"], v["basket_capacity"]
+        lines = [f"🪱 魚餌：{bait['name']} 剩 **{bait['quantity']}** 個" if bait else "🪱 魚餌：❌ 尚未裝備",
+                 f"🧺 魚簍：**{count} / {capacity}** 隻（還能放 **{max(0, capacity - count)}** 隻）"]
+        if bait and bait["quantity"] <= 0:
+            lines.append("⚠️ 魚餌用完了，要先到釣具商店補充。")
+        if count >= capacity:
+            lines.append("⚠️ 魚簍滿了，要先賣掉一些魚才能再釣。")
+        return "\n".join(lines)
 
     # ======================================================================
     # 魚簍、魚的詳細資料與販售

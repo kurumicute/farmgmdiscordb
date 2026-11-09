@@ -77,7 +77,9 @@ def test_migration_constants_match_rules():
     assert limits == seasons.FISH_LIMITS
     assert {f[0]: tuple(f[11]) for f in m35.FISH if f[11]} == {
         c: b for c, b in fishing.FISH_REQUIRED_BAITS.items() if c in {f[0] for f in m35.FISH}}
-    assert [f[:10] for f in m35.FISH] == [tuple(x) for x in fishing.INITIAL_FISH[35:]]
+    # INITIAL_FISH 的售價是 Migration 0037 調高 1.5 倍（.5 進位）後的值
+    raised = [(*f[:4], (f[4] * 3 + 1) // 2, (f[5] * 3 + 1) // 2, *f[6:10]) for f in m35.FISH]
+    assert raised == [tuple(x) for x in fishing.INITIAL_FISH[35:]]
     new_fish = {f[0] for f in fishing.INITIAL_FISH[15:]}
     assert set(seasons.FISH_LIMITS) <= new_fish  # 只限新增的魚
     # 所有作物（小麥除外）都是兩個季節，而且每季至少 4 種作物可以種
