@@ -189,6 +189,7 @@ def build_fishing(session: Session) -> dict:
             {"code": r, "name": fishing.RARITY_NAMES[r], "emoji": fishing.RARITY_EMOJI[r],
              "chance_pct": _pct(s["rarity_bp"][r]), "price": fishing.price_span(fish_types, r),
              "stamina": s["difficulty"][r]["stamina"], "surge_pct": s["difficulty"][r]["surge_pct"],
+             "pulls": list(fishing.PULLS[r]),
              "strong_pct": s["difficulty"][r]["strong_pct"], "chain_pct": s["difficulty"][r]["chain_pct"]}
             for r in fishing.RARITIES
         ],

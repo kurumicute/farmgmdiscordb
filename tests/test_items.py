@@ -100,6 +100,27 @@ def test_earthworm_effect_lifecycle_and_restart(service, player_id, clock, sessi
         engine.dispose()
 
 
+def test_earthworm_speeds_up_crops_already_growing(service, player_id, clock, session_factory):
+    rich(session_factory, player_id)
+    service.buy(player_id, "蚯蚓", 2)
+    grow(service, player_id, 1, "wheat")  # 60 秒
+    clock.advance(20)
+    msg = service.use_item(player_id, "earthworm").message
+    assert "正在生長的 1 格" in msg
+    assert plot(service, player_id).remaining_seconds == 34  # 剩 40 秒 × 0.85
+    service.use_item(player_id, "earthworm")  # 有效期間延長：不重複加速
+    assert plot(service, player_id).remaining_seconds == 34
+    # 效果結束後重新啟用：只加速上次效果結束後才澆水的作物
+    clock.advance(2 * balance.EARTHWORM_DURATION_SECONDS)
+    service.clear_withered(player_id, 1)
+    grow(service, player_id, 1, "wheat")
+    grow(service, player_id, 2, "wheat")
+    clock.advance(10)
+    service.buy(player_id, "蚯蚓", 1)
+    assert "正在生長的 2 格" in service.use_item(player_id, "earthworm").message
+    assert plot(service, player_id).remaining_seconds == 43  # 剩 50 秒 × 0.85 = 42.5（無條件進位）
+
+
 def test_auto_waterer_permanent_no_double_charge(service, player_id, clock, session_factory, database_url):
     with pytest.raises(InsufficientGoldError):
         service.buy(player_id, "auto_waterer", 1)

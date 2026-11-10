@@ -135,6 +135,8 @@ class FishingService(ExplorationService):
             "reel_streak": state.get("reel_streak", 0),
             "next_reel_tension": round(fishing.reel_tension(state)) if "max_tension" in state else 0,
             "land_stamina": fishing.land_stamina(state) if "max_stamina" in state else 0,
+            "need": state.get("need", 0), "progress": state.get("progress", 0),
+            "pulls_left": fishing.pulls_left(state),
         }
         if row.status == "landed":
             got = fishing_repo.get_farm_fish(session, row.farm_id, fishing_repo.session_fish(session, row.id).id)

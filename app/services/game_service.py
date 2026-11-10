@@ -1386,10 +1386,13 @@ class GameService:
                 raise InsufficientItemsError(f"沒有{name}，請先購買（buy earthworm 1）。")
             now = self._clock.now()
             effect = items_repo.get_effect(session, farm.id, balance.EFFECT_EARTHWORM)
+            boosted = 0
             if effect is not None and effect.started_at <= now < effect.expires_at:
                 effect.expires_at = effect.expires_at + duration  # 有效期間再次使用：延長
                 action = "延長"
             elif effect is not None:
+                # 上一次效果結束後才澆水的作物還沒加速過（效果期間澆水或當時正在生長的都已經加速）
+                boosted = self._earthworm_growing(session, farm, now, effect.expires_at)
                 effect.started_at, effect.expires_at = now, now + duration
                 effect.multiplier = balance.EARTHWORM_GROW_MULTIPLIER
                 action = "啟用"
@@ -1402,21 +1405,36 @@ class GameService:
                     expires_at=now + duration,
                 )
                 session.add(effect)
+                boosted = self._earthworm_growing(session, farm, now, None)
                 action = "啟用"
             until = effect.expires_at.astimezone(TAIPEI_TZ).strftime("%m-%d %H:%M")
             self._record(
                 session,
                 farm,
                 EventType.USE_ITEM,
-                f"使用{name}（{action}），生長加速至 {until}",
+                f"使用{name}（{action}），生長加速至 {until}" + (f"，生長中的 {boosted} 格一起加速" if boosted else ""),
                 item_code=balance.ITEM_EARTHWORM,
                 quantity=1,
             )
             left = long_duration(rules.remaining_seconds(effect.expires_at, now))
+            growing = f"正在生長的 {boosted} 格剩餘時間也 ×{balance.EARTHWORM_GROW_MULTIPLIER}；" if boosted else ""
             return ActionResult(
-                f"已{action}{name}效果：澆水的作物生長時間 ×{balance.EARTHWORM_GROW_MULTIPLIER}，剩餘 {left}。",
+                f"已{action}{name}效果：{growing}之後澆水的作物生長時間 ×{balance.EARTHWORM_GROW_MULTIPLIER}，"
+                f"剩餘 {left}。",
                 farm.gold,
             )
+
+    def _earthworm_growing(self, session: Session, farm: Farm, now, since) -> int:
+        """啟用蚯蚓時，正在生長的作物剩餘時間 ×EARTHWORM_GROW_MULTIPLIER；since 不是 None 時只算在這之後澆水的
+        （之前的已經在上一次效果中加速過）。呼叫端已鎖農場；回傳加速的格數。"""
+        count = 0
+        for plot in self._plots_in_state(session, farm, PlotState.GROWING):
+            if since is not None and plot.watered_at < since:
+                continue
+            new_ready = now + (plot.ready_at - now) * balance.EARTHWORM_GROW_MULTIPLIER
+            plot.ready_at = max(new_ready, plot.watered_at + timedelta(microseconds=1))
+            count += 1
+        return count
 
     def use_item(self, player_id: int, key: str, plot_number: int | None = None) -> ActionResult:
         code = self.find_item(key)

@@ -38,7 +38,7 @@ HELP_TEXT = f"""\
   harvest <土地編號|all>        收成
   clear <土地編號>              清除乾枯的作物
   use fertilizer <土地編號>     對生長中的土地施化肥（剩餘時間減少 15%）
-  use earthworm                 使用人工養殖蚯蚓（30 分鐘內澆水的作物加速生長）
+  use earthworm                 使用人工養殖蚯蚓（生長中與 3 天內澆水的作物加速生長）
   tool on|off auto_waterer      啟用／停用自動澆水器
   inventory [items|tools]       查看背包：全部／可堆疊物品／工具與效果
   sell <作物|商品> <數量> [品質] [突變]  出售農產品或商品，例如：sell wheat 2、sell 小麥 1 稀有 黃金、sell 琥珀小麥 1

@@ -288,8 +288,8 @@ class FishingPages:
         far_warn = " ⚠️" if v["distance"] >= v["escape_distance"] * 0.8 else ""
         hints = [f"🔥 連續收線 ×{v['reel_streak']:g}，下一次收線張力 **+{v['next_reel_tension']}**"
                  if v["reel_streak"] else f"🎣 收線張力 +{v['next_reel_tension']}"]
-        if v["stamina"] > v["land_stamina"]:
-            hints.append(f"🐟 魚體力降到 **{v['land_stamina']}** 以下才拉得上岸")
+        if v.get("need"):
+            hints.insert(0, f"🎯 還要成功拉 **{v['pulls_left']}** 下（{'🟢' * v['progress']}{'⚪' * v['pulls_left']}）")
         prompt = f"💬 **{v['dodge_text']}**\n💬 {v['intent_text']}" if v.get("dodge") else f"💬 **{v['intent_text']}**"
         e = discord.Embed(title="🎣 正在與魚搏鬥！", color=RARITY_COLOR[v["rarity"]], description=(
             f"🐟 對手：**{rarity_tag(v['rarity'])}**級的魚　🔁 第 {v['turn'] + 1} 回合\n"
@@ -305,8 +305,8 @@ class FishingPages:
             + (f"📝 {v['last_text']}\n" if v.get("last_text") else "")
             + f"⏰ {_ts(v['action_deadline'])}內要操作，不然魚會跑掉"
         ))
-        e.set_footer(text="收線：拉近、耗魚體力，連續收線張力越來越高｜放線：張力大降、魚游遠｜等待：張力下降｜"
-                          "魚竄向一邊：壓同方向。")
+        e.set_footer(text="收線成功算 1 下，連續收線張力越來越高｜等待：張力下降｜放線：張力大降、魚游遠｜"
+                          "魚竄向一邊：一定要壓同方向（算 1 下），按其他鍵都會被扯。")
         turn = v["turn"]
         buttons = [("reel", "🎣", discord.ButtonStyle.primary), ("release", "↩️", discord.ButtonStyle.secondary),
                    ("wait", "⏳", discord.ButtonStyle.secondary), ("left", "⬅️", discord.ButtonStyle.secondary),

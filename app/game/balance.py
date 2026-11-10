@@ -112,7 +112,8 @@ ITEMS = {
         "人工養殖蚯蚓",
         300,
         "consumable",
-        f"使用後 3 天內澆水的作物，生長時間 ×{EARTHWORM_GROW_MULTIPLIER}（效果期間再次使用可再延長 3 天）",
+        f"使用時正在生長的作物剩餘時間 ×{EARTHWORM_GROW_MULTIPLIER}，"
+        f"之後 3 天內澆水的作物生長時間也 ×{EARTHWORM_GROW_MULTIPLIER}（效果期間再次使用可再延長 3 天）",
         ("蚯蚓", "人工養殖蚯蚓"),
     ),
     TOOL_AUTO_WATERER: ("自動澆水器", 3500, "tool", "永久工具：啟用時種植後自動澆水", ("澆水器", "自動澆水器")),

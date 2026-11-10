@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `世界Boss_移植說明.md`、`遺跡日報季節與新作物魚_移植說明.md`、`釣魚防腳本與效能優化_移植說明.md` 是功能移植說明（完整檔案清單與 SHA-256 核對碼）。
 `discordbot_原始需求.txt` 是 Discord Bot 改造的完整需求（已實作：`app/discord_bot/`、Migration 0010）。README「Discord Bot」一節是操作與故障排查文件。
 
-Migration 一覽（0010 之後；目前 head = **0038**；VPS 已於 2026-11-09 升到 0037，0038 尚未套用）：
+Migration 一覽（0010 之後；目前 head = **0038**；VPS 已於 2026-11-09 升到 0038）：
 - 0011 作物時間與每日活動、0012 賭場、0013 作物價格調整、0014 山洞冒險、0015 一次一趟的探險、0016 釣魚、0017／0021 魚的售價不受稀有度限制、
   0018 放生動物、0019 世界 Boss、0020 全服世界 Boss 與固定排程（深淵魔龍）、0022 世界 Boss 參與門檻 `min_points`、0023 農場改名（`rename_farm`）。
 - 0024 每日簽到（`daily_checkins`、`checkin_reward`）、0025 圖鑑（`farm_codex`，從歷史補建）、0026 成就與稱號（`farm_achievements`、`farm_titles`、

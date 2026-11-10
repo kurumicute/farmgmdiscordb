@@ -391,7 +391,8 @@
       + "不會降低成功率；更好的魚竿和魚線能降低操作難度，魚餌能提高稀有魚的出現機率。");
     fillRows("g-fish-rarities", f.rarities.map((r) => [`${r.emoji} ${r.name}`, pct(r.chance_pct),
       r.price ? `${num.format(r.price[0])}–${num.format(r.price[1])}` : "目前沒有這種稀有度的魚",
-      `體力 ${r.stamina}；衝刺 ${r.surge_pct}%、強力掙扎 ${r.strong_pct}%` + (r.chain_pct ? `、連續衝刺 ${r.chain_pct}%` : "")]));
+      (r.pulls ? `拉 ${r.pulls[0]}–${r.pulls[1]} 下；` : "") +
+      `衝刺 ${r.surge_pct}%、強力掙扎 ${r.strong_pct}%` + (r.chain_pct ? `、連續衝刺 ${r.chain_pct}%` : "")]));
     fillRows("g-fish-gear", f.gear.length
       ? f.gear.map((g) => [`${g.emoji} ${g.name}`, g.kind_name, g.kind === "bait" ? `${num.format(g.price)}／個` : num.format(g.price),
         `Lv.${g.required_level}`, g.effects_text])

@@ -46,121 +46,111 @@ def test_fight_itself_is_winnable_with_starter_gear(rarity):
     assert rate >= 0.97
 
 
-def test_rarity_raises_difficulty_and_gear_lowers_it():
-    """不看提示亂收線時：稀有度越高越難；裝備越好越容易。"""
+@pytest.mark.parametrize("rarity", fishing.RARITIES)
+def test_pulls_needed_follow_rarity(rarity):
+    """依提示操作時：普通 2–4 下、稀有 3–5、史詩 4–6、傳說 5–7；好裝備幾乎不用多等。"""
     no_fate = {**S, "base_success_pct": 100}
-
-    def naive(rarity, gear, seed):
-        return fishing.success_rate(no_fate, rarity, *gear, fishing.naive_action, random.Random(seed).random, 3000)
-
-    starter = [naive(r, STARTER, 11)[0] for r in fishing.RARITIES]
-    assert starter[0] > starter[1] > starter[2] > starter[3]
-    assert naive("legendary", MID, 12)[0] > starter[3]
-    assert naive("legendary", BEST, 13)[0] > naive("legendary", MID, 14)[0]
-    # 較好的魚竿收線更快：依提示操作時拉扯次數較少（亂按時入門裝備很快就斷線，次數反而少，不能比較）
-    def smart_turns(gear, seed):
-        return fishing.success_rate(no_fate, "epic", *gear, fishing.smart_action, random.Random(seed).random, 1000)[1]
-
-    assert smart_turns(BEST, 15) < smart_turns(STARTER, 16)
+    low, high = fishing.PULLS[rarity]
+    rng = random.Random(f"pulls-{rarity}").random
+    needs = {fishing.new_fight(no_fate, rarity, 3, BEST[1], rng)["need"] for _ in range(300)}
+    assert needs == set(range(low, high + 1))
+    results = [fishing.simulate(no_fate, rarity, *BEST, fishing.smart_action, rng) for _ in range(2000)]
+    assert all(r == "landed" and n >= low for r, n in results)
+    assert sum(n <= high for _r, n in results) / len(results) >= 0.85
+    starter = fishing.success_rate(no_fate, rarity, *STARTER, fishing.smart_action, rng, 1000)[1]
+    best = fishing.success_rate(no_fate, rarity, *BEST, fishing.smart_action, rng, 1000)[1]
+    assert best <= starter <= high + 4  # 入門裝備要多等幾下，但不會拖太久
 
 
-@pytest.mark.parametrize("difficulty", [1, 3])
-def test_best_gear_cannot_land_common_fish_by_only_reeling(difficulty):
-    """裝備再好，普通魚也不能只靠一直收線釣起來。"""
+@pytest.mark.parametrize("rarity", fishing.RARITIES)
+@pytest.mark.parametrize("policy", [fishing.reel_only_action, fishing.alternate_action, fishing.naive_action])
+def test_scripts_without_reading_the_screen_never_land(rarity, policy):
+    """只按收線（或固定節奏、不看方向）一定釣不到：每場都有魚竄向一邊，只有壓同方向才過得去。"""
     no_fate = {**S, "base_success_pct": 100}
-    rng = random.Random(f"spam-{difficulty}").random
-    rate, _ = fishing.success_rate(no_fate, "common", *BEST, fishing.reel_only_action, rng, 3000, difficulty)
-    assert rate < 0.15
-    smart, _ = fishing.success_rate(no_fate, "common", *BEST, fishing.smart_action, rng, 3000, difficulty)
-    assert smart >= 0.99  # 依提示操作不受影響
+    rng = random.Random(f"spam-{rarity}-{policy.__name__}").random
+    assert fishing.success_rate(no_fate, rarity, *BEST, policy, rng, 1000)[0] == 0
 
 
-def test_fixed_rhythm_script_is_much_worse_than_reading_the_screen():
-    no_fate = {**S, "base_success_pct": 100}
-    rng = random.Random("rhythm").random
-    script, _ = fishing.success_rate(no_fate, "common", *BEST, fishing.alternate_action, rng, 3000)
-    smart, _ = fishing.success_rate(no_fate, "common", *BEST, fishing.smart_action, rng, 3000)
-    assert script < 0.4 and smart >= 0.99
+def test_every_fight_has_forced_dodges_within_its_pulls():
+    rng = random.Random("dodges").random
+    for rarity in fishing.RARITIES:
+        for _ in range(200):
+            state = fishing.new_fight(S, rarity, 3, STARTER[1], rng)
+            assert len(state["dodge_at"]) == fishing.FORCED_DODGES[rarity]
+            assert all(0 <= x < state["need"] for x in state["dodge_at"])
+            assert (state["dodge"] is not None) == (0 in state["dodge_at"])
 
 
 def fight_state(**changes) -> dict:
-    return {"stamina": 40, "max_stamina": 40, "distance": 90, "tension": 0, "max_tension": 100, "turn": 0,
-            "slip_turn": None, "intent": "calm", "last": None, "reel_streak": 0, "dodge": None, **changes}
+    return {"stamina": 40, "max_stamina": 40, "distance": 90, "start_distance": 90, "tension": 0, "max_tension": 100,
+            "turn": 0, "slip_turn": None, "intent": "calm", "last": None, "reel_streak": 0, "dodge": None,
+            "need": 10, "progress": 0, "dodge_at": [], "slack": 0, **changes}
 
 
-def NO_DODGE() -> float:  # 固定亂數：不觸發竄動
+def NO_DODGE() -> float:  # 固定亂數
     return 0.99
 
 
-def test_consecutive_reels_raise_tension_in_proportion_to_line():
+def test_consecutive_reels_raise_tension_and_count_as_pulls():
     diff = {**S["difficulty"]["common"]}
     state = fight_state()
     added = []
-    for _ in range(3):
+    for i in range(3):
         before = state["tension"]
         state, result = fishing.step(state, "reel", diff, STARTER[0], NO_DODGE)
-        assert result is None
+        assert result is None and state["progress"] == i + 1
         added.append(state["tension"] - before + 6)  # 魚平靜時張力 -6
-    assert added == [14, 28, 42]  # 每多連續一次多 14（最大張力 100 的 14%）
-    # 魚線上限越高，連續收線的額外張力也越高：好魚線不能抵銷這個機制
+    assert added == [14, 18, 22]  # 每多連續一次多 4（最大張力 100 的 4%）
     strong = fight_state(max_tension=130, reel_streak=2)
-    assert fishing.reel_tension(strong) == pytest.approx(14 + 2 * 130 * 0.14)
+    assert fishing.reel_tension(strong) == pytest.approx(14 + 2 * 130 * 0.04)
+    assert state["stamina"] == 28 and state["distance"] == 63  # 跟著進度下降
 
 
-def test_wait_only_cools_down_half_a_step_and_release_resets_streak():
+def test_wait_and_release_cool_down_without_progress():
     diff = S["difficulty"]["common"]
-    waited, _ = fishing.step(fight_state(reel_streak=2), "wait", diff, STARTER[0], NO_DODGE)
-    assert waited["reel_streak"] == 1.5
-    released, _ = fishing.step(fight_state(reel_streak=2), "release", diff, STARTER[0], NO_DODGE)
-    assert released["reel_streak"] == 0
+    waited, _ = fishing.step(fight_state(reel_streak=3, tension=60, intent="strong"), "wait", diff, STARTER[0],
+                             NO_DODGE)
+    assert waited["reel_streak"] == 1 and waited["tension"] == 60 + fishing.WAIT_TENSION and waited["progress"] == 0
+    released, _ = fishing.step(fight_state(reel_streak=2, tension=60), "release", diff, STARTER[0], NO_DODGE)
+    assert released["reel_streak"] == 0 and released["tension"] == 30 and released["distance"] == 96
 
 
-def test_last_reel_cannot_land_when_it_snaps_the_line():
+def test_last_pull_lands_but_not_when_it_snaps_the_line():
     diff = S["difficulty"]["common"]
-    state = fight_state(distance=5, stamina=1, tension=90, reel_streak=3)
-    _, result = fishing.step(state, "reel", diff, BEST[0], NO_DODGE)
+    _, result = fishing.step(fight_state(progress=9, tension=90, reel_streak=3), "reel", diff, BEST[0], NO_DODGE)
     assert result == "line_broken"
+    landed, result = fishing.step(fight_state(progress=9, tension=20), "reel", diff, BEST[0], NO_DODGE)
+    assert result == "landed" and landed["distance"] == 0
 
 
-def test_fish_with_stamina_cannot_be_landed_even_with_strongest_rod():
+def test_dodge_must_be_matched_and_keeps_coming_back():
     diff = S["difficulty"]["common"]
-    state, result = fishing.step(fight_state(distance=5), "reel", diff, BEST[0], NO_DODGE)
-    assert result is None and state["distance"] == fishing.LAND_GATE_DISTANCE and "還有力氣" in state["last"]["text"]
-    _, result = fishing.step(fight_state(distance=5, stamina=10), "reel", diff, BEST[0], NO_DODGE)
-    assert result == "landed"
-
-
-def test_dodge_rewards_matching_direction_and_punishes_everything_else():
-    diff = S["difficulty"]["common"]
-    base = fight_state(distance=50, tension=40, dodge="left")
+    base = fight_state(tension=40, dodge="left", dodge_at=[0])
     hit, result = fishing.step(base, "left", diff, STARTER[0], NO_DODGE)
-    assert result is None and hit["tension"] == 25 and hit["stamina"] == 30 and hit["distance"] == 47
-    assert hit["dodge"] is None
-    wrong, _ = fishing.step(base, "right", diff, STARTER[0], NO_DODGE)
-    assert wrong["tension"] == 40 - 6 + fishing.DODGE_MISS["tension"] and wrong["distance"] == 58
+    assert result is None and hit["tension"] == 25 and hit["progress"] == 1 and hit["dodge"] is None
+    assert hit["dodge_at"] == []
+    for action in ("right", "reel", "wait"):
+        missed, _ = fishing.step(base, action, diff, STARTER[0], NO_DODGE)
+        assert missed["progress"] == 0 and missed["dodge"] in fishing.STEER_ACTIONS  # 魚繼續竄
+        assert "沒壓對方向" in missed["last"]["text"]
     reeled, _ = fishing.step(base, "reel", diff, STARTER[0], NO_DODGE)
-    assert reeled["tension"] == 40 + 14 - 6 + fishing.DODGE_MISS["tension"]
+    assert reeled["tension"] == 40 + 14 + fishing.DODGE_MISS["tension"] and reeled["distance"] == 98
     idle, _ = fishing.step(fight_state(tension=40), "left", diff, STARTER[0], NO_DODGE)
-    assert idle["tension"] == 40 + fishing.STEER_IDLE_TENSION - 6
-
-
-def test_dodge_never_repeats_and_tired_fish_does_not_dodge():
-    diff = S["difficulty"]["legendary"]
-    def always() -> float:
-        return 0.0
-
-    assert fishing.next_dodge(fight_state(), diff, None, always) == "left"
-    assert fishing.next_dodge(fight_state(), diff, "left", always) is None
-    assert fishing.next_dodge(fight_state(stamina=0), diff, None, always) is None
-    assert fishing.dodge_pct(S["difficulty"]["legendary"]) > fishing.dodge_pct(S["difficulty"]["common"])
+    assert idle["tension"] == 40 + fishing.STEER_IDLE_TENSION - 6 and idle["progress"] == 0
+    # 進度到 dodge_at 時魚竄出來
+    before, _ = fishing.step(fight_state(dodge_at=[1]), "reel", diff, STARTER[0], NO_DODGE)
+    assert before["progress"] == 1 and before["dodge"] in fishing.STEER_ACTIONS
 
 
 def test_old_sessions_without_new_fields_still_work():
-    """升級時進行中的釣魚：舊 state 沒有 reel_streak／dodge。"""
+    """升級時進行中的釣魚：舊 state 沒有 need 等欄位，再成功拉 2 下就上岸。"""
     state = fight_state()
-    del state["reel_streak"], state["dodge"]
+    for key in ("reel_streak", "dodge", "need", "progress", "dodge_at", "slack", "start_distance"):
+        del state[key]
     new, result = fishing.step(state, "reel", S["difficulty"]["common"], STARTER[0], NO_DODGE)
-    assert result is None and new["reel_streak"] == 1
+    assert result is None and new["reel_streak"] == 1 and new["progress"] == 1
+    _, result = fishing.step(new, "reel", S["difficulty"]["common"], STARTER[0], NO_DODGE)
+    assert result == "landed"
 
 
 def test_regular_rhythm_detection():
@@ -224,17 +214,16 @@ def test_validate_settings_and_gear_effects():
 def test_step_outcomes():
     diff = S["difficulty"]["common"]
     rod = STARTER[0]
-    state = {"stamina": 10, "max_stamina": 40, "distance": 5, "tension": 20, "max_tension": 100, "turn": 0,
-             "slip_turn": None, "intent": "calm", "last": None}
+    state = fight_state(progress=9, tension=20, distance=5)
     landed, result = fishing.step(state, "reel", diff, rod, random.Random(1).random)
     assert result == "landed" and landed["distance"] == 0
-    tight = {**state, "distance": 50, "tension": 95, "intent": "strong"}
+    tight = fight_state(tension=95, intent="strong")
     _, result = fishing.step(tight, "reel", diff, rod, random.Random(1).random)
     assert result == "line_broken"
     _, result = fishing.step({**tight, "tension": 60}, "release", diff, rod, random.Random(1).random)
     assert result is None  # 衝刺前放線就不會斷
-    far = {**state, "distance": 95, "intent": "strong", "stamina": 40}
+    far = fight_state(slack=fishing.ESCAPE_DISTANCE - 5)
     _, result = fishing.step(far, "release", diff, rod, random.Random(1).random)
     assert result == "escaped"
-    _, result = fishing.step({**state, "slip_turn": 1}, "reel", diff, rod, random.Random(1).random)
+    _, result = fishing.step(fight_state(slip_turn=1), "reel", diff, rod, random.Random(1).random)
     assert result == "slipped"

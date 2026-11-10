@@ -86,18 +86,20 @@ INTENT_TEXT = {
     "tired": "😮‍💨 魚累了，快收線！",
 }
 
-# 連續收線：每多連續一次，額外增加「魚線最大張力的 N%」（依上限按比例，好魚線也撐不住一直收線）。
-# 放線或壓中方向歸零；等待只會讓連續次數減半次（REEL_STREAK_WAIT_DECAY）。
-REEL_STREAK_TENSION_PCT = 14
-REEL_STREAK_WAIT_DECAY = 0.5
-# 魚的體力要降到這個比例以下才拉得上岸；還有力氣時最多拉到 LAND_GATE_DISTANCE，收線力再高也一樣
-LAND_STAMINA_RATIO = 0.25
-LAND_GATE_DISTANCE = 8
-# 魚竄向一邊：要按同方向壓竿（方向只在畫面文字上）
-DODGE_BASE_PCT = 15  # 機率 = 基礎 + 魚的強力掙扎機率的一半（稀有度越高越常出現）
-DODGE_HIT = {"tension": -15, "stamina": -10, "distance": -3}  # 壓中：張力下降、魚耗力、拉近一點
-DODGE_MISS = {"tension": 18, "distance": 8}  # 沒壓中（按錯方向或其他操作）：張力暴增、魚被拉遠
+# 拉扯（2026-11-10 簡化）：每條魚要「成功拉幾下」才上岸，依稀有度在範圍內隨機（成功收線或壓對方向各算 1 下）。
+# 防連點：每場一定有魚竄向一邊（FORCED_DODGES 次，在隨機的進度出現），只有按同方向壓竿才能過關；
+# 按其他任何鍵都不算進度、張力暴增，而且魚會繼續竄（換方向）直到壓對，所以只按收線一定會斷線。
+PULLS = {"common": (2, 4), "rare": (3, 5), "epic": (4, 6), "legendary": (5, 7)}
+FORCED_DODGES = {"common": 1, "rare": 1, "epic": 2, "legendary": 2}
+# 連續收線：每多連續一次，額外增加「魚線最大張力的 N%」；放線或壓中方向歸零，等待減 REEL_STREAK_WAIT_DECAY 次
+REEL_STREAK_TENSION_PCT = 4
+REEL_SPIKE_MUL = 0.5  # 收線時魚衝擊造成的張力只算一半（魚竿穩定度再降低）
+REEL_STREAK_WAIT_DECAY = 2
+DODGE_HIT = {"tension": -15}  # 壓中：張力下降、算 1 下
+DODGE_MISS = {"tension": 18, "distance": 8}  # 沒壓中（按錯方向或其他操作）：張力暴增、魚被拉遠、不算進度
 STEER_IDLE_TENSION = 8  # 魚沒有竄動時亂壓竿
+RELEASE_SLACK = 6  # 放線讓魚游遠一點
+WAIT_TENSION = -25  # 等待：張力下降（魚的衝擊不再增加張力）
 DODGE_TEXT = {"left": "⬅️ 魚猛然往左邊竄！快往同方向壓竿！", "right": "➡️ 魚猛然往右邊竄！快往同方向壓竿！"}
 
 # 防腳本：只影響能不能拋竿，不扣金幣或魚。測試預設關閉（conftest），防腳本測試自行開啟
@@ -456,17 +458,25 @@ def reaction_seconds(settings: dict, rod: dict) -> float:
 
 
 def new_fight(settings: dict, rarity: str, fish_difficulty: int, line: dict, rng: Callable[[], float]) -> dict:
-    """拋竿時建立拉扯初始狀態；基礎成功率沒通過時記下脫鉤的回合（與稀有度、裝備無關）。"""
+    """拋竿時建立拉扯初始狀態：要拉幾下（PULLS）、在哪幾個進度魚會竄向一邊；基礎成功率沒通過時記下脫鉤的回合。"""
     diff = settings["difficulty"][rarity]
     stamina = max(1, round(diff["stamina"] * FISH_DIFFICULTY_STAMINA.get(fish_difficulty, 1.0)))
     slip_turn = None
     if rng() * 100 >= settings["base_success_pct"]:
         slip_turn = SLIP_TURNS[min(len(SLIP_TURNS) - 1, int(rng() * len(SLIP_TURNS)))]
+    low, high = PULLS[rarity]
+    need = min(high, low + int(rng() * (high - low + 1)))
+    spots = list(range(need))
+    dodge_at = []
+    for _ in range(min(FORCED_DODGES[rarity], need)):
+        dodge_at.append(spots.pop(min(len(spots) - 1, int(rng() * len(spots)))))
     state = {
-        "stamina": stamina, "max_stamina": stamina, "distance": diff["distance"], "tension": START_TENSION,
-        "max_tension": line.get("max_tension", BASE_MAX_TENSION), "turn": 0, "slip_turn": slip_turn,
-        "intent": "calm", "last": None, "reel_streak": 0, "dodge": None,
+        "stamina": stamina, "max_stamina": stamina, "distance": diff["distance"], "start_distance": diff["distance"],
+        "tension": START_TENSION, "max_tension": line.get("max_tension", BASE_MAX_TENSION), "turn": 0,
+        "slip_turn": slip_turn, "intent": "calm", "last": None, "reel_streak": 0, "dodge": None,
+        "need": need, "progress": 0, "dodge_at": sorted(dodge_at), "slack": 0,
     }
+    state["dodge"] = _dodge_direction(rng) if 0 in state["dodge_at"] else None
     state["intent"] = next_intent(state, diff, None, rng)
     return state
 
@@ -489,8 +499,12 @@ def _clamp(value: float, low: float, high: float) -> int:
     return int(round(min(high, max(low, value))))
 
 
+def _dodge_direction(rng: Callable[[], float]) -> str:
+    return STEER_ACTIONS[0] if rng() < 0.5 else STEER_ACTIONS[1]
+
+
 def fish_spike(intent: str, rod: dict) -> float:
-    """魚的動作造成的張力增加（魚竿穩定度降低衝擊）。"""
+    """魚的動作造成的張力變化（魚竿穩定度降低衝擊）。"""
     t = FISH_INTENTS[intent]["tension"]
     return t * (100 - rod.get("control_pct", 0)) / 100 if t > 0 else t
 
@@ -501,32 +515,44 @@ def reel_tension(state: dict) -> float:
     return PLAYER_ACTIONS["reel"]["tension"] + extra
 
 
+def pulls_left(state: dict) -> int:
+    """還要成功拉幾下才上岸（舊狀態沒有 need 時回傳 0）。"""
+    return max(0, state.get("need", 0) - state.get("progress", 0))
+
+
 def land_stamina(state: dict) -> int:
-    """魚的體力要降到多少以下才拉得上岸。"""
-    return int(state["max_stamina"] * LAND_STAMINA_RATIO)
+    """相容舊介面：新規則以「拉幾下」決定上岸，不再看體力門檻。"""
+    return 0
 
 
-def dodge_pct(diff: dict) -> float:
-    return DODGE_BASE_PCT + diff.get("strong_pct", 0) / 2
+def _upgrade_legacy(s: dict) -> None:
+    """升級時進行中的舊拉扯（沒有 need 欄位）：再成功拉 2 下就上岸，不再有強制竄動。"""
+    s.setdefault("start_distance", max(1, s.get("distance", 1)))
+    s.setdefault("need", 2)
+    s.setdefault("progress", 0)
+    s.setdefault("dodge_at", [])
+    s.setdefault("slack", 0)
+    s.setdefault("reel_streak", 0)
+    s.setdefault("dodge", None)
 
 
-def next_dodge(state: dict, diff: dict, previous: str | None, rng: Callable[[], float]) -> str | None:
-    """下一回合魚會不會竄向一邊：不連續出現；魚累垮時不會竄。"""
-    if previous or state["stamina"] <= 0:
-        return None
-    if rng() * 100 >= dodge_pct(diff):
-        return None
-    return STEER_ACTIONS[0] if rng() < 0.5 else STEER_ACTIONS[1]
+def _sync(s: dict) -> None:
+    """魚的體力與距離跟著進度下降（放線、沒壓中方向會讓魚游遠：slack）。"""
+    left = pulls_left(s)
+    s["stamina"] = _clamp(s["max_stamina"] * left / s["need"], 0, s["max_stamina"])
+    s["distance"] = _clamp(s["start_distance"] * left / s["need"] + s["slack"], 0, ESCAPE_DISTANCE)
 
 
 def step(state: dict, action: str, diff: dict, rod: dict, rng: Callable[[], float]) -> tuple[dict, str | None]:
     """執行一次拉扯操作，回傳 (新狀態, 結果)；結果 None 表示繼續，否則為 landed／escaped／line_broken／slipped。
 
-    順序：脫鉤判定 → 壓中方向（這回合結束）或玩家操作（魚累了才拉得上岸）→ 魚依事先顯示的動作反應
-    → 沒壓中方向的懲罰 → 斷線／逃走判定 → 決定魚的下一個動作。"""
+    魚竄向一邊時只有同方向壓竿算 1 下，其他操作都是失誤（不算進度、張力與距離增加，魚繼續竄）；
+    沒有竄動時，收線（張力撐得住）算 1 下，等待與放線用來降張力。拉滿 need 下就上岸。"""
     if action not in ACTIONS:
         raise ValidationError("沒有這個操作。")
     s = dict(state)
+    _upgrade_legacy(s)
+    s["dodge_at"] = list(s["dodge_at"])
     s["turn"] += 1
     intent = s["intent"]
     dodge, s["dodge"] = s.get("dodge"), None
@@ -534,67 +560,55 @@ def step(state: dict, action: str, diff: dict, rod: dict, rng: Callable[[], floa
     if s.get("slip_turn") and s["turn"] >= s["slip_turn"]:
         s["last"] = {"action": action, "intent": intent, "text": "🪝 魚鉤沒有咬牢，魚掙脫逃走了！"}
         return s, "slipped"
-    if action in STEER_ACTIONS and action == dodge:  # 壓中：魚這回合的動作被化解
+    missed = False
+    if dodge and action == dodge:  # 壓中：算 1 下
+        s["dodge_at"] = [x for x in s["dodge_at"] if x != s["progress"]]
+        s["progress"] += 1
         s["reel_streak"] = 0
         s["tension"] = max(0, s["tension"] + DODGE_HIT["tension"])
-        s["stamina"] = _clamp(s["stamina"] + DODGE_HIT["stamina"], 0, s["max_stamina"])
-        s["distance"] = max(1, s["distance"] + DODGE_HIT["distance"])
-        s["last"] = {"action": action, "intent": intent, "text": "🎯 壓對方向！魚被你帶回來，耗了不少力氣。"}
-        s["intent"] = next_intent(s, diff, intent, rng)
-        return s, None
-    if action in STEER_ACTIONS:
-        s["reel_streak"] = 0
-        p = {"tension": 0 if dodge else STEER_IDLE_TENSION, "stamina": 0, "distance": 0, "spike_mul": 1.0,
-             "dash_mul": 1.0}
+        text = "🎯 壓對方向！魚被你帶回來了。"
+    elif dodge:  # 沒壓中：不算進度，魚繼續竄
+        missed = True
+        extra = reel_tension(s) if action == "reel" else 0
+        s["reel_streak"] = streak + 1 if action == "reel" else 0
+        s["tension"] = max(0, s["tension"] + extra + DODGE_MISS["tension"])
+        s["slack"] += DODGE_MISS["distance"]
+        text = "⚠️ 沒壓對方向，魚線被猛扯了一下！"
     else:
-        p = PLAYER_ACTIONS[action]
-    ratio = s["stamina"] / s["max_stamina"] if s["max_stamina"] else 0
-    if action == "reel":
-        s["tension"] = max(0, s["tension"] + reel_tension(s))
-        s["reel_streak"] = streak + 1
-        s["distance"] -= rod.get("reel_power", 10)
-    else:
-        if action == "wait":
+        spike = fish_spike(intent, rod)
+        if action == "reel":
+            s["tension"] = max(0, s["tension"] + reel_tension(s) + (spike * REEL_SPIKE_MUL if spike > 0 else spike))
+            s["reel_streak"] = streak + 1
+            if s["tension"] <= s["max_tension"]:
+                s["progress"] += 1
+        elif action == "wait":
+            s["tension"] = max(0, s["tension"] + WAIT_TENSION)  # 穩住魚竿：魚的衝擊不會再加張力
             s["reel_streak"] = max(0, streak - REEL_STREAK_WAIT_DECAY)
         elif action == "release":
+            s["tension"] = max(0, s["tension"] + PLAYER_ACTIONS["release"]["tension"] + max(spike, 0) * 0.5)
+            s["slack"] += RELEASE_SLACK
             s["reel_streak"] = 0
-        s["tension"] = max(0, s["tension"] + p["tension"])
-        s["distance"] += p["distance"]
-    s["stamina"] = _clamp(s["stamina"] + p["stamina"], 0, s["max_stamina"])
-    if s["tension"] > s["max_tension"]:  # 最後一下也要撐得住，不能硬拉上岸
-        s["tension"] = _clamp(s["tension"], 0, 999)
-        s["last"] = {"action": action, "intent": intent, "text": "💥 連續硬拉，張力太大，魚線斷了！"}
-        return s, "line_broken"
-    gate_note = ""
-    if s["distance"] <= 0:
-        if s["stamina"] <= land_stamina(s):
-            s["distance"] = 0
-            s["tension"] = _clamp(s["tension"], 0, 999)
-            s["last"] = {"action": action, "intent": intent, "text": "🎉 收線成功，把魚拉出水面了！"}
-            return s, "landed"
-        s["distance"] = LAND_GATE_DISTANCE  # 魚還有力氣：拉到水邊又被甩開
-        gate_note = "　🐟 魚還有力氣，到水邊又甩開了！"
-    f = FISH_INTENTS[intent]
-    spike = fish_spike(intent, rod)
-    if spike > 0:
-        spike *= p["spike_mul"]
-    s["tension"] = _clamp(s["tension"] + spike, 0, 999)
-    s["distance"] = _clamp(s["distance"] + f["distance"] * p["dash_mul"] * (0.5 + 0.5 * ratio), 1, ESCAPE_DISTANCE)
-    s["stamina"] = _clamp(s["stamina"] + f["stamina"], 0, s["max_stamina"])
-    result_text = STEER_MISS_TEXT if action in STEER_ACTIONS else ACTION_RESULT_TEXT[action]
-    s["last"] = {"action": action, "intent": intent, "text": result_text + "　" + INTENT_RESULT[intent] + gate_note}
-    if dodge:
-        s["tension"] = _clamp(s["tension"] + DODGE_MISS["tension"], 0, 999)
-        s["distance"] = _clamp(s["distance"] + DODGE_MISS["distance"], 1, ESCAPE_DISTANCE)
-        s["last"]["text"] += "　⚠️ 沒壓對方向，魚線被猛扯了一下！"
+        else:  # 魚沒有竄動時亂壓竿
+            s["tension"] = max(0, s["tension"] + STEER_IDLE_TENSION + spike)
+            s["reel_streak"] = 0
+        text = STEER_MISS_TEXT if action in STEER_ACTIONS else ACTION_RESULT_TEXT[action]
+        text += "　" + INTENT_RESULT[intent]
+    s["tension"] = _clamp(s["tension"], 0, 999)
+    s["last"] = {"action": action, "intent": intent, "text": text}
     if s["tension"] > s["max_tension"]:
         s["last"]["text"] = "💥 張力太大，魚線斷了！"
         return s, "line_broken"
+    _sync(s)
+    if s["progress"] >= s["need"]:
+        s["distance"] = 0
+        s["last"]["text"] = "🎉 收線成功，把魚拉出水面了！"
+        return s, "landed"
     if s["distance"] >= ESCAPE_DISTANCE:
         s["last"]["text"] = "🌊 魚游得太遠，掙脫逃走了！"
         return s, "escaped"
     s["intent"] = next_intent(s, diff, intent, rng)
-    s["dodge"] = next_dodge(s, diff, dodge, rng)
+    if missed or s["progress"] in s["dodge_at"]:
+        s["dodge"] = _dodge_direction(rng)
     return s, None
 
 
@@ -632,21 +646,14 @@ POLICY_KEYS = ("intent", "tension", "distance", "stamina", "max_stamina", "max_t
 
 
 def smart_action(state: dict, diff: dict, rod: dict, margin: int = 4) -> str:
-    """依提示操作的玩家：魚竄動時壓同方向；收線不會斷線或讓魚逃走時收線，否則等待，最後才放線。"""
+    """依提示操作的玩家：魚竄動時壓同方向；收線撐得住就收線，否則等待，等待也撐不住才放線。"""
     if state.get("dodge"):
         return state["dodge"]
-    intent, t, d, mt = state["intent"], state["tension"], state["distance"], state["max_tension"]
-    spike = max(0.0, fish_spike(intent, rod))
-    ratio = state["stamina"] / state["max_stamina"] if state["max_stamina"] else 0
-    dash = FISH_INTENTS[intent]["distance"] * (0.5 + 0.5 * ratio)
-    reel = rod.get("reel_power", 10)
-    pull = reel_tension(state)
-    tired_enough = state["stamina"] + PLAYER_ACTIONS["reel"]["stamina"] <= land_stamina(state)
-    if d - reel <= 0 and tired_enough and t + pull <= mt:
+    t, mt = state["tension"], state["max_tension"]
+    spike = fish_spike(state["intent"], rod)
+    if t + reel_tension(state) + (spike * REEL_SPIKE_MUL if spike > 0 else spike) <= mt - margin:
         return "reel"
-    if t + pull + spike <= mt - margin and d - reel + dash < ESCAPE_DISTANCE:
-        return "reel"
-    if t - 12 + spike * 0.8 <= mt - margin and d + dash * 0.5 < ESCAPE_DISTANCE:
+    if t + WAIT_TENSION <= mt - margin:
         return "wait"
     return "release"
 
