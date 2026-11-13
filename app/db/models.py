@@ -76,10 +76,13 @@ EVENT_TYPES = (
     "ruins_donate",
     "ruins_guardian",
     "rumor_treasure",
+    # 0039 種子實驗室（Go 版新增；Python 版沒有實驗室的資料表模型）
+    "seed_lab",
+    "seed_share",
 )
 
 QUALITY_CODES = ("normal", "good", "rare", "legendary")
-MUTATION_CODES = ("none", "giant", "golden", "fast", "variant")
+MUTATION_CODES = ("none", "giant", "golden", "fast", "variant", "glow", "bountiful", "crystal")  # 0039 新增後三種
 _QUALITY_SQL = ", ".join(f"'{q}'" for q in QUALITY_CODES)
 _MUTATION_SQL = ", ".join(f"'{m}'" for m in MUTATION_CODES)
 
